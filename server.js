@@ -134,6 +134,7 @@ app.delete('/api/applications/:id', (req, res) => {
 // --- Gmail ----------------------------------------------------------------
 app.post('/api/sync', async (req, res) => {
   if (gmail.isRescanning()) return res.status(202).json({ rescanning: true });
+  await detectOllama(); // pick up Ollama if it was started (or stopped) since the last check
   try {
     const result = await gmail.sync();
     broadcast();
