@@ -17,6 +17,24 @@ npm start
 
 Then open http://localhost:5178. It works without Gmail too: you can add applications by hand.
 
+### Start automatically (Windows)
+
+So you never have to run `npm start` again:
+
+```bash
+npm run autostart
+```
+
+This puts a small launcher in your Windows Startup folder. From then on, the tracker starts invisibly (no window) every
+time you log in, and it starts right away the first time too. Bookmark http://localhost:5178.
+Output goes to `data/server.log`. To undo it:
+
+```bash
+npm run autostart:remove
+```
+
+After pulling code changes, log out and back in, or end the `node.exe` process in Task Manager and run `npm run autostart`.
+
 ## Connect Gmail (one-time, ~3 minutes)
 
 Google requires every app that reads Gmail to have its own OAuth client, so you'll create one for yourself:

@@ -4,7 +4,9 @@
   "description": "Job application tracker that auto-updates from Gmail",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
-    "dev": "node --watch --env-file-if-exists=.env server.js"
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "autostart": "node --env-file-if-exists=.env scripts/autostart.js",
+    "autostart:remove": "node scripts/autostart.js remove"
   },
   "keywords": [],
   "author": "",
