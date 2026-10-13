@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Job Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">◆</span> Job Tracker</div>
+    <div class="topbar-actions">
+      <div id="gmail-status" class="gmail-status"></div>
+      <button id="sync-btn" class="btn btn-ghost" title="Check Gmail for new updates">↻ Sync</button>
+      <button id="add-btn" class="btn btn-primary">+ Add application</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="banner"></div>
+
+    <section class="stats" id="stats"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Application flow</h2>
+        <span class="muted" id="flow-caption"></span>
+      </div>
+      <div id="sankey" class="sankey"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Applications</h2>
+        <input id="search" class="search" type="search" placeholder="Search company, role or job ID…">
+      </div>
+      <div id="filters" class="filters"></div>
+      <div class="table-wrap">
+        <table class="apps">
+          <thead>
+            <tr><th>Company</th><th>Role</th><th>Status</th><th>Applied</th><th>Last update</th><th>Source</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div id="empty" class="empty" hidden></div>
+    </section>
+  </main>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="drawer" class="drawer" aria-hidden="true"></aside>
+
+  <script src="/vendor/d3/d3.min.js"></script>
+  <script src="/vendor/d3-sankey/d3-sankey.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
