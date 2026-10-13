@@ -23,19 +23,25 @@ export function computeStatus(events) {
 
 // The ordered list of stages an application passed through, for the Sankey chart.
 // Always starts at "applied" and only ever moves forward, so the graph has no cycles.
+// A manual status change is a correction: it rewinds the path to that stage, so
+// setting a misread "interview" back to "applied" removes the interview step.
 export function stagePath(app, { ghostDays }) {
   const path = ['applied'];
   const sorted = [...app.events].sort((a, b) => a.date.localeCompare(b.date));
   for (const e of sorted) {
-    const last = path[path.length - 1];
-    if (TERMINAL.has(last)) break;
-    if (!TERMINAL.has(e.stage) && RANK[e.stage] > RANK[last]) path.push(e.stage);
+    if (e.manual && !TERMINAL.has(e.stage)) {
+      while (path.length > 1 && RANK[path.at(-1)] >= RANK[e.stage]) path.pop();
+      if (e.stage !== 'applied') path.push(e.stage);
+    } else if (!TERMINAL.has(e.stage) && RANK[e.stage] > RANK[path.at(-1)]) {
+      path.push(e.stage);
+    }
   }
-  const last = path[path.length - 1];
   if (TERMINAL.has(app.status)) {
-    if (last !== app.status) path.push(app.status);
+    path.push(app.status);
   } else {
-    const idleDays = (Date.now() - Date.parse(app.lastActivity)) / 86_400_000;
+    // Silence is measured from the company's last email, not from your own edits.
+    const lastHeard = sorted.filter(e => !e.manual).at(-1)?.date ?? app.appliedAt;
+    const idleDays = (Date.now() - Date.parse(lastHeard)) / 86_400_000;
     path.push(app.status === 'applied' && idleDays > ghostDays ? 'no_response' : 'in_progress');
   }
   return path;

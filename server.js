@@ -4,6 +4,7 @@ import { getDb, save, createApplication, refresh, newId } from './src/store.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
 import { detectOllama } from './src/ollama.js';
+import { buildWorkbook } from './src/export.js';
 import * as gmail from './src/gmail.js';
 
 const PORT = gmail.PORT;
@@ -79,6 +80,21 @@ app.patch('/api/applications/:id', (req, res) => {
   save();
   broadcast();
   res.json(a);
+});
+
+// Excel export of the given applications (in the order shown), or all of them.
+app.post('/api/export', async (req, res) => {
+  const all = getDb().applications;
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  const byId = new Map(all.map(a => [a.id, a]));
+  const apps = ids ? ids.map(id => byId.get(id)).filter(Boolean) : all;
+  const buffer = await buildWorkbook(apps);
+  const name = String(req.body.filename || 'job-applications').replace(/[^\w .-]/g, '') || 'job-applications';
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename="${name}.xlsx"`,
+  });
+  res.send(Buffer.from(buffer));
 });
 
 app.delete('/api/applications/:id', (req, res) => {

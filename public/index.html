@@ -3,44 +3,116 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Job Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Icon set (Lucide, ISC licence) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></symbol>
+      <symbol id="i-link"viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    </defs>
+  </svg>
+
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">◆</span> Job Tracker</div>
+    <a class="brand" href="/" aria-label="Job Tracker home">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect width="24" height="24" rx="6" class="brand-bg"/>
+        <path d="M5 12h4c2.5 0 3.5-4 6-4h4M9 12c2.5 0 3.5 4 6 4h4" class="brand-flow"/>
+      </svg>
+      <span>Job Tracker</span>
+    </a>
     <div class="topbar-actions">
-      <div id="gmail-status" class="gmail-status"></div>
-      <button id="sync-btn" class="btn btn-ghost" title="Check Gmail for new updates">↻ Sync</button>
-      <button id="add-btn" class="btn btn-primary">+ Add application</button>
+      <div id="gmail-status" class="gmail-status" role="status"></div>
+      <button id="sync-btn" class="btn btn-quiet" type="button" title="Check Gmail now">
+        <svg class="icon"><use href="#i-refresh"/></svg><span>Sync</span>
+      </button>
+      <button id="add-btn" class="btn btn-primary" type="button">
+        <svg class="icon"><use href="#i-plus"/></svg><span>Add application</span>
+      </button>
     </div>
   </header>
 
-  <main class="container">
+  <main class="page">
     <div id="banner"></div>
 
-    <section class="stats" id="stats"></section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Application flow</h2>
-        <span class="muted" id="flow-caption"></span>
-      </div>
-      <div id="sankey" class="sankey"></div>
+    <section class="summary" aria-labelledby="summary-title">
+      <h1 id="summary-title">Your job search</h1>
+      <p id="summary-line" class="summary-line"></p>
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <h2>Applications</h2>
-        <input id="search" class="search" type="search" placeholder="Search company, role or job ID…">
+    <div class="overview">
+      <section class="panel flow-panel" aria-labelledby="flow-title">
+        <div class="panel-head">
+          <div class="head-text">
+            <h2 id="flow-title">Where applications went</h2>
+            <span class="hint" id="flow-caption"></span>
+          </div>
+          <button class="icon-btn" id="expand-flow" type="button" title="Open a larger view" aria-label="Open a larger view of the chart">
+            <svg class="icon"><use href="#i-expand"/></svg>
+          </button>
+        </div>
+        <div id="sankey" class="sankey zoomable"></div>
+      </section>
+
+      <section class="panel action-panel" aria-labelledby="action-title">
+        <div class="panel-head">
+          <h2 id="action-title">Needs your action</h2>
+          <span class="count-badge" id="action-count"></span>
+        </div>
+        <ul id="action-list" class="action-list"></ul>
+      </section>
+    </div>
+
+    <section class="panel apps-panel" aria-labelledby="apps-title">
+      <div class="panel-head apps-head">
+        <h2 id="apps-title">Applications</h2>
+        <div class="toolbar">
+          <label class="select-wrap" title="Show applications sent in one month">
+            <svg class="icon"><use href="#i-calendar"/></svg>
+            <select id="month" aria-label="Filter by month applied"></select>
+            <svg class="icon chev"><use href="#i-chevron"/></svg>
+          </label>
+          <label class="search">
+            <svg class="icon"><use href="#i-search"/></svg>
+            <input id="search" type="search" placeholder="Search company, role or job ID" aria-label="Search applications">
+            <kbd>/</kbd>
+          </label>
+          <button class="btn" id="export-btn" type="button" title="Download the applications shown as an Excel file">
+            <svg class="icon"><use href="#i-download"/></svg><span>Export</span>
+          </button>
+        </div>
       </div>
-      <div id="filters" class="filters"></div>
+
+      <div class="stage-tabs" id="stage-tabs" role="tablist" aria-label="Filter by status"></div>
+      <div class="stage-bar" id="stage-bar" aria-hidden="true"></div>
+
       <div class="table-wrap">
         <table class="apps">
           <thead>
-            <tr><th>Company</th><th>Role</th><th>Status</th><th>Applied</th><th>Last update</th><th>Source</th></tr>
+            <tr>
+              <th><button class="sort" data-sort="company">Company</button></th>
+              <th class="col-role">Role</th>
+              <th><button class="sort" data-sort="status">Status</button></th>
+              <th class="col-applied"><button class="sort" data-sort="appliedAt">Applied</button></th>
+              <th class="col-latest"><button class="sort" data-sort="lastActivity">Latest update</button></th>
+            </tr>
           </thead>
           <tbody id="rows"></tbody>
         </table>
@@ -49,8 +121,21 @@
     </section>
   </main>
 
+  <dialog id="flow-dialog" class="flow-dialog" aria-labelledby="flow-dialog-title">
+    <div class="flow-dialog-head">
+      <div class="head-text">
+        <h2 id="flow-dialog-title">Where applications went</h2>
+        <span class="hint" id="flow-dialog-caption">Click a stage to see those applications</span>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div id="sankey-large" class="sankey sankey-large"></div>
+  </dialog>
+
   <div id="scrim" class="scrim" hidden></div>
-  <aside id="drawer" class="drawer" aria-hidden="true"></aside>
+  <aside id="drawer" class="drawer" aria-hidden="true" aria-labelledby="drawer-title" role="dialog"></aside>
 
   <script src="/vendor/d3/d3.min.js"></script>
   <script src="/vendor/d3-sankey/d3-sankey.min.js"></script>
