@@ -6,6 +6,7 @@ import { classifierName } from './src/classify.js';
 import { detectOllama } from './src/ollama.js';
 import { buildWorkbook } from './src/export.js';
 import * as gmail from './src/gmail.js';
+import { checkDeadlines, checkNotificationSetting, notificationStatus } from './src/notify.js';
 
 const PORT = gmail.PORT;
 const SYNC_MINUTES = Number(process.env.SYNC_INTERVAL_MINUTES || 5);
@@ -41,7 +42,9 @@ app.get('/api/state', (req, res) => {
       lastSyncError: db.lastSyncError,
       syncMinutes: SYNC_MINUTES,
       classifier: classifierName(),
+      progress: gmail.getProgress(),
     },
+    notifications: notificationStatus(),
     ghostDays: GHOST_DAYS,
   });
 });
@@ -73,9 +76,28 @@ app.patch('/api/applications/:id', (req, res) => {
     a.renamed = true;
   }
   for (const key of ['company', 'role', 'jobId', 'url', 'notes']) {
-    if (typeof req.body[key] === 'string') a[key] = req.body[key].trim();
+    if (typeof req.body[key] !== 'string') continue;
+    const value = req.body[key].trim();
+    // Remember hand-corrected role/ID so a re-scan doesn't overwrite them.
+    if ((key === 'role' || key === 'jobId') && value !== (a[key] || '')) a.edited = { ...a.edited, [key]: true };
+    a[key] = value;
   }
   if (req.body.status) addManualStatus(a, req.body.status);
+  // Deadline: "YYYY-MM-DD" sets your own (end of that day); "" or done=true clears the current one.
+  if (typeof req.body.deadline === 'string') {
+    const m = req.body.deadline.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      a.manualDeadline = new Date(+m[1], +m[2] - 1, +m[3], 23, 59).toISOString();
+      a.deadlineDone = null;
+    } else {
+      a.deadlineDone = a.deadline;
+      a.manualDeadline = null;
+    }
+  }
+  if (req.body.deadlineDone === true) {
+    a.deadlineDone = a.deadline;
+    a.manualDeadline = null;
+  }
   refresh(a);
   save();
   broadcast();
@@ -99,6 +121,10 @@ app.post('/api/export', async (req, res) => {
 
 app.delete('/api/applications/:id', (req, res) => {
   const db = getDb();
+  const gone = db.applications.find(x => x.id === req.params.id);
+  // Remember its emails so a re-scan doesn't bring the application back.
+  db.ignored ??= {};
+  for (const e of gone?.events || []) if (e.messageId) db.ignored[e.messageId] = true;
   db.applications = db.applications.filter(x => x.id !== req.params.id);
   save();
   broadcast();
@@ -107,6 +133,7 @@ app.delete('/api/applications/:id', (req, res) => {
 
 // --- Gmail ----------------------------------------------------------------
 app.post('/api/sync', async (req, res) => {
+  if (gmail.isRescanning()) return res.status(202).json({ rescanning: true });
   try {
     const result = await gmail.sync();
     broadcast();
@@ -115,6 +142,18 @@ app.post('/api/sync', async (req, res) => {
     broadcast();
     res.status(500).json({ error: err.message });
   }
+});
+
+// Re-read every email with the current classifier, keeping your edits. Runs in the
+// background (a few minutes); progress comes through /api/state and live updates.
+app.post('/api/rescan', (req, res) => {
+  if (!gmail.gmailConnected()) return res.status(400).json({ error: 'Connect Gmail first' });
+  if (gmail.isRescanning()) return res.status(409).json({ error: 'A re-scan is already running' });
+  gmail.rescan()
+    .then(r => console.log(`[rescan] done: ${r.applications} applications, ${r.restored} with your edits restored, ${r.kept} kept as-is`))
+    .catch(err => console.error(`[rescan] failed: ${err.message}`))
+    .finally(afterSync);
+  res.status(202).json({ started: true });
 });
 
 app.get('/auth/google', (req, res) => {
@@ -141,18 +180,30 @@ app.post('/api/disconnect', (req, res) => {
 
 async function runSync() {
   await detectOllama(); // picks up Ollama if it was started (or stopped) since last time
+  if (gmail.isRescanning()) return;
   try {
     const { added = 0 } = await gmail.sync();
     if (added) console.log(`[sync] ${added} new email update(s)`);
   } catch (err) {
     console.error(`[sync] failed: ${err.message}`);
   }
+  afterSync();
+}
+
+// After any sync: warn about deadlines due within a day, then refresh open dashboards.
+function afterSync() {
+  checkNotificationSetting(); // notices when you turn Windows notifications on or off
+  if (checkDeadlines(getDb().applications, `http://localhost:${PORT}/`)) save();
   broadcast();
 }
+
+// Live progress while a sync or re-scan works through emails.
+gmail.onProgress(broadcast);
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`Job tracker running at http://localhost:${PORT}`);
   detectOllama().then(() => console.log(`Email classifier: ${classifierName()}`));
+  checkNotificationSetting();
   runSync();
   setInterval(runSync, SYNC_MINUTES * 60_000);
 });

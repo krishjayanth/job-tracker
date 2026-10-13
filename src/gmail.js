@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { google } from 'googleapis';
-import { DATA_DIR, getDb, save, createApplication, findApplication, refresh, newId, normalizeCompany } from './store.js';
+import {
+  DATA_DIR, getDb, save, createApplication, findApplication, refresh, newId, normalizeCompany,
+  snapshotEdits, restoreEdits, backup,
+} from './store.js';
 import { classify } from './classify.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
@@ -118,34 +121,74 @@ async function withRetry(fn, attempts = 6) {
 }
 
 let syncing = null;
+let progress = null; // { mode: 'sync' | 'rescan', done, total } while working
+let progressListener = () => {};
+
+export const getProgress = () => progress;
+export const onProgress = fn => { progressListener = fn; };
 
 // Pull new matching emails, classify them, and fold them into applications.
 // Concurrent callers share the in-flight sync.
 export function sync() {
-  if (!syncing) syncing = drain().finally(() => { syncing = null; });
+  if (!syncing) syncing = drain({ mode: 'sync' }).finally(() => { syncing = null; progress = null; });
+  return syncing;
+}
+
+export const isRescanning = () => progress?.mode === 'rescan';
+
+// Rebuild every Gmail-based application from scratch with the current classifier,
+// then put back everything you changed by hand. Covers your whole history (at least
+// as far back as your oldest application), not just the last INITIAL_DAYS.
+export function rescan() {
+  const job = (async () => {
+    if (syncing) await syncing.catch(() => {});
+    const db = getDb();
+    progress = { mode: 'rescan', done: 0, total: 0 };
+    progressListener();
+    backup('db.before-rescan.json');
+
+    const snapshots = snapshotEdits();
+    const oldest = db.applications.flatMap(a => a.events).map(e => Date.parse(e.date)).reduce((m, t) => Math.min(m, t), Date.now());
+    const sinceEpoch = Math.floor(Math.min(oldest, Date.now() - INITIAL_DAYS * 86_400_000) / 1000) - 86_400;
+
+    // Manually added applications stay, minus emails that the re-scan will re-attach.
+    db.applications = db.applications
+      .filter(a => a.source !== 'gmail')
+      .map(a => refresh({ ...a, events: a.events.filter(e => e.manual || !e.messageId) }));
+    db.processed = {};
+    db.lastSync = null;
+    save();
+
+    const result = await drain({ mode: 'rescan', sinceEpoch });
+    const restore = restoreEdits(snapshots);
+    save();
+    return { ...result, ...restore, applications: db.applications.length };
+  })();
+  syncing = job.finally(() => { syncing = null; progress = null; });
   return syncing;
 }
 
 // Keep going in batches until the backlog (e.g. the first 90-day scan) is cleared.
-async function drain() {
+async function drain(opts) {
   let added = 0, scanned = 0, result;
   do {
-    result = await runSync();
+    result = await runSync(opts);
     added += result.added ?? 0;
     scanned += result.scanned ?? 0;
   } while (result.remaining > 0);
   return { ...result, added, scanned };
 }
 
-async function runSync() {
+async function runSync({ mode, sinceEpoch } = {}) {
   const db = getDb();
+  db.ignored ??= {};
   if (!gmailConnected()) return { added: 0, skipped: true };
   const gmail = google.gmail({ version: 'v1', auth: getClient() });
 
   // Re-scan a day of overlap so nothing slips between syncs; processed ids dedupe.
   const since = db.lastSync
     ? `after:${Math.floor(Date.parse(db.lastSync) / 1000) - 86_400}`
-    : `newer_than:${INITIAL_DAYS}d`;
+    : sinceEpoch ? `after:${sinceEpoch}` : `newer_than:${INITIAL_DAYS}d`;
   const q = `${since} ${BASE_QUERY}`;
 
   try {
@@ -158,11 +201,20 @@ async function runSync() {
     } while (pageToken);
 
     // Gmail lists newest first; process oldest first so timelines build in order.
-    const unprocessed = ids.filter(id => !db.processed[id]).reverse();
+    // Emails from applications you deleted stay deleted.
+    const unprocessed = ids.filter(id => !db.processed[id] && !db.ignored[id]).reverse();
     const batch = unprocessed.slice(0, MAX_PER_SYNC);
+    if (batch.length) {
+      progress = { mode, done: progress?.mode === mode ? progress.done : 0, total: (progress?.mode === mode ? progress.done : 0) + unprocessed.length };
+      progressListener();
+    }
 
     let added = 0;
     for (const id of batch) {
+      if (progress) {
+        progress.done++;
+        if (progress.done % 5 === 0) progressListener();
+      }
       const { data: msg } = await withRetry(() => gmail.users.messages.get({ userId: 'me', id, format: 'full' }));
       await sleep(REQUEST_GAP_MS);
       const email = {
@@ -192,6 +244,7 @@ async function runSync() {
       app.events.push({
         id: newId(), date: email.date, stage: result.stage, subject: email.subject,
         from: email.from, snippet: msg.snippet, messageId: msg.id, threadId: msg.threadId, jobId,
+        ...(result.deadline && { deadline: result.deadline }),
       });
       refresh(app);
       added++;

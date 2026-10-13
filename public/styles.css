@@ -128,6 +128,44 @@ h1, h2, h3 { margin: 0; letter-spacing: -.01em; }
 .gmail-status a { color: var(--accent); font-weight: 500; text-decoration: none; }
 .gmail-status a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
+.menu {
+  position: fixed; inset: auto; margin: 0; width: 300px; padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text);
+  box-shadow: 0 12px 32px -8px rgba(10, 12, 18, .25);
+}
+.menu-title { font-weight: 600; margin-bottom: 4px; }
+.menu p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.progress-text { font-variant-numeric: tabular-nums; }
+.menu-note { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.menu-note p { margin-bottom: 0; }
+.menu-note strong { color: var(--text); font-weight: 600; }
+.more-dot { position: relative; }
+.more-dot::after {
+  content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--interview); box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* deadline chips: amber when close, red when today/overdue */
+.due {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
+  font-size: 11.5px; font-weight: 600; white-space: nowrap; color: var(--muted);
+}
+.due .icon { width: 12px; height: 12px; }
+.due.soon { color: color-mix(in srgb, var(--interview) 80%, var(--text)); }
+.due.urgent, .due.overdue { color: var(--danger); }
+.action-item .due { margin-top: 0; }
+.action-side { display: grid; justify-items: end; gap: 2px; }
+.done-btn {
+  display: none; align-items: center; gap: 3px; height: 22px; padding: 0 7px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 11.5px; font-weight: 500; cursor: pointer;
+}
+.done-btn .icon { width: 12px; height: 12px; }
+.done-btn:hover { color: var(--offer); border-color: color-mix(in srgb, var(--offer) 45%, transparent); }
+.action-row:hover .done-btn, .done-btn:focus-visible { display: inline-flex; }
+.action-row:hover .age { display: none; }
+.deadline-field { display: flex; gap: 8px; }
+.deadline-field input { flex: 1; }
+
 /* ------------------------------------------------------------------ page */
 .page { max-width: 1240px; margin: 0 auto; padding: 28px 28px 64px; display: grid; gap: 20px; }
 .page > * { min-width: 0; }

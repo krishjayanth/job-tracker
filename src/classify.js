@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { classifyWithRules, resolveCompanyName, stripJobId } from './rules.js';
+import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline } from './rules.js';
 import { classifyWithOllama, ollamaModel } from './ollama.js';
 
 export { classifyWithRules };
@@ -120,6 +120,11 @@ export async function classify(email) {
     }
   }
   if (result === undefined) result = classifyWithRules(email);
-  if (result) result.company = resolveCompanyName(result.company);
+  if (result) {
+    result.company = resolveCompanyName(result.company);
+    if (result.stage !== 'rejected' && result.stage !== 'withdrawn') {
+      result.deadline = extractDeadline(`${email.subject}\n${email.body}`, email.date);
+    }
+  }
   return result;
 }

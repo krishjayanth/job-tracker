@@ -40,7 +40,71 @@ export function refresh(app) {
   app.status = computeStatus(app.events);
   app.lastActivity = app.events.at(-1)?.date ?? app.createdAt;
   app.appliedAt = app.events[0]?.date ?? app.createdAt;
+  app.deadline = activeDeadline(app);
   return app;
+}
+
+// The deadline that's still open: from the latest email that set one, unless a later
+// email arrived (usually "thanks for completing...") or you marked it done. A date you
+// typed in yourself wins over the emails.
+function activeDeadline(app) {
+  if (app.status === 'rejected' || app.status === 'withdrawn') return null;
+  let fromEmail = null;
+  for (const e of app.events) {
+    if (e.deadline) fromEmail = e.deadline;
+    else if (!e.manual) fromEmail = null;
+  }
+  const deadline = app.manualDeadline || fromEmail;
+  return deadline && deadline !== app.deadlineDone ? deadline : null;
+}
+
+// ---- re-scan support: keep what you changed by hand ---------------------------
+
+const userEdited = a =>
+  a.events.some(e => e.manual) || a.renamed || a.notes || a.url || a.edited ||
+  a.manualDeadline || a.deadlineDone || a.notifiedDeadline;
+
+// Snapshot the hand-made parts of Gmail-built applications before a re-scan.
+export function snapshotEdits() {
+  return db.applications
+    .filter(a => a.source === 'gmail' && userEdited(a))
+    .map(a => ({ messageIds: a.events.filter(e => e.messageId).map(e => e.messageId), app: structuredClone(a) }));
+}
+
+// Re-apply a snapshot onto the freshly rebuilt applications, matched by email.
+export function restoreEdits(snapshots) {
+  let restored = 0, kept = 0;
+  for (const { messageIds, app: old } of snapshots) {
+    const target = db.applications.find(a => a.events.some(e => messageIds.includes(e.messageId)));
+    if (!target) {
+      // Its emails no longer count as an application; keep yours rather than lose it.
+      db.applications.push(old);
+      kept++;
+      continue;
+    }
+    if (old.renamed) {
+      target.aliases = [...new Set([...(target.aliases || []), ...(old.aliases || []), target.company])]
+        .filter(n => n !== old.company);
+      target.company = old.company;
+      target.renamed = true;
+    }
+    if (old.edited) {
+      for (const field of Object.keys(old.edited)) target[field] = old[field];
+      target.edited = { ...target.edited, ...old.edited };
+    }
+    for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline']) {
+      if (old[field]) target[field] = old[field];
+    }
+    const ids = new Set(target.events.map(e => e.id));
+    target.events.push(...old.events.filter(e => e.manual && !ids.has(e.id)));
+    refresh(target);
+    restored++;
+  }
+  return { restored, kept };
+}
+
+export function backup(name) {
+  fs.copyFileSync(DB_FILE, path.join(DATA_DIR, name));
 }
 
 export function createApplication({ company, role = '', jobId = '', url = '', notes = '', source = 'manual' }) {

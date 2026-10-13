@@ -26,7 +26,9 @@
       <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
       <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></symbol>
-      <symbol id="i-link"viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
     </defs>
   </svg>
 
@@ -43,6 +45,22 @@
       <button id="sync-btn" class="btn btn-quiet" type="button" title="Check Gmail now">
         <svg class="icon"><use href="#i-refresh"/></svg><span>Sync</span>
       </button>
+      <button id="more-btn" class="icon-btn" type="button" popovertarget="more-menu" aria-label="More sync options" title="More sync options">
+        <svg class="icon"><use href="#i-more"/></svg>
+      </button>
+      <div id="more-menu" class="menu" popover>
+        <div class="menu-title">Re-scan all emails</div>
+        <p>Re-reads every application email with the current classifier, for example after switching to a bigger model.
+          Your status changes, renames, notes and deadlines are kept, and deleted applications stay deleted.
+          Takes a few minutes; a backup is saved first.</p>
+        <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
+        <div id="notify-note" class="menu-note" hidden>
+          <div class="menu-title">Deadline pop-ups are off</div>
+          <p>Windows is blocking notifications. To get a reminder the day before something is due, open
+            <strong>Settings › System › Notifications</strong>, make sure notifications are on, and turn on
+            <strong>Windows PowerShell</strong> in the app list. The tracker picks it up within 5 minutes.</p>
+        </div>
+      </div>
       <button id="add-btn" class="btn btn-primary" type="button">
         <svg class="icon"><use href="#i-plus"/></svg><span>Add application</span>
       </button>

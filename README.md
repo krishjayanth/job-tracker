@@ -70,6 +70,31 @@ the first one that's set up. The top bar shows which one is active.
 Cryptic sender codes, like Workday's `fmr@myworkday.com`, are mapped to real names ("Fidelity Investments") from a
 lookup table in `src/rules.js`. The LLMs also read the real name from the email body.
 
+## Deadlines and reminders
+
+The tracker finds deadlines in emails, like "expires in 5 days", "take it before Oct 9 at 11:59 PM" or "complete
+within 4 days". It ignores promises like "we'll get back to you within 5 days". Open deadlines show as "Due in 2 days"
+in **Needs your action**, with the soonest first, and under the status in the table.
+
+- A deadline is closed when a later email arrives (usually "thanks for completing…") or when you click **Done**.
+- In the side panel you can set your own deadline or clear one.
+- **Windows notifications:** you get a pop-up when something is due within 24 hours, even with the dashboard closed.
+  Clicking it opens the tracker. Pop-ups come through **Windows PowerShell**, so they need notifications on in
+  *Settings › System › Notifications*, with Windows PowerShell allowed. If they're blocked, the **⋯** menu shows a
+  warning. Set `NOTIFY=0` to turn pop-ups off.
+
+## Re-scan all emails
+
+**⋯ › Re-scan now** re-reads your whole history with the current classifier. Use it after switching to a bigger
+Ollama model, or after a classifier update. It keeps your edits:
+
+- status changes, renames, notes, links and deadlines
+- roles and job IDs you corrected
+- manually added applications
+- deleted applications stay deleted
+
+A backup is saved to `data/db.before-rescan.json` first. Progress shows in the top bar.
+
 ## How it works
 
 | Piece | File |
@@ -102,5 +127,6 @@ in the chart.
 | `OLLAMA_MODEL` | first installed chat model | Ollama model to use, e.g. `qwen3.5:2b` |
 | `OLLAMA_URL` | `http://localhost:11434` | Where Ollama is running |
 | `USE_OLLAMA` | — | Set to `0` to ignore Ollama even when it's running |
+| `NOTIFY` | — | Set to `0` to turn off Windows deadline pop-ups |
 
 To start over, stop the server and delete the `data/` folder.

@@ -150,6 +150,62 @@ export function extractJobId(subject, body) {
   return subject.match(BARE_JOB_ID)?.[1] || body.slice(0, 500).match(BARE_JOB_ID)?.[1] || '';
 }
 
+// ---- deadlines ----------------------------------------------------------------
+
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fourteen: 14 };
+
+// A sentence has to sound like an instruction to you ("complete by", "expires in"),
+// not a promise from them ("we'll get back to you within 5 days").
+const DEADLINE_CUE = /\b(expires?|expiring|expiration|deadline|due|complete|submit|finish|take (?:it|the|your)|respond|action|access|before|by|until|no later than|within)\b/i;
+const THEIR_PROMISE = /\b(get back to you|hear from (?:us|you)|be in touch|reach out|we(?:'ll| will| aim| typically| usually)?\s+(?:review|respond|contact|follow up|get back|be in touch|reach out))\b/i;
+
+const MONTH_DATE = /\b(?:by|before|until|no later than|due(?: on| by)?|deadline(?: is|:)?|expires?(?: on)?|expiration(?: date)?:?|on)\s+(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?(?:\s*(?:at|@|,)?\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?)?/i;
+const NUMERIC_DATE = /\b(?:by|before|until|due(?: on| by)?|deadline:?|expires?(?: on)?)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i;
+const RELATIVE = /\b(?:in|within|next)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|fourteen)\s+(?:business\s+|calendar\s+)?(hours?|days?|weeks?)\b/i;
+
+function atEndOfDay(d) { d.setHours(23, 59, 0, 0); return d; }
+
+// Returns an ISO date for "the thing you must do by", or '' if the email has none.
+export function extractDeadline(text, emailDate) {
+  const base = new Date(emailDate);
+  const sentences = text.slice(0, 5000).split(/(?<=[.!?])\s+|\n+/);
+  for (const s of sentences) {
+    if (!DEADLINE_CUE.test(s) || THEIR_PROMISE.test(s)) continue;
+    let when = null;
+    let m;
+    if ((m = s.match(MONTH_DATE))) {
+      const year = m[3] ? Number(m[3]) : base.getFullYear();
+      when = new Date(year, MONTHS[m[1].toLowerCase()], Number(m[2]));
+      if (m[4]) {
+        let h = Number(m[4]) % 12;
+        if (m[6].toLowerCase() === 'p') h += 12;
+        when.setHours(h, Number(m[5] || 0), 0, 0);
+      } else {
+        atEndOfDay(when);
+      }
+      if (!m[3] && when < base - 2 * 86_400_000) when.setFullYear(year + 1); // "Jan 5" seen in December
+    } else if ((m = s.match(NUMERIC_DATE))) {
+      const year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : base.getFullYear();
+      when = atEndOfDay(new Date(year, Number(m[1]) - 1, Number(m[2])));
+    } else if ((m = s.match(RELATIVE)) && /\b(expire|due|deadline|complete|submit|finish|action|access|respond|take)\w*/i.test(s)) {
+      const n = Number(m[1]) || NUMBER_WORDS[m[1].toLowerCase()];
+      const unit = m[2].toLowerCase();
+      when = new Date(base);
+      if (unit.startsWith('hour')) when.setHours(when.getHours() + n);
+      else {
+        when.setDate(when.getDate() + n * (unit.startsWith('week') ? 7 : 1));
+        atEndOfDay(when);
+      }
+    }
+    // Ignore dates in the past relative to the email, or implausibly far out.
+    if (when && !isNaN(when) && when > base - 12 * 3_600_000 && when - base < 60 * 86_400_000) {
+      return when.toISOString();
+    }
+  }
+  return '';
+}
+
 // ---- company name resolution ------------------------------------------------
 
 // Short codes some companies send from (mostly Workday tenants: fmr@myworkday.com)

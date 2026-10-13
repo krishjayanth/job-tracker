@@ -47,6 +47,11 @@ const monthLabel = key => {
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 };
 const inMonth = a => month === 'all' || monthKey(a.appliedAt) === month;
+// Local calendar date for <input type="date">.
+const isoDate = iso => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 function avatarColor(name) {
   let h = 0;
@@ -125,9 +130,14 @@ function renderGmail() {
     el.innerHTML = `<span class="dot off"></span> <a href="/auth/google">Connect Gmail</a>`;
   } else {
     const err = g.lastSyncError;
-    el.innerHTML = `<span class="dot ${err ? 'err' : ''}"></span>
-      <span>${err ? 'Sync failed' : `Synced ${timeAgo(g.lastSync)}`}</span>
+    const p = g.progress;
+    const statusText = p
+      ? `${p.mode === 'rescan' ? 'Re-scanning' : 'Syncing'} <span class="progress-text">${p.done} / ${p.total || '…'}</span>`
+      : err ? 'Sync failed' : `Synced ${timeAgo(g.lastSync)}`;
+    el.innerHTML = `<span class="dot ${err && !p ? 'err' : ''}"></span>
+      <span>${statusText}</span>
       <span class="via">· ${esc(g.classifier)}</span>`;
+    $('#rescan-btn').disabled = p?.mode === 'rescan';
     if (err) {
       const enableUrl = err.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/gmail\.googleapis\.com\/\S+?(?=\s|$)/)?.[0];
       banner.innerHTML = `<div class="banner error">${icon('alert')}<div>${enableUrl
@@ -138,7 +148,32 @@ function renderGmail() {
     }
   }
   $('#sync-btn').hidden = !g.connected;
+  $('#more-btn').hidden = !g.connected;
+  const notifyOff = state.notifications === 'disabled';
+  $('#notify-note').hidden = !notifyOff;
+  $('#more-btn').classList.toggle('more-dot', notifyOff);
 }
+
+// How to show a deadline: null once it's more than 3 days past (stale).
+function dueInfo(deadline) {
+  if (!deadline) return null;
+  const ms = Date.parse(deadline) - Date.now();
+  const days = Math.ceil(ms / 86_400_000);
+  if (ms < -3 * 86_400_000) return null;
+  if (ms < 0) return { level: 'overdue', text: 'Overdue' };
+  const end = new Date(deadline);
+  const today = new Date();
+  const sameDay = end.toDateString() === today.toDateString();
+  const tomorrow = new Date(today.getTime() + 86_400_000).toDateString() === end.toDateString();
+  if (sameDay) return { level: 'urgent', text: `Due today${end.getHours() < 23 ? `, ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}` };
+  if (tomorrow) return { level: 'urgent', text: 'Due tomorrow' };
+  if (days <= 4) return { level: 'soon', text: `Due in ${days} days` };
+  return { level: 'later', text: `Due ${shortDate(deadline)}` };
+}
+const dueChip = deadline => {
+  const d = dueInfo(deadline);
+  return d ? `<span class="due ${d.level}">${icon('clock')}${d.text}</span>` : '';
+};
 
 function renderSummary() {
   const apps = state.applications;
@@ -271,20 +306,33 @@ function filterByNode(id) {
 }
 
 function renderActions() {
+  // Anything with an open deadline, plus assessments/interviews/offers. Deadlines first,
+  // soonest at the top; the rest by most recent activity.
   const items = state.applications
-    .filter(a => ACTION_STAGES[a.status])
-    .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+    .filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline))
+    .sort((a, b) => {
+      const da = dueInfo(a.deadline) ? a.deadline : null, db = dueInfo(b.deadline) ? b.deadline : null;
+      if (da && db) return da.localeCompare(db);
+      if (da || db) return da ? -1 : 1;
+      return b.lastActivity.localeCompare(a.lastActivity);
+    });
   $('#action-count').textContent = items.length || '';
   $('#action-list').innerHTML = items.length
-    ? items.map(a => `
-      <li><button class="action-item" data-open="${a.id}" type="button">
+    ? items.map(a => {
+      const due = dueInfo(a.deadline);
+      return `
+      <li class="action-row"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
         ${avatar(a.company, 'sm')}
         <span class="what">
           <span class="co">${esc(a.company)}</span>
-          <span class="why" style="display:block">${ACTION_STAGES[a.status]}${a.role ? ` · ${esc(a.role)}` : ''}</span>
+          <span class="why" style="display:block">${ACTION_STAGES[a.status] || 'Next step to complete'}${a.role ? ` · ${esc(a.role)}` : ''}</span>
         </span>
-        <span class="age">${timeAgo(a.lastActivity)}</span>
-      </button></li>`).join('')
+        <span class="action-side">
+          ${due ? dueChip(a.deadline) : `<span class="age">${timeAgo(a.lastActivity)}</span>`}
+          ${due ? `<button class="done-btn" type="button" data-done="${a.id}" title="Mark this deadline as done">${icon('check')}Done</button>` : ''}
+        </span>
+      </div></li>`;
+    }).join('')
     : `<li class="action-empty">Nothing waiting on you right now. Assessments, interviews and offers show up here as their emails arrive.</li>`;
 }
 
@@ -341,7 +389,7 @@ function renderTable() {
         <div class="role">${a.role ? esc(a.role) : '<span class="dim">No role found</span>'}</div>
         ${a.jobId ? `<div class="jobid">ID ${esc(a.jobId)}</div>` : ''}
       </td>
-      <td>${statusSelect(a)}</td>
+      <td>${statusSelect(a)}${dueChip(a.deadline) ? `<div>${dueChip(a.deadline)}</div>` : ''}</td>
       <td class="col-applied date">${shortDate(a.appliedAt)}</td>
       <td class="col-latest latest">
         <div class="when">${timeAgo(a.lastActivity)}</div>
@@ -426,6 +474,11 @@ function openDrawer(app) {
           <div class="field wide"><label for="f-role">Role</label><input id="f-role" name="role" value="${esc(a.role)}" placeholder="e.g. Software Engineer Intern"></div>
           <div class="field"><label for="f-jobid">Job ID</label><input id="f-jobid" name="jobId" value="${esc(a.jobId)}" placeholder="e.g. R-574294"></div>
           <div class="field"><label for="f-url">Job posting link</label><input id="f-url" name="url" type="url" value="${esc(a.url)}" placeholder="https://"></div>
+          ${isNew ? '' : `<div class="field wide"><label for="f-deadline">Deadline</label>
+            <div class="deadline-field">
+              <input id="f-deadline" name="deadline" type="date" value="${a.deadline ? isoDate(a.deadline) : ''}">
+              ${a.deadline ? `<button class="btn" type="button" id="deadline-done">${icon('check')}Mark done</button>` : ''}
+            </div></div>`}
           <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
         </div>
       </form>
@@ -453,6 +506,8 @@ function openDrawer(app) {
     const companyInput = $('#f-company');
     if (!companyInput.value.trim()) { companyInput.focus(); companyInput.setCustomValidity('Company is required'); companyInput.reportValidity(); companyInput.setCustomValidity(''); return; }
     const data = Object.fromEntries(new FormData(form));
+    // Only send a deadline you actually changed (keeps an email's exact time otherwise).
+    if (!isNew && data.deadline === (a.deadline ? isoDate(a.deadline) : '')) delete data.deadline;
     saveBtn.disabled = true;
     try {
       if (isNew) {
@@ -471,6 +526,13 @@ function openDrawer(app) {
       $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
     }
   };
+
+  $('#deadline-done')?.addEventListener('click', async () => {
+    await api('PATCH', `/api/applications/${a.id}`, { deadlineDone: true });
+    await load();
+    openDrawer(state.applications.find(x => x.id === a.id));
+    $('#saved-note').innerHTML = `<span class="saved-note">${icon('check')}Deadline done</span>`;
+  });
 
   if (!isNew) {
     const del = $('#delete-btn');
@@ -509,10 +571,39 @@ const openById = id => openDrawer(state.applications.find(a => a.id === id));
 $('#add-btn').onclick = () => openDrawer(null);
 $('#scrim').onclick = closeDrawer;
 $('#drawer').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeDrawer(); });
-$('#action-list').addEventListener('click', e => {
+$('#action-list').addEventListener('click', async e => {
+  const done = e.target.closest('[data-done]');
+  if (done) {
+    done.disabled = true;
+    await api('PATCH', `/api/applications/${done.dataset.done}`, { deadlineDone: true });
+    return load();
+  }
   const item = e.target.closest('[data-open]');
   if (item) openById(item.dataset.open);
 });
+$('#action-list').addEventListener('keydown', e => {
+  const item = e.target.closest('[data-open]');
+  if (item && e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openById(item.dataset.open); }
+});
+
+// "More" menu: anchor the popover under its button.
+const menu = $('#more-menu');
+menu.addEventListener('beforetoggle', e => {
+  if (e.newState !== 'open') return;
+  const r = $('#more-btn').getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, r.right - 300)}px`;
+});
+$('#rescan-btn').onclick = async () => {
+  $('#rescan-btn').disabled = true;
+  try {
+    await api('POST', '/api/rescan');
+    menu.hidePopover();
+  } catch (err) {
+    alert(err.message);
+  }
+  load();
+};
 
 const rowsEl = $('#rows');
 rowsEl.addEventListener('click', e => {
