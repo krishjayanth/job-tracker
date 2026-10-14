@@ -50,15 +50,13 @@
       </button>
       <div id="more-menu" class="menu" popover>
         <div class="menu-title">Re-scan all emails</div>
-        <p>Re-reads every application email with the current classifier, for example after switching to a bigger model.
-          Your status changes, renames, notes and deadlines are kept, and deleted applications stay deleted.
-          Takes a few minutes; a backup is saved first.</p>
+        <p>Re-reads every application email with the current classifier. Your status changes, renames, notes and
+          deadlines are kept, and deleted applications stay deleted. A backup is saved first.
+          On Groq's free tier, emails beyond the daily limit are sorted by the built-in rules.</p>
         <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
-        <div id="notify-note" class="menu-note" hidden>
-          <div class="menu-title">Deadline pop-ups are off</div>
-          <p>Windows is blocking notifications. To get a reminder the day before something is due, open
-            <strong>Settings › System › Notifications</strong>, make sure notifications are on, and turn on
-            <strong>Windows PowerShell</strong> in the app list. The tracker picks it up within 5 minutes.</p>
+        <div id="account" class="menu-note" hidden>
+          <p>Signed in as <strong id="account-email"></strong></p>
+          <a class="btn" href="/logout" style="margin-top:10px;text-decoration:none">Sign out</a>
         </div>
       </div>
       <button id="add-btn" class="btn btn-primary" type="button">

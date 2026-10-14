@@ -1,132 +1,130 @@
 # Job Tracker
 
-A local job-application tracker that updates itself from Gmail. It shows a Simplify-style
-flow chart (Sankey) of where your applications ended up, plus a searchable table you can edit.
+A job-application tracker that updates itself from Gmail. It shows a Simplify-style flow chart of where your
+applications ended up, what needs your action next (assessments, interviews and deadlines), and a searchable,
+editable table that you can export to Excel.
 
-- **Auto-updates from Gmail.** Every 5 minutes it checks for new application emails (confirmations, assessments,
-  interview invites, offers, rejections) and moves each application to the right stage.
-- **Live dashboard.** The page refreshes by itself when new emails arrive.
-- **Private.** Runs only on your machine (`localhost`), with read-only Gmail access. Data lives in `data/db.json`.
+- **Hosted:** runs on Render (free tier). Data lives in Postgres on Neon (free), and you sign in with Google.
+  Only your account gets in.
+- **Auto-updating:** checks Gmail every few minutes (read-only access). Each application email is classified by
+  **Groq** (`openai/gpt-oss-20b`) and cross-checked by built-in rules.
+- **Keeps your edits:** status changes, renames, notes and deadlines survive re-scans.
 
-## Run it
+## Deploy (about 15 minutes, all free)
+
+You'll create four free accounts or resources and paste their values into Render.
+
+### 1. Database: Neon
+1. Sign up at https://neon.tech and create a project (any name, nearest region).
+2. Copy the **connection string**. It looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`.
+
+### 2. Email classifier: Groq
+1. Sign up at https://console.groq.com and create an **API key**.
+
+### 3. Web service: Render
+1. Push this repo to GitHub (private is fine).
+2. In Render: **New › Blueprint**, then pick the repo. It reads `render.yaml`.
+3. Fill in the values it asks for:
+   - `ALLOWED_EMAIL`: your Gmail address (the one you'll sign in with)
+   - `DATABASE_URL`: the Neon connection string
+   - `GROQ_API_KEY`: from step 2
+   - `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now; you'll fill them in after step 4
+
+   `SESSION_SECRET` and `CRON_SECRET` are generated for you.
+4. After it deploys, note the site address, e.g. `https://job-tracker-ab12.onrender.com`. Set `PUBLIC_URL` to it.
+
+### 4. Google sign-in and Gmail access
+Use the Google Cloud project you already have (the Gmail API is enabled there).
+1. **Google Auth Platform › Clients › Create client**, choose **Web application**.
+2. Under **Authorized redirect URIs**, add `https://<your-site>.onrender.com/oauth2callback`.
+   Add `http://localhost:5178/oauth2callback` too if you want to run it locally.
+3. Copy the **Client ID** and **Client secret** into Render's `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+   Render redeploys automatically.
+4. **Audience:** click **Publish app** (or keep it in Testing with yourself as a test user). In Testing mode,
+   Google signs you out of Gmail every 7 days. A published personal app shows an "unverified app" warning;
+   click *Advanced › Go to …*.
+
+### 5. Bring over your existing data (optional)
+On your PC, copy your local tracker into the database once:
+
+```bash
+DATABASE_URL="postgresql://..." npm run migrate
+```
+
+### 6. Sign in
+Open your Render URL and click **Sign in with Google**. The first time, Google also asks for read-only Gmail
+access. After that, syncing starts on its own.
+
+### 7. Keep it awake (free tier)
+Free Render services sleep after 15 minutes without visitors, which pauses syncing. Create a free job at
+https://cron-job.org that requests this URL every 10 minutes:
+
+```
+https://<your-site>.onrender.com/api/cron/sync?key=<CRON_SECRET>
+```
+
+Copy `CRON_SECRET` from Render's Environment tab. This keeps the service awake and syncing, and fits within
+Render's free 750 hours a month as long as it's your only free service.
+
+## Run locally
 
 ```bash
 npm install
+cp .env.example .env   # add GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET at minimum
 npm start
 ```
 
-Then open http://localhost:5178. It works without Gmail too: you can add applications by hand.
+Open http://localhost:5178. Without `DATABASE_URL`, data is stored in `data/`. Without `ALLOWED_EMAIL`, there's no
+sign-in, so only do that on your own machine.
 
-### Start automatically (Windows)
+## Features
 
-So you never have to run `npm start` again:
+- **Flow chart:** click it for a large view. Click a stage there to filter the table.
+- **Needs your action:** assessments, interviews, offers and open deadlines, with the soonest first.
+- **Deadlines:** found in emails ("expires in 5 days", "before Oct 9 at 11:59 PM"). Mark them done, or set your own.
+- **Table:** sort by any column, change status in the row, filter by stage or month, and search by company, role
+  or job ID.
+- **Export:** downloads what the table shows as an `.xlsx` file, with an Applications sheet and a full email Timeline.
+- **Re-scan** (⋯ menu): re-reads all your email with the current classifier and keeps your edits. On Groq's free
+  tier (about 200K tokens a day), a big re-scan may sort some emails with the rules instead.
 
-```bash
-npm run autostart
-```
+## How classification works
 
-This puts a small launcher in your Windows Startup folder. From then on, the tracker starts invisibly (no window) every
-time you log in, and it starts right away the first time too. Bookmark http://localhost:5178.
-Output goes to `data/server.log`. To undo it:
-
-```bash
-npm run autostart:remove
-```
-
-After pulling code changes, log out and back in, or end the `node.exe` process in Task Manager and run `npm run autostart`.
-
-## Connect Gmail (one-time, ~3 minutes)
-
-Google requires every app that reads Gmail to have its own OAuth client, so you'll create one for yourself:
-
-1. Go to https://console.cloud.google.com/ and create a project (any name).
-2. **APIs & Services → Library**, search for **Gmail API**, and click **Enable**.
-3. **Google Auth Platform → Branding / OAuth consent screen**: choose **External**, enter an app name and your email.
-4. **Audience → Test users**: add your Gmail address.
-5. **Clients → Create client → Application type: Desktop app**, then **Download JSON**.
-6. Save that file as `credentials.json` in this folder and restart `npm start`.
-7. Click **Connect Gmail** in the top bar and approve read-only access.
-
-The first sync scans the last 90 days. After that, it only fetches new mail.
-
-> **Sign-in expires after 7 days?** Google expires sign-ins for apps in "Testing" mode after a week.
-> To stop that, go to **Audience** and click **Publish app**. Google will show an "unverified app" warning
-> when you sign in. That's expected for a personal app: click *Advanced → Go to (app name)*.
-
-## Better accuracy with an LLM (optional)
-
-Each email is read for its **stage, company, role, and job ID**. Three classifiers are available, and the tracker picks
-the first one that's set up. The top bar shows which one is active.
-
-1. **Claude**, if `ANTHROPIC_API_KEY` is set in `.env`. Most accurate, but email text is sent to Anthropic.
-   Uses `claude-opus-5-5` at low effort by default; change it with `CLAUDE_MODEL`.
-2. **Ollama** (local, free, private), used automatically when [Ollama](https://ollama.com) is running.
-   It uses `OLLAMA_MODEL`, or the first chat model you have installed. About 1 second per email on a laptop GPU.
-   Small models occasionally invent things, so a company name or job ID is only accepted if it actually appears in the
-   email, and the rules' rejection and offer checks win over the model's. A bigger model (7–8B) is more accurate
-   than a 2B one, if you have the VRAM.
-3. **Built-in rules**, always available and used as the fallback.
-
-Cryptic sender codes, like Workday's `fmr@myworkday.com`, are mapped to real names ("Fidelity Investments") from a
-lookup table in `src/rules.js`. The LLMs also read the real name from the email body.
-
-## Deadlines and reminders
-
-The tracker finds deadlines in emails, like "expires in 5 days", "take it before Oct 9 at 11:59 PM" or "complete
-within 4 days". It ignores promises like "we'll get back to you within 5 days". Open deadlines show as "Due in 2 days"
-in **Needs your action**, with the soonest first, and under the status in the table.
-
-- A deadline is closed when a later email arrives (usually "thanks for completing…") or when you click **Done**.
-- In the side panel you can set your own deadline or clear one.
-- **Windows notifications:** you get a pop-up when something is due within 24 hours, even with the dashboard closed.
-  Clicking it opens the tracker. Pop-ups come through **Windows PowerShell**, so they need notifications on in
-  *Settings › System › Notifications*, with Windows PowerShell allowed. If they're blocked, the **⋯** menu shows a
-  warning. Set `NOTIFY=0` to turn pop-ups off.
-
-## Re-scan all emails
-
-**⋯ › Re-scan now** re-reads your whole history with the current classifier. Use it after switching to a bigger
-Ollama model, or after a classifier update. It keeps your edits:
-
-- status changes, renames, notes, links and deadlines
-- roles and job IDs you corrected
-- manually added applications
-- deleted applications stay deleted
-
-A backup is saved to `data/db.before-rescan.json` first. Progress shows in the top bar.
-
-## How it works
+1. A Gmail search narrows the inbox to likely application emails: hiring-software senders, and subjects about
+   applications or interviews.
+2. **Groq** reads each email and returns the stage, company, role and job ID as strict JSON.
+3. **Rules** (`src/rules.js`) cross-check it:
+   - a company or job ID is only accepted if it appears in the email
+   - the rules' rejection and offer checks win
+   - codes like `fmr@myworkday.com` map to real names ("Fidelity Investments")
+4. With no `GROQ_API_KEY`, or when Groq is rate limited, the rules handle the email on their own.
 
 | Piece | File |
 |---|---|
-| Web server, REST API, live updates (SSE), sync timer | `server.js` |
-| Gmail OAuth + fetching matching emails | `src/gmail.js` |
-| Picks a classifier (Claude → Ollama → rules) and merges results | `src/classify.js` |
-| Rule-based classifier, job-ID extraction, company-code lookup | `src/rules.js` |
-| Local LLM classifier | `src/ollama.js` |
-| Stage ordering, status + flow-path logic | `src/stages.js` |
-| JSON storage | `src/store.js` |
-| Dashboard (Sankey via d3-sankey, table, editor) | `public/` |
+| Server, sign-in routes, API, live updates | `server.js` |
+| Google sign-in sessions | `src/auth.js` |
+| Gmail access and sync, re-scan | `src/gmail.js` |
+| Groq classifier | `src/groq.js` |
+| Groq + rules merge | `src/classify.js` |
+| Rules, job IDs, deadlines, company names | `src/rules.js` |
+| Storage (Postgres or local files) | `src/store.js` |
+| Stage logic for status and the chart | `src/stages.js` |
+| Excel export | `src/export.js` |
+| Dashboard | `public/` |
 
-Emails are matched to an existing application by Gmail thread, then by company (and role when known).
-Stages only move forward (applied → assessment → interview → offer), except rejections and withdrawals, which always
-apply. **Your manual status changes always win.** If a company name comes out odd (Workday senders sometimes give
-codes like "Swa"), rename it: future emails under the old name still go to that application. Applications with no reply after 21 days show as *No response*
-in the chart.
-
-### Settings (`.env`)
+## Settings
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PORT` | 5178 | Server port (if changed, Desktop-app OAuth still works) |
-| `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked |
+| `PUBLIC_URL` | `http://localhost:5178` | Site address (used for Google redirects and secure cookies) |
+| `ALLOWED_EMAIL` | — | Google account(s) allowed to sign in, comma-separated. **Required when hosted.** |
+| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`) |
+| `DATABASE_URL` | — | Postgres connection string. Unset means local files |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth Web client |
+| `GROQ_API_KEY` | — | Enables the Groq classifier |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
+| `CRON_SECRET` | — | Key for `/api/cron/sync` (16+ characters) |
+| `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked while awake |
 | `INITIAL_SYNC_DAYS` | 90 | How far back the first sync looks |
-| `GHOST_AFTER_DAYS` | 21 | Days of silence before an application counts as "No response" |
-| `MAX_EMAILS_PER_SYNC` | 500 | Cap on emails processed per sync |
-| `ANTHROPIC_API_KEY` | — | Enables Claude classification |
-| `OLLAMA_MODEL` | first installed chat model | Ollama model to use, e.g. `qwen3.5:2b` |
-| `OLLAMA_URL` | `http://localhost:11434` | Where Ollama is running |
-| `USE_OLLAMA` | — | Set to `0` to ignore Ollama even when it's running |
-| `NOTIFY` | — | Set to `0` to turn off Windows deadline pop-ups |
-
-To start over, stop the server and delete the `data/` folder.
+| `GHOST_AFTER_DAYS` | 21 | Days of silence before "No response" |
+| `MAX_EMAILS_PER_SYNC` | 500 | Batch size per sync pass |

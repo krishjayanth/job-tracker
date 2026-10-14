@@ -72,7 +72,9 @@ function statusSelect(a, extra = '') {
 
 // ---------------------------------------------------------------- data
 async function load() {
-  state = await fetch('/api/state').then(r => r.json());
+  const res = await fetch('/api/state');
+  if (res.status === 401) return location.assign('/login'); // signed out or session expired
+  state = await res.json();
   render();
 }
 
@@ -124,8 +126,8 @@ function renderGmail() {
   if (!g.configured) {
     el.innerHTML = `<span class="dot off"></span> Gmail not set up`;
     banner.innerHTML = `<div class="banner">${icon('mail')}<div><strong>Connect Gmail to update automatically.</strong>
-      Put your Google OAuth <code>credentials.json</code> in the project folder and restart; the README has the
-      3-minute setup. You can still add applications by hand.</div></div>`;
+      Google sign-in isn't configured yet: set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>
+      (or add <code>credentials.json</code> when running locally). The README has the steps. You can still add applications by hand.</div></div>`;
   } else if (!g.connected) {
     el.innerHTML = `<span class="dot off"></span> <a href="/auth/google">Connect Gmail</a>`;
   } else {
@@ -148,10 +150,9 @@ function renderGmail() {
     }
   }
   $('#sync-btn').hidden = !g.connected;
-  $('#more-btn').hidden = !g.connected;
-  const notifyOff = state.notifications === 'disabled';
-  $('#notify-note').hidden = !notifyOff;
-  $('#more-btn').classList.toggle('more-dot', notifyOff);
+  $('#more-btn').hidden = !g.connected && !state.user;
+  $('#account').hidden = !state.user;
+  $('#account-email').textContent = state.user || '';
 }
 
 // How to show a deadline: null once it's more than 3 days past (stale).

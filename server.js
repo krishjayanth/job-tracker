@@ -1,19 +1,78 @@
 import express from 'express';
 import path from 'node:path';
-import { getDb, save, createApplication, refresh, newId } from './src/store.js';
+import crypto from 'node:crypto';
+import { initStore, getDb, save, flush, createApplication, refresh, newId } from './src/store.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
-import { detectOllama } from './src/ollama.js';
 import { buildWorkbook } from './src/export.js';
 import * as gmail from './src/gmail.js';
-import { checkDeadlines, checkNotificationSetting, notificationStatus } from './src/notify.js';
+import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
+// On Render (or any host) listen on all interfaces; locally, only on this machine.
+const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
 const SYNC_MINUTES = Number(process.env.SYNC_INTERVAL_MINUTES || 5);
 const GHOST_DAYS = Number(process.env.GHOST_AFTER_DAYS || 21);
+const CRON_SECRET = process.env.CRON_SECRET || '';
 
 const app = express();
+app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
 app.use(express.json());
+
+// --- public routes (no sign-in needed) ---------------------------------------
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+app.get('/login', (req, res) => {
+  if (!authEnabled) return res.redirect('/');
+  res.sendFile(path.resolve('public-login/login.html'));
+});
+
+app.get('/logout', (req, res) => {
+  endSession(res);
+  res.redirect(authEnabled ? '/login' : '/');
+});
+
+// Sign in with Google. If Gmail isn't connected yet, the same consent screen also
+// asks for read-only Gmail access.
+app.get('/auth/google', (req, res) => {
+  if (!gmail.gmailConfigured()) {
+    return res.status(500).send('Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README).');
+  }
+  res.redirect(gmail.authUrl({ withGmail: !gmail.gmailConnected() }));
+});
+
+app.get('/oauth2callback', async (req, res) => {
+  try {
+    if (req.query.error) throw new Error(String(req.query.error));
+    const { email, saveGmail } = await gmail.handleCallback(String(req.query.code));
+    if (authEnabled && !isAllowed(email)) {
+      console.warn(`[auth] sign-in refused for ${email}`);
+      return res.redirect('/login?error=denied');
+    }
+    const firstConnect = !gmail.gmailConnected();
+    await saveGmail();
+    if (authEnabled) startSession(res, email);
+    res.redirect('/');
+    if (firstConnect && gmail.gmailConnected()) runSync();
+  } catch (err) {
+    console.error(`[auth] sign-in failed: ${err.message}`);
+    res.redirect(authEnabled ? '/login?error=failed' : '/');
+  }
+});
+
+// For an external pinger (e.g. cron-job.org every 10 minutes): runs a Gmail sync and
+// keeps a free Render service awake. Protected by CRON_SECRET instead of a login.
+app.all('/api/cron/sync', (req, res) => {
+  const key = String(req.query.key || req.get('x-cron-key') || '');
+  const ok = CRON_SECRET.length >= 16 && key.length === CRON_SECRET.length &&
+    crypto.timingSafeEqual(Buffer.from(key), Buffer.from(CRON_SECRET));
+  if (!ok) return res.status(401).json({ error: 'Bad or missing key' });
+  res.status(202).json({ started: true }); // reply right away; pingers time out quickly
+  runSync();
+});
+
+// --- everything below requires sign-in -----------------------------------------
+app.use(requireLogin);
 app.use(express.static('public'));
 app.use('/vendor/d3', express.static(path.resolve('node_modules/d3/dist')));
 app.use('/vendor/d3-sankey', express.static(path.resolve('node_modules/d3-sankey/dist')));
@@ -27,7 +86,9 @@ app.get('/api/events', (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.flushHeaders();
   clients.add(res);
-  req.on('close', () => clients.delete(res));
+  // Comment pings keep proxies (like Render's) from closing an idle stream.
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+  req.on('close', () => { clearInterval(ping); clients.delete(res); });
 });
 
 // --- state ----------------------------------------------------------------
@@ -44,7 +105,7 @@ app.get('/api/state', (req, res) => {
       classifier: classifierName(),
       progress: gmail.getProgress(),
     },
-    notifications: notificationStatus(),
+    user: authEnabled ? req.user?.email : null,
     ghostDays: GHOST_DAYS,
   });
 });
@@ -134,7 +195,6 @@ app.delete('/api/applications/:id', (req, res) => {
 // --- Gmail ----------------------------------------------------------------
 app.post('/api/sync', async (req, res) => {
   if (gmail.isRescanning()) return res.status(202).json({ rescanning: true });
-  await detectOllama(); // pick up Ollama if it was started (or stopped) since the last check
   try {
     const result = await gmail.sync();
     broadcast();
@@ -146,65 +206,53 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // Re-read every email with the current classifier, keeping your edits. Runs in the
-// background (a few minutes); progress comes through /api/state and live updates.
+// background; progress comes through /api/state and live updates.
 app.post('/api/rescan', (req, res) => {
   if (!gmail.gmailConnected()) return res.status(400).json({ error: 'Connect Gmail first' });
   if (gmail.isRescanning()) return res.status(409).json({ error: 'A re-scan is already running' });
   gmail.rescan()
     .then(r => console.log(`[rescan] done: ${r.applications} applications, ${r.restored} with your edits restored, ${r.kept} kept as-is`))
     .catch(err => console.error(`[rescan] failed: ${err.message}`))
-    .finally(afterSync);
+    .finally(broadcast);
   res.status(202).json({ started: true });
 });
 
-app.get('/auth/google', (req, res) => {
-  if (!gmail.gmailConfigured()) return res.status(400).send('credentials.json not found — see README.');
-  res.redirect(gmail.authUrl());
-});
-
-app.get('/oauth2callback', async (req, res) => {
-  try {
-    if (req.query.error) throw new Error(String(req.query.error));
-    await gmail.handleCallback(String(req.query.code));
-    res.redirect('/');
-    runSync();
-  } catch (err) {
-    res.status(500).send(`Google sign-in failed: ${err.message}`);
-  }
-});
-
-app.post('/api/disconnect', (req, res) => {
-  gmail.disconnect();
+app.post('/api/disconnect', async (req, res) => {
+  await gmail.disconnect();
   broadcast();
   res.json({ ok: true });
 });
 
 async function runSync() {
-  await detectOllama(); // picks up Ollama if it was started (or stopped) since last time
-  if (gmail.isRescanning()) return;
+  if (gmail.isRescanning() || !gmail.gmailConnected()) return;
   try {
     const { added = 0 } = await gmail.sync();
     if (added) console.log(`[sync] ${added} new email update(s)`);
   } catch (err) {
     console.error(`[sync] failed: ${err.message}`);
   }
-  afterSync();
-}
-
-// After any sync: warn about deadlines due within a day, then refresh open dashboards.
-function afterSync() {
-  checkNotificationSetting(); // notices when you turn Windows notifications on or off
-  if (checkDeadlines(getDb().applications, `http://localhost:${PORT}/`)) save();
   broadcast();
 }
 
 // Live progress while a sync or re-scan works through emails.
 gmail.onProgress(broadcast);
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`Job tracker running at http://localhost:${PORT}`);
-  detectOllama().then(() => console.log(`Email classifier: ${classifierName()}`));
-  checkNotificationSetting();
+// --- start up / shut down ---------------------------------------------------
+checkAuthConfig();
+await initStore();
+await gmail.initGmail();
+
+app.listen(PORT, HOST, () => {
+  console.log(`Job tracker running at ${gmail.PUBLIC_URL} (listening on ${HOST}:${PORT})`);
+  console.log(`Storage: ${process.env.DATABASE_URL ? 'Postgres' : 'local files in data/'} · classifier: ${classifierName()} · sign-in: ${authEnabled ? 'Google' : 'off (local)'}`);
   runSync();
   setInterval(runSync, SYNC_MINUTES * 60_000);
 });
+
+// Render stops the old instance on every deploy; write pending changes first.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, async () => {
+    await flush();
+    process.exit(0);
+  });
+}

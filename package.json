@@ -5,19 +5,22 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --watch --env-file-if-exists=.env server.js",
-    "autostart": "node --env-file-if-exists=.env scripts/autostart.js",
-    "autostart:remove": "node scripts/autostart.js remove"
+    "migrate": "node --env-file-if-exists=.env scripts/migrate-to-db.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
     "d3": "^7.9.0",
     "d3-sankey": "^0.12.3",
     "exceljs": "^4.4.0",
     "express": "^5.3.0",
-    "googleapis": "^185.0.0"
+    "googleapis": "^185.0.0",
+    "groq-sdk": "^1.6.0",
+    "pg": "^8.23.1"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -3,25 +3,81 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { computeStatus } from './stages.js';
 
+// Storage: Postgres when DATABASE_URL is set (hosted, e.g. Neon), otherwise JSON
+// files in data/ (local). Either way the whole tracker is one JSON document held in
+// memory; writes are batched so a sync of many emails doesn't hammer the database.
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const SAVE_DELAY_MS = 800;
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const emptyDb = () => ({ applications: [], processed: {}, lastSync: null, lastSyncError: null });
+let db = emptyDb();
+let pool = null;
 
-let db = load();
+export const usingDatabase = () => Boolean(pool);
 
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch {
-    return { applications: [], processed: {}, lastSync: null, lastSyncError: null };
+export async function initStore() {
+  if (process.env.DATABASE_URL) {
+    const { default: pg } = await import('pg');
+    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
+    await pool.query(`create table if not exists app_state (
+      key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
+    const { rows } = await pool.query(`select value from app_state where key = 'db'`);
+    db = rows[0]?.value ?? emptyDb();
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = emptyDb(); }
   }
 }
 
+let saveTimer = null;
+let writing = Promise.resolve();
+
 export function save() {
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, DB_FILE);
+  if (!pool) {
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+    fs.renameSync(tmp, DB_FILE);
+    return;
+  }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flush, SAVE_DELAY_MS);
+}
+
+// Write pending changes now (before shutdown, or when a step must be durable).
+export function flush() {
+  clearTimeout(saveTimer);
+  if (!pool) return Promise.resolve();
+  const value = JSON.stringify(db);
+  writing = writing
+    .then(() => setKv('db', value, true))
+    .catch(err => console.error(`[store] save failed: ${err.message}`));
+  return writing;
+}
+
+// Small extra values (the Gmail sign-in token, backups) stored next to the data.
+export async function getKv(key) {
+  if (pool) {
+    const { rows } = await pool.query('select value from app_state where key = $1', [key]);
+    return rows[0]?.value ?? null;
+  }
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${key}.json`), 'utf8')); } catch { return null; }
+}
+
+export async function setKv(key, value, alreadyJson = false) {
+  const json = alreadyJson ? value : JSON.stringify(value);
+  if (pool) {
+    await pool.query(
+      `insert into app_state (key, value, updated_at) values ($1, $2::jsonb, now())
+       on conflict (key) do update set value = excluded.value, updated_at = now()`, [key, json]);
+  } else {
+    fs.writeFileSync(path.join(DATA_DIR, `${key}.json`), json);
+  }
+}
+
+export async function deleteKv(key) {
+  if (pool) await pool.query('delete from app_state where key = $1', [key]);
+  else fs.rmSync(path.join(DATA_DIR, `${key}.json`), { force: true });
 }
 
 export const getDb = () => db;
@@ -103,8 +159,9 @@ export function restoreEdits(snapshots) {
   return { restored, kept };
 }
 
-export function backup(name) {
-  fs.copyFileSync(DB_FILE, path.join(DATA_DIR, name));
+export async function backup(name) {
+  await flush();
+  await setKv(name, structuredClone(db));
 }
 
 export function createApplication({ company, role = '', jobId = '', url = '', notes = '', source = 'manual' }) {

@@ -60,6 +60,7 @@
 
 /* ------------------------------------------------------------------ base */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* components set display; hidden must still win */
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -139,12 +140,6 @@ h1, h2, h3 { margin: 0; letter-spacing: -.01em; }
 .menu-note { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .menu-note p { margin-bottom: 0; }
 .menu-note strong { color: var(--text); font-weight: 600; }
-.more-dot { position: relative; }
-.more-dot::after {
-  content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--interview); box-shadow: 0 0 0 2px var(--surface);
-}
-
 /* deadline chips: amber when close, red when today/overdue */
 .due {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;

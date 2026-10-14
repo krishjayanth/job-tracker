@@ -1,0 +1,30 @@
+// One-time copy of your local tracker (data/db.json) into the hosted Postgres database,
+// so the website starts with all your applications and edits.
+//   DATABASE_URL=postgres://... npm run migrate
+// Gmail sign-in is not copied: the hosted site uses a different Google client, so you
+// connect Gmail again by signing in there.
+import fs from 'node:fs';
+import path from 'node:path';
+import pg from 'pg';
+
+const url = process.env.DATABASE_URL;
+if (!url) {
+  console.error('Set DATABASE_URL to your Neon connection string first.');
+  process.exit(1);
+}
+const file = path.resolve(process.argv[2] || 'data/db.json');
+const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+const pool = new pg.Pool({ connectionString: url, max: 1 });
+await pool.query(`create table if not exists app_state (
+  key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
+const { rows } = await pool.query(`select jsonb_array_length(value->'applications') as n from app_state where key = 'db'`);
+if (rows[0] && !process.argv.includes('--force')) {
+  console.error(`The database already holds ${rows[0].n} applications. Re-run with --force to overwrite them.`);
+  process.exit(1);
+}
+await pool.query(
+  `insert into app_state (key, value) values ('db', $1::jsonb)
+   on conflict (key) do update set value = excluded.value, updated_at = now()`, [JSON.stringify(db)]);
+await pool.end();
+console.log(`Copied ${db.applications.length} applications from ${file} to the database.`);

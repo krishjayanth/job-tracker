@@ -2,18 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { google } from 'googleapis';
 import {
-  DATA_DIR, getDb, save, createApplication, findApplication, refresh, newId, normalizeCompany,
-  snapshotEdits, restoreEdits, backup,
+  getDb, save, flush, createApplication, findApplication, refresh, newId, normalizeCompany,
+  snapshotEdits, restoreEdits, backup, getKv, setKv, deleteKv,
 } from './store.js';
 import { classify } from './classify.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
-const TOKEN_FILE = path.join(DATA_DIR, 'token.json');
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+const LOGIN_SCOPES = ['openid', 'email'];
 const INITIAL_DAYS = Number(process.env.INITIAL_SYNC_DAYS || 90);
 const MAX_PER_SYNC = Number(process.env.MAX_EMAILS_PER_SYNC || 500);
 export const PORT = Number(process.env.PORT || 5178);
-const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
+// Where Google sends you back after signing in. On Render, set PUBLIC_URL to the
+// site's address (e.g. https://job-tracker.onrender.com).
+export const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const REDIRECT_URI = `${PUBLIC_URL}/oauth2callback`;
 
 // Narrow the inbox down to likely application emails before classifying.
 const ATS_SENDERS = [
@@ -26,44 +29,79 @@ const BASE_QUERY = [
   `{subject:(application OR applying OR applied OR interview OR assessment OR offer OR candidacy OR "next steps" OR "your interest") from:(${ATS_SENDERS.join(' OR ')})}`,
 ].join(' ');
 
-let oauthClient = null;
-
-export function gmailConfigured() {
-  return fs.existsSync(CREDENTIALS_FILE);
+// Google OAuth client: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (hosted), or a
+// downloaded credentials.json (local).
+function oauthConfig() {
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    return { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET };
+  }
+  if (!fs.existsSync(CREDENTIALS_FILE)) return null;
+  const raw = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+  const { client_id, client_secret } = raw.web || raw.installed;
+  return { clientId: client_id, clientSecret: client_secret };
 }
 
-export function gmailConnected() {
-  return fs.existsSync(TOKEN_FILE);
+export const gmailConfigured = () => Boolean(oauthConfig());
+
+const newClient = () => {
+  const { clientId, clientSecret } = oauthConfig();
+  return new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
+};
+
+let gmailToken = null;   // stored Gmail sign-in (refresh token etc.)
+let gmailClient = null;
+
+export async function initGmail() {
+  gmailToken = await getKv('gmail_token');
 }
+
+export const gmailConnected = () => Boolean(gmailToken?.refresh_token || gmailToken?.access_token);
 
 function getClient() {
-  if (oauthClient) return oauthClient;
-  const raw = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
-  const { client_id, client_secret } = raw.installed || raw.web;
-  oauthClient = new google.auth.OAuth2(client_id, client_secret, REDIRECT_URI);
-  if (fs.existsSync(TOKEN_FILE)) oauthClient.setCredentials(JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')));
+  if (gmailClient) return gmailClient;
+  gmailClient = newClient();
+  gmailClient.setCredentials(gmailToken);
   // Google only sends a refresh_token the first time, so merge rather than overwrite.
-  oauthClient.on('tokens', tokens => {
-    const prev = fs.existsSync(TOKEN_FILE) ? JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')) : {};
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify({ ...prev, ...tokens }, null, 2));
+  gmailClient.on('tokens', tokens => {
+    gmailToken = { ...gmailToken, ...tokens };
+    setKv('gmail_token', gmailToken).catch(err => console.error(`[gmail] saving token failed: ${err.message}`));
   });
-  return oauthClient;
+  return gmailClient;
 }
 
-export function authUrl() {
-  return getClient().generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: SCOPES });
+// One Google sign-in does both jobs: proves who you are (openid/email) and, when
+// Gmail isn't connected yet, grants read-only Gmail access.
+export function authUrl({ withGmail }) {
+  return newClient().generateAuthUrl({
+    access_type: withGmail ? 'offline' : 'online',
+    prompt: withGmail ? 'consent' : 'select_account',
+    scope: withGmail ? [...LOGIN_SCOPES, GMAIL_SCOPE] : LOGIN_SCOPES,
+  });
 }
 
+// Returns the verified email of whoever signed in; stores Gmail access if granted.
 export async function handleCallback(code) {
-  const client = getClient();
+  const client = newClient();
   const { tokens } = await client.getToken(code);
-  client.setCredentials(tokens);
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+  const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: oauthConfig().clientId });
+  const { email, email_verified: verified } = ticket.getPayload();
+  if (!verified) throw new Error('Google account email is not verified');
+  return {
+    email,
+    // Only call this once the caller has checked the email is allowed in.
+    saveGmail: async () => {
+      if (!(tokens.scope || '').includes(GMAIL_SCOPE)) return;
+      gmailToken = { ...gmailToken, ...tokens };
+      gmailClient = null;
+      await setKv('gmail_token', gmailToken);
+    },
+  };
 }
 
-export function disconnect() {
-  fs.rmSync(TOKEN_FILE, { force: true });
-  oauthClient = null;
+export async function disconnect() {
+  gmailToken = null;
+  gmailClient = null;
+  await deleteKv('gmail_token');
 }
 
 function header(msg, name) {
@@ -145,7 +183,7 @@ export function rescan() {
     const db = getDb();
     progress = { mode: 'rescan', done: 0, total: 0 };
     progressListener();
-    backup('db.before-rescan.json');
+    await backup('db_before_rescan');
 
     const snapshots = snapshotEdits();
     const oldest = db.applications.flatMap(a => a.events).map(e => Date.parse(e.date)).reduce((m, t) => Math.min(m, t), Date.now());
@@ -162,6 +200,7 @@ export function rescan() {
     const result = await drain({ mode: 'rescan', sinceEpoch });
     const restore = restoreEdits(snapshots);
     save();
+    await flush();
     return { ...result, ...restore, applications: db.applications.length };
   })();
   syncing = job.finally(() => { syncing = null; progress = null; });

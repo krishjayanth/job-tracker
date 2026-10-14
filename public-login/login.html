@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Sign in · Job Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg: #f4f5f8; --surface: #fff; --border: #e4e6ec; --text: #111827; --muted: #646b7a; --accent: #4f46e5; --accent-text: #fff; --danger: #dc2626; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0c0e13; --surface: #14171e; --border: #252a35; --text: #e8eaf0; --muted: #9198a8; --accent: #818cf8; --accent-text: #0c0e13; --danger: #f87171; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+      background: var(--bg); color: var(--text); font: 15px/1.5 "Hanken Grotesk", system-ui, sans-serif; }
+    .card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      padding: 32px 28px; display: grid; gap: 18px; justify-items: center; text-align: center;
+      box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px -8px rgba(16,24,40,.1); }
+    .mark { width: 44px; height: 44px; }
+    .mark rect { fill: var(--accent); }
+    .mark path { fill: none; stroke: var(--accent-text); stroke-width: 2.2; stroke-linecap: round; }
+    h1 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
+    p { margin: 0; color: var(--muted); }
+    .error { color: var(--danger); font-size: 14px; }
+    a.btn { display: inline-flex; align-items: center; gap: 10px; height: 42px; padding: 0 18px; border-radius: 10px;
+      background: var(--accent); color: var(--accent-text); font-weight: 600; text-decoration: none; }
+    a.btn:hover { filter: brightness(1.08); }
+    a.btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 2px; }
+    .g { width: 18px; height: 18px; background: #fff; border-radius: 50%; padding: 2px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6"/><path d="M5 12h4c2.5 0 3.5-4 6-4h4M9 12c2.5 0 3.5 4 6 4h4"/></svg>
+    <h1>Job Tracker</h1>
+    <p>Sign in with the Google account this tracker belongs to.</p>
+    <p class="error" id="error" hidden></p>
+    <a class="btn" href="/auth/google">
+      <svg class="g" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.8 6C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.8-6A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6C6.6 42.6 14.6 48 24 48z"/></svg>
+      Sign in with Google
+    </a>
+  </main>
+  <script>
+    const err = new URLSearchParams(location.search).get('error');
+    const messages = { denied: 'That Google account isn’t allowed to use this tracker.', failed: 'Sign-in didn’t work. Please try again.' };
+    if (err) { const el = document.getElementById('error'); el.textContent = messages[err] || messages.failed; el.hidden = false; }
+  </script>
+</body>
+</html>
