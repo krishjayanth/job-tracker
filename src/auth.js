@@ -6,7 +6,7 @@ const COOKIE = 'jt_session';
 const MAX_AGE_DAYS = 30;
 const ALLOWED = (process.env.ALLOWED_EMAIL || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const SECRET = process.env.SESSION_SECRET || '';
-const SECURE = (process.env.PUBLIC_URL || '').startsWith('https://');
+const SECURE = Boolean(process.env.RENDER) || (process.env.PUBLIC_URL || '').startsWith('https://');
 
 // Sign-in is required whenever ALLOWED_EMAIL is set. Hosted without it (on Render),
 // the server refuses to start rather than expose your inbox data.

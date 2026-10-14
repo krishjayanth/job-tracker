@@ -13,9 +13,15 @@ const LOGIN_SCOPES = ['openid', 'email'];
 const INITIAL_DAYS = Number(process.env.INITIAL_SYNC_DAYS || 90);
 const MAX_PER_SYNC = Number(process.env.MAX_EMAILS_PER_SYNC || 500);
 export const PORT = Number(process.env.PORT || 5178);
-// Where Google sends you back after signing in. On Render, set PUBLIC_URL to the
-// site's address (e.g. https://job-tracker.onrender.com).
-export const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+// Where Google sends you back after signing in: PUBLIC_URL if it's a real web address,
+// else the address Render gives the service (RENDER_EXTERNAL_URL), else localhost.
+// Google rejects anything that isn't a proper URL ("doesn't comply with OAuth 2.0 policy").
+const isWebUrl = s => /^https?:\/\/[^\s/]+\.[^\s/]+|^http:\/\/localhost(:\d+)?/.test(s || '');
+export const PUBLIC_URL = [process.env.PUBLIC_URL, process.env.RENDER_EXTERNAL_URL, `http://localhost:${PORT}`]
+  .find(isWebUrl).replace(/\/$/, '');
+if (process.env.PUBLIC_URL && !isWebUrl(process.env.PUBLIC_URL)) {
+  console.warn(`PUBLIC_URL "${process.env.PUBLIC_URL}" isn't a web address; using ${PUBLIC_URL} instead`);
+}
 const REDIRECT_URI = `${PUBLIC_URL}/oauth2callback`;
 
 // Narrow the inbox down to likely application emails before classifying.

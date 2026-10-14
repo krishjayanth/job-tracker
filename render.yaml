@@ -11,8 +11,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: PUBLIC_URL          # e.g. https://job-tracker-xxxx.onrender.com
-        sync: false
       - key: ALLOWED_EMAIL       # the Google account allowed to sign in
         sync: false
       - key: SESSION_SECRET

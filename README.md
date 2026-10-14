@@ -28,10 +28,10 @@ You'll create four free accounts or resources and paste their values into Render
    - `ALLOWED_EMAIL`: your Gmail address (the one you'll sign in with)
    - `DATABASE_URL`: the Neon connection string
    - `GROQ_API_KEY`: from step 2
-   - `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now; you'll fill them in after step 4
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now; you'll fill them in after step 4
 
-   `SESSION_SECRET` and `CRON_SECRET` are generated for you.
-4. After it deploys, note the site address, e.g. `https://job-tracker-ab12.onrender.com`. Set `PUBLIC_URL` to it.
+   `SESSION_SECRET` and `CRON_SECRET` are generated for you. The site's address comes from Render automatically.
+4. After it deploys, note the site address shown at the top of the service, e.g. `https://job-tracker-ab12.onrender.com`.
 
 ### 4. Google sign-in and Gmail access
 Use the Google Cloud project you already have (the Gmail API is enabled there).
@@ -116,7 +116,7 @@ sign-in, so only do that on your own machine.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PUBLIC_URL` | `http://localhost:5178` | Site address (used for Google redirects and secure cookies) |
+| `PUBLIC_URL` | Render's address, or `http://localhost:5178` | Site address for Google redirects. Only needed for a custom domain |
 | `ALLOWED_EMAIL` | — | Google account(s) allowed to sign in, comma-separated. **Required when hosted.** |
 | `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`) |
 | `DATABASE_URL` | — | Postgres connection string. Unset means local files |
