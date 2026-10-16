@@ -176,28 +176,56 @@ const dueChip = deadline => {
   return d ? `<span class="due ${d.level}">${icon('clock')}${d.text}</span>` : '';
 };
 
+// When an application first reached any of these stages, from the company's own emails.
+const firstReached = (a, stages) => a.events.find(e => !e.manual && stages.includes(e.stage))?.date;
+
 function renderSummary() {
   const apps = state.applications;
-  const el = $('#summary-line');
+  const line = $('#summary-line');
+  const kpis = $('#kpis');
+  line.hidden = apps.length > 0;
+  kpis.hidden = !apps.length;
+  $('#since').textContent = apps.length ? `Tracking since ${shortDate(apps.map(a => a.appliedAt).sort()[0])}` : '';
   if (!apps.length) {
-    el.textContent = state.gmail.connected
+    line.textContent = state.gmail.connected
       ? 'No applications found yet. New application emails will appear here automatically.'
       : 'Add your first application, or connect Gmail to fill this in automatically.';
     return;
   }
+
+  // "This month" is the calendar month, so the numbers match the month filter below.
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const thisMonth = iso => Boolean(iso) && iso >= monthStart;
+  const heardBack = ['oa', 'interview', 'offer', 'rejected', 'withdrawn'];
+  const interviewed = ['interview', 'offer'];
+
   const heard = apps.filter(a => a.status !== 'applied' || a.events.some(e => e.stage !== 'applied')).length;
   const active = apps.filter(a => !['offer', 'rejected', 'withdrawn'].includes(a.status)).length;
   const reachedInterview = apps.filter(a => a.path.includes('interview') || a.status === 'offer').length;
   const offers = apps.filter(a => a.status === 'offer').length;
-  const since = apps.map(a => a.appliedAt).sort()[0];
-  const parts = [
-    `<strong class="num">${apps.length}</strong> applications since ${shortDate(since)}`,
-    `<strong class="num">${Math.round((heard / apps.length) * 100)}%</strong> heard back`,
-    `<strong class="num">${active}</strong> still open`,
-    `<strong class="num">${reachedInterview}</strong> reached interview`,
+  const waiting = apps.filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline)).length;
+
+  const delta = (n, text, none = 'None this month') => n
+    ? `<span class="delta up">${icon('up')}${text}</span>`
+    : `<span class="delta">${none}</span>`;
+  const items = [
+    ['Applications', apps.length, '', (n => delta(n, `${n} this month`))(apps.filter(a => thisMonth(a.appliedAt)).length)],
+    ['Heard back', Math.round((heard / apps.length) * 100), '%',
+      (n => delta(n, `${n} ${n === 1 ? 'reply' : 'replies'} this month`, 'No replies this month'))(
+        apps.filter(a => thisMonth(firstReached(a, heardBack))).length)],
+    ['Still open', active, '', `<span class="delta">${waiting ? `${waiting} need${waiting === 1 ? 's' : ''} your action` : 'Nothing waiting on you'}</span>`],
+    ['Reached interview', reachedInterview, '',
+      (n => delta(n, `${n} this month`))(apps.filter(a => thisMonth(firstReached(a, interviewed))).length)],
   ];
-  if (offers) parts.push(`<strong class="num">${offers}</strong> ${offers === 1 ? 'offer' : 'offers'}`);
-  el.innerHTML = parts.join('<span class="sep" aria-hidden="true">/</span>');
+  if (offers) {
+    items.push(['Offers', offers, '', (n => delta(n, `${n} this month`, ''))(apps.filter(a => thisMonth(firstReached(a, ['offer']))).length)]);
+  }
+  kpis.innerHTML = items.map(([label, value, unit, sub]) => `
+    <div class="kpi">
+      <dt>${label}</dt>
+      <dd><span class="value">${value}${unit ? `<small>${unit}</small>` : ''}</span>${sub}</dd>
+    </div>`).join('');
 }
 
 function renderSankey() {
@@ -251,13 +279,13 @@ function drawSankey(el, apps, { large }) {
     .nodeWidth(large ? 16 : 12)
     .nodePadding(large ? 30 : 20)
     .nodeSort((a, b) => NODE_ORDER.indexOf(a.id) - NODE_ORDER.indexOf(b.id))
-    .extent([[1, 6], [width - labelSpace, height - 6]])({ nodes: nodes.map(d => ({ ...d })), links: links.map(d => ({ ...d })) });
+    .extent([[1, narrow ? 26 : 6], [width - labelSpace, height - 6]])({ nodes: nodes.map(d => ({ ...d })), links: links.map(d => ({ ...d })) });
 
   const svg = d3.select(el).append('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('height', height)
     .attr('role', 'img').attr('aria-label', 'Flow of applications between stages');
   const defs = svg.append('defs');
 
-  svg.append('g').selectAll('path').data(graph.links).join('path')
+  const link = svg.append('g').selectAll('path').data(graph.links).join('path')
     .attr('class', 'link')
     .attr('d', d3.sankeyLinkHorizontal())
     .attr('stroke', (d, i) => {
@@ -268,9 +296,8 @@ function drawSankey(el, apps, { large }) {
       g.append('stop').attr('offset', '100%').attr('stop-color', color(d.target.id));
       return `url(#${id})`;
     })
-    .attr('stroke-width', d => Math.max(1.5, d.width))
-    .append('title').text(d =>
-      `${STAGE_LABEL[d.source.id]} → ${STAGE_LABEL[d.target.id]}: ${d.value} (${Math.round((d.value / d.source.value) * 100)}% of ${STAGE_LABEL[d.source.id]})`);
+    // A hairline gap between neighbouring flows keeps them reading as separate strands.
+    .attr('stroke-width', d => Math.max(1.2, d.width - (large ? 2 : 1.5)));
 
   const total = apps.length;
   const node = svg.append('g').selectAll('g').data(graph.nodes).join('g').attr('class', 'node');
@@ -286,14 +313,77 @@ function drawSankey(el, apps, { large }) {
     .attr('width', d => d.x1 - d.x0).attr('height', d => Math.max(3, d.y1 - d.y0))
     .attr('rx', 3)
     .attr('fill', d => color(d.id));
+  // On a narrow chart there's no room beside the middle columns, so their labels sit above the bar.
+  const above = d => narrow && d.sourceLinks.length > 0;
   const label = node.append('text')
-    .attr('class', 'node-label')
-    .attr('x', d => d.x1 + 8)
-    .attr('y', d => (d.y0 + d.y1) / 2)
-    .attr('dy', '0.35em');
+    .attr('class', d => `node-label${above(d) ? ' above' : ''}`)
+    .attr('x', d => !above(d) ? d.x1 + 8 : d.depth === 0 ? d.x0 : (d.x0 + d.x1) / 2)
+    .attr('y', d => above(d) ? d.y0 - 7 : (d.y0 + d.y1) / 2)
+    .attr('text-anchor', d => !above(d) ? null : d.depth === 0 ? 'start' : 'middle')
+    .attr('dy', d => above(d) ? 0 : '0.35em');
   label.append('tspan').text(d => STAGE_LABEL[d.id] + '  ');
   label.append('tspan').attr('class', 'node-count')
     .text(d => d.id === 'applied' || narrow ? d.value : `${d.value} · ${Math.round((d.value / total) * 100)}%`);
+
+  // Hover: focus one stage or flow, and explain it.
+  const tip = el.appendChild(Object.assign(document.createElement('div'), { className: 'flow-tip' }));
+  tip.setAttribute('aria-hidden', 'true');
+  const pct = (n, of) => `${Math.round((n / of) * 100)}%`;
+  const nodeTip = d => {
+    const from = d.targetLinks.map(l =>
+      `<div class="tl">${l.value} from ${STAGE_LABEL[l.source.id]} · ${pct(l.value, l.source.value)} of them</div>`).join('');
+    return `<div class="tt"><i style="--c:${color(d.id)}"></i>${STAGE_LABEL[d.id]}</div>
+      <div class="tn"><strong>${d.value}</strong> ${d.value === 1 ? 'application' : 'applications'} · ${pct(d.value, total)} of all</div>
+      ${from || '<div class="tl">Every application starts here</div>'}`;
+  };
+  const linkTip = l => `<div class="tt"><i style="--c:${color(l.target.id)}"></i>${STAGE_LABEL[l.source.id]} → ${STAGE_LABEL[l.target.id]}</div>
+    <div class="tn"><strong>${l.value}</strong> ${l.value === 1 ? 'application' : 'applications'}</div>
+    <div class="tl">${pct(l.value, l.source.value)} of ${STAGE_LABEL[l.source.id]} · ${pct(l.value, total)} of all</div>`;
+
+  const focus = (onLinks, onNodes, html, event) => {
+    svg.classed('focusing', true);
+    link.classed('on', l => onLinks.includes(l));
+    node.classed('on', n => onNodes.includes(n));
+    tip.innerHTML = html;
+    moveTip(event);
+    tip.classList.add('show');
+  };
+  const moveTip = event => {
+    const box = el.getBoundingClientRect();
+    let x = event.clientX - box.left + el.scrollLeft + 14;
+    const y = event.clientY - box.top + el.scrollTop + 14;
+    if (x + tip.offsetWidth > el.scrollWidth - 4) x -= tip.offsetWidth + 28;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  };
+  const blur = () => {
+    svg.classed('focusing', false);
+    link.classed('on', false);
+    node.classed('on', false);
+    tip.classList.remove('show');
+  };
+  node.on('pointerenter', (e, d) => focus([...d.sourceLinks, ...d.targetLinks],
+    [d, ...d.sourceLinks.map(l => l.target), ...d.targetLinks.map(l => l.source)], nodeTip(d), e));
+  link.on('pointerenter', (e, l) => focus([l], [l.source, l.target], linkTip(l), e));
+  node.on('pointermove', moveTip);
+  link.on('pointermove', moveTip);
+  node.on('pointerleave', blur);
+  link.on('pointerleave', blur);
+
+  // Draw the flows in once, the first time this chart appears. Live refreshes don't replay it.
+  if (el.dataset.drawn || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.dataset.drawn = '1';
+  const ease = 'cubic-bezier(.16, 1, .3, 1)';
+  link.each(function (d) {
+    const len = this.getTotalLength();
+    this.style.strokeDasharray = `${len} ${len}`;
+    this.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
+      { duration: 900, delay: 120 + d.source.depth * 160, easing: ease, fill: 'backwards' })
+      .finished.then(() => { this.style.strokeDasharray = ''; }, () => {});
+  });
+  node.each(function (d) {
+    this.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, delay: d.depth * 160, easing: ease, fill: 'backwards' });
+  });
 }
 
 function filterByNode(id) {
@@ -321,15 +411,17 @@ function renderActions() {
   $('#action-list').innerHTML = items.length
     ? items.map(a => {
       const due = dueInfo(a.deadline);
+      // Warm when it's due within a day, plain when later, quieter when there's no deadline.
+      const tone = !due ? 'quiet' : due.level === 'urgent' || due.level === 'overdue' ? 'urgent' : '';
       return `
-      <li class="action-row"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
+      <li class="action-row ${tone}"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
         ${avatar(a.company, 'sm')}
         <span class="what">
           <span class="co">${esc(a.company)}</span>
           <span class="why" style="display:block">${ACTION_STAGES[a.status] || 'Next step to complete'}${a.role ? ` · ${esc(a.role)}` : ''}</span>
         </span>
         <span class="action-side">
-          ${due ? dueChip(a.deadline) : `<span class="age">${timeAgo(a.lastActivity)}</span>`}
+          ${due ? dueChip(a.deadline) : `<span class="age">${timeAgo(a.lastActivity)}</span><span class="open-hint" aria-hidden="true">Open${icon('chevron')}</span>`}
           ${due ? `<button class="done-btn" type="button" data-done="${a.id}" title="Mark this deadline as done">${icon('check')}Done</button>` : ''}
         </span>
       </div></li>`;

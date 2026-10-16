@@ -29,6 +29,7 @@
       <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></symbol>
     </defs>
   </svg>
 
@@ -69,8 +70,12 @@
     <div id="banner"></div>
 
     <section class="summary" aria-labelledby="summary-title">
-      <h1 id="summary-title">Your job search</h1>
+      <div class="summary-head">
+        <h1 id="summary-title">Your job search</h1>
+        <span id="since" class="since"></span>
+      </div>
       <p id="summary-line" class="summary-line"></p>
+      <dl id="kpis" class="kpis" hidden></dl>
     </section>
 
     <div class="overview">
