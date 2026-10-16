@@ -1,130 +1,162 @@
 # Job Tracker
 
-A job-application tracker that updates itself from Gmail. It shows a Simplify-style flow chart of where your
-applications ended up, what needs your action next (assessments, interviews and deadlines), and a searchable,
-editable table that you can export to Excel.
+[![CI](https://github.com/krishjayanth/job-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/krishjayanth/job-tracker/actions/workflows/ci.yml)
+![Node 22+](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)
 
-- **Hosted:** runs on Render (free tier). Data lives in Postgres on Neon (free), and you sign in with Google.
-  Only your account gets in.
-- **Auto-updating:** checks Gmail every few minutes (read-only access). Each application email is classified by
-  **Groq** (`openai/gpt-oss-20b`) and cross-checked by built-in rules.
-- **Keeps your edits:** status changes, renames, notes and deadlines survive re-scans.
+**A job-application tracker that keeps itself up to date by reading your Gmail.** It finds every confirmation,
+assessment invite, interview request, offer and rejection, groups them into applications, and shows where each
+one stands, what needs your attention next, and where your search as a whole is going.
 
-## Deploy (about 15 minutes, all free)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/dashboard-dark.png">
+  <img alt="Dashboard: a Sankey chart of where 37 applications went, a 'needs your action' list with assessment deadlines, and the applications table" src="docs/dashboard.png">
+</picture>
 
-You'll create four free accounts or resources and paste their values into Render.
+## Why I built it
 
-### 1. Database: Neon
-1. Sign up at https://neon.tech and create a project (any name, nearest region).
-2. Copy the **connection string**. It looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`.
+Applying to dozens of internships meant the real status of each application was spread across hundreds of
+automated emails from Workday, Greenhouse, HackerRank and others. Spreadsheets went stale within a week. This
+tracker replaces the spreadsheet: it reads the inbox (read-only), works out what each email means, and updates
+itself every few minutes.
 
-### 2. Email classifier: Groq
-1. Sign up at https://console.groq.com and create an **API key**.
-
-### 3. Web service: Render
-1. Push this repo to GitHub (private is fine).
-2. In Render: **New › Blueprint**, then pick the repo. It reads `render.yaml`.
-3. Fill in the values it asks for:
-   - `ALLOWED_EMAIL`: your Gmail address (the one you'll sign in with)
-   - `DATABASE_URL`: the Neon connection string
-   - `GROQ_API_KEY`: from step 2
-   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now; you'll fill them in after step 4
-
-   `SESSION_SECRET` and `CRON_SECRET` are generated for you. The site's address comes from Render automatically.
-4. After it deploys, note the site address shown at the top of the service, e.g. `https://job-tracker-ab12.onrender.com`.
-
-### 4. Google sign-in and Gmail access
-Use the Google Cloud project you already have (the Gmail API is enabled there).
-1. **Google Auth Platform › Clients › Create client**, choose **Web application**.
-2. Under **Authorized redirect URIs**, add `https://<your-site>.onrender.com/oauth2callback`.
-   Add `http://localhost:5178/oauth2callback` too if you want to run it locally.
-3. Copy the **Client ID** and **Client secret** into Render's `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-   Render redeploys automatically.
-4. **Audience:** click **Publish app** (or keep it in Testing with yourself as a test user). In Testing mode,
-   Google signs you out of Gmail every 7 days. A published personal app shows an "unverified app" warning;
-   click *Advanced › Go to …*.
-
-### 5. Bring over your existing data (optional)
-On your PC, copy your local tracker into the database once:
-
-```bash
-DATABASE_URL="postgresql://..." npm run migrate
-```
-
-### 6. Sign in
-Open your Render URL and click **Sign in with Google**. The first time, Google also asks for read-only Gmail
-access. After that, syncing starts on its own.
-
-### 7. Keep it awake (free tier)
-Free Render services sleep after 15 minutes without visitors, which pauses syncing. Create a free job at
-https://cron-job.org that requests this URL every 10 minutes:
-
-```
-https://<your-site>.onrender.com/api/cron/sync?key=<CRON_SECRET>
-```
-
-Copy `CRON_SECRET` from Render's Environment tab. This keeps the service awake and syncing, and fits within
-Render's free 750 hours a month as long as it's your only free service.
-
-## Run locally
+## Try it in 30 seconds
 
 ```bash
 npm install
-cp .env.example .env   # add GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET at minimum
-npm start
+npm run demo
 ```
 
-Open http://localhost:5178. Without `DATABASE_URL`, data is stored in `data/`. Without `ALLOWED_EMAIL`, there's no
-sign-in, so only do that on your own machine.
+Then open http://localhost:5178. Demo mode loads a made-up job search (37 applications at fictional companies)
+into memory, so you can click around, edit, filter and export without a Google account. Nothing is saved.
 
-## Features
+## What it does
 
-- **Flow chart:** click it for a large view. Click a stage there to filter the table.
-- **Needs your action:** assessments, interviews, offers and open deadlines, with the soonest first.
-- **Deadlines:** found in emails ("expires in 5 days", "before Oct 9 at 11:59 PM"). Mark them done, or set your own.
-- **Table:** sort by any column, change status in the row, filter by stage or month, and search by company, role
-  or job ID.
-- **Export:** downloads what the table shows as an `.xlsx` file, with an Applications sheet and a full email Timeline.
-- **Re-scan** (⋯ menu): re-reads all your email with the current classifier and keeps your edits. On Groq's free
-  tier (about 200K tokens a day), a big re-scan may sort some emails with the rules instead.
+- **Reads Gmail automatically.** It checks every few minutes using read-only access, then classifies each
+  application email with an LLM that rule-based checks verify.
+- **Shows where applications went.** A Sankey chart traces every application from *Applied* through
+  *Assessment* and *Interview* to *Offer*, *Rejected*, *Withdrawn* or *No response*. Click a stage to filter.
+- **Lists what needs your action.** Assessments to finish, interviews in progress and offers, with deadlines
+  parsed from the emails ("expires in 5 days", "complete by Oct 9 at 11:59 PM").
+- **Keeps your corrections.** Renames, status changes, notes and deadlines survive a full re-scan of the inbox.
+- **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
 
-## How classification works
+![Application drawer with details and an email timeline](docs/drawer.png)
 
-1. A Gmail search narrows the inbox to likely application emails: hiring-software senders, and subjects about
-   applications or interviews.
-2. **Groq** reads each email and returns the stage, company, role and job ID as strict JSON.
-3. **Rules** (`src/rules.js`) cross-check it:
-   - a company or job ID is only accepted if it appears in the email
-   - the rules' rejection and offer checks win
-   - codes like `fmr@myworkday.com` map to real names ("Fidelity Investments")
-4. With no `GROQ_API_KEY`, or when Groq is rate limited, the rules handle the email on their own.
+## Architecture
 
-| Piece | File |
+```mermaid
+flowchart LR
+    UI["Browser dashboard<br/>vanilla JS + D3 Sankey"]
+    Cron["External pinger<br/>every 10 min"]
+    subgraph Server["Node.js / Express, one process"]
+        direction TB
+        API["REST API + SSE<br/>Google sign-in, HMAC cookie"]
+        Sync["Sync engine<br/>batched, resumable"]
+        Cls["Classifier<br/>LLM + rule guard rails"]
+        Store["Store<br/>in-memory JSON document"]
+        API --> Sync
+        Sync --> Cls
+        Sync --> Store
+        API --> Store
+    end
+    Gmail[("Gmail API<br/>read-only")]
+    Groq[("Groq LLM<br/>gpt-oss-20b")]
+    PG[("Postgres<br/>Neon")]
+
+    UI <-- "REST + live updates" --> API
+    Cron -- "/api/cron/sync" --> API
+    Sync -- "list + get messages" --> Gmail
+    Cls -- "strict JSON schema" --> Groq
+    Store -- "debounced jsonb upsert" --> PG
+```
+
+A sync runs on a timer, from the **Sync** button, or when an external pinger calls it (which also keeps Render's
+free tier awake):
+
+1. **Narrow the inbox.** A Gmail search keeps only emails from hiring platforms or with application-related subjects.
+2. **Classify each email.** Groq returns `{stage, company, role, job_id}` as strict JSON. Hand-tuned rules then
+   check it, and they handle the email alone if the LLM is unavailable.
+3. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role.
+4. **Derive status from the timeline.** Status is never stored directly. It's recomputed from the application's
+   events, so a late "thanks for applying" email can't undo an interview and a manual correction always wins.
+5. **Save and broadcast.** The change is persisted and pushed to every open browser over Server-Sent Events.
+
+## Engineering highlights
+
+- **LLM output treated as untrusted.** The model reads the email as a whole, while narrow regex rules act as guard
+  rails: a company name or job ID is only accepted if it literally appears in the email, it can never be the
+  hiring-software vendor, and the rules' rejection and offer checks override the model.
+  ([`src/classify.js`](src/classify.js))
+- **Graceful degradation.** Groq's free tier allows about 8K tokens a minute. Requests are kept lean (an excerpt of
+  the email, low reasoning effort) and rate limits back off. When the wait is too long, that email falls back to
+  the rules, so a sync never stalls. ([`src/groq.js`](src/groq.js))
+- **Resumable, quota-aware sync.** Each processed message is recorded right away, so an interrupted sync picks up
+  where it stopped. The sync window only advances once the backlog is cleared, and Gmail calls are paced with
+  exponential backoff on 429s. ([`src/gmail.js`](src/gmail.js))
+- **Re-scan without losing work.** Reclassifying the whole inbox snapshots every hand edit, rebuilds applications
+  from scratch, then re-attaches the edits by matching Gmail message IDs. A backup is written first.
+  ([`src/store.js`](src/store.js))
+- **Monotonic status and an acyclic chart.** Status moves forward only, unless an application reaches a terminal
+  stage or you correct it by hand. The Sankey path is built so it can never form a cycle.
+  ([`src/stages.js`](src/stages.js))
+- **Cheap persistence.** The whole tracker is one JSON document in memory. Writes are debounced into a single
+  Postgres `jsonb` upsert and flushed on shutdown, so syncing 500 emails is one write, not 500. The same interface
+  falls back to atomic local file writes or, in demo mode, memory only.
+- **Small security surface.** One Google sign-in both identifies the user and grants read-only Gmail access, with
+  the ID token verified server-side. Sessions are stateless HMAC-signed cookies compared in constant time. When
+  hosted, the server refuses to start without an email allow-list and a strong secret.
+  ([`src/auth.js`](src/auth.js))
+
+## Tech stack
+
+| Area | Choice |
 |---|---|
-| Server, sign-in routes, API, live updates | `server.js` |
-| Google sign-in sessions | `src/auth.js` |
-| Gmail access and sync, re-scan | `src/gmail.js` |
-| Groq classifier | `src/groq.js` |
-| Groq + rules merge | `src/classify.js` |
-| Rules, job IDs, deadlines, company names | `src/rules.js` |
-| Storage (Postgres or local files) | `src/store.js` |
-| Stage logic for status and the chart | `src/stages.js` |
-| Excel export | `src/export.js` |
-| Dashboard | `public/` |
+| Server | Node.js 22+ (ES modules), Express 5 |
+| Data | PostgreSQL on Neon (`jsonb`), or local JSON files |
+| Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`) |
+| Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties (light and dark) |
+| Live updates | Server-Sent Events |
+| Export | ExcelJS |
+| Testing / CI | `node:test`, GitHub Actions (Node 22 and 24, plus a demo-mode smoke test) |
+| Hosting | Render (Blueprint in [`render.yaml`](render.yaml)) |
 
-## Settings
+No frontend framework or build step: the browser loads plain scripts, and D3 is served straight from `node_modules`.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `PUBLIC_URL` | Render's address, or `http://localhost:5178` | Site address for Google redirects. Only needed for a custom domain |
-| `ALLOWED_EMAIL` | — | Google account(s) allowed to sign in, comma-separated. **Required when hosted.** |
-| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`) |
-| `DATABASE_URL` | — | Postgres connection string. Unset means local files |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth Web client |
-| `GROQ_API_KEY` | — | Enables the Groq classifier |
-| `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
-| `CRON_SECRET` | — | Key for `/api/cron/sync` (16+ characters) |
-| `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked while awake |
-| `INITIAL_SYNC_DAYS` | 90 | How far back the first sync looks |
-| `GHOST_AFTER_DAYS` | 21 | Days of silence before "No response" |
-| `MAX_EMAILS_PER_SYNC` | 500 | Batch size per sync pass |
+## Tests
+
+```bash
+npm test
+```
+
+There are 43 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+
+- the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
+- status and Sankey-path logic
+- matching emails to applications
+- deadline tracking
+- re-scan edit preservation
+- session cookies, including tampered and unauthorized ones
+
+CI runs them on every push, then boots the app in demo mode and checks the API.
+
+## Project layout
+
+| Path | What's there |
+|---|---|
+| [`server.js`](server.js) | Express app: routes, auth gate, SSE, sync scheduling, graceful shutdown |
+| [`src/gmail.js`](src/gmail.js) | OAuth client, Gmail sync and re-scan engine |
+| [`src/classify.js`](src/classify.js) | Merges the LLM's answer with the rules |
+| [`src/groq.js`](src/groq.js) | Groq client, JSON schema and prompt |
+| [`src/rules.js`](src/rules.js) | Rule-based classifier: stages, companies, roles, job IDs, deadlines |
+| [`src/stages.js`](src/stages.js) | Pipeline stages, status and chart-path logic |
+| [`src/store.js`](src/store.js) | Persistence, application matching, re-scan snapshots |
+| [`src/auth.js`](src/auth.js) | Sign-in sessions and the login middleware |
+| [`src/export.js`](src/export.js) | Excel export |
+| [`src/demo.js`](src/demo.js) | Sample data for demo mode |
+| [`public/`](public/) | Dashboard (HTML, CSS, JS) |
+| [`test/`](test/) | Test suites |
+
+## Deploy your own
+
+It runs on free tiers (Render, Neon, Groq, Google Cloud). See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the
+step-by-step setup and every configuration option.

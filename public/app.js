@@ -127,7 +127,7 @@ function renderGmail() {
     el.innerHTML = `<span class="dot off"></span> Gmail not set up`;
     banner.innerHTML = `<div class="banner">${icon('mail')}<div><strong>Connect Gmail to update automatically.</strong>
       Google sign-in isn't configured yet: set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>
-      (or add <code>credentials.json</code> when running locally). The README has the steps. You can still add applications by hand.</div></div>`;
+      (or add <code>credentials.json</code> when running locally). docs/DEPLOY.md has the steps. You can still add applications by hand.</div></div>`;
   } else if (!g.connected) {
     el.innerHTML = `<span class="dot off"></span> <a href="/auth/google">Connect Gmail</a>`;
   } else {

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      # Boot the app in demo mode and check the API serves the sample data.
+      - name: Smoke test (demo mode)
+        run: |
+          PORT=5178 node server.js --demo &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:5178/healthz && break; sleep 1; done
+          curl -sf http://127.0.0.1:5178/api/state | node -e '
+            let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+              const n = JSON.parse(s).applications.length;
+              if (n < 30) throw new Error(`expected demo applications, got ${n}`);
+              console.log(`demo mode serves ${n} applications`);
+            });'

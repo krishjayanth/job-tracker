@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "job-tracker", "runtimeExecutable": "node", "runtimeArgs": ["--env-file-if-exists=.env", "server.js"], "port": 5178 }
+    { "name": "job-tracker", "runtimeExecutable": "node", "runtimeArgs": ["--env-file-if-exists=.env", "server.js"], "port": 5178 },
+    { "name": "job-tracker-demo", "runtimeExecutable": "node", "runtimeArgs": ["server.js", "--demo"], "port": 5178 }
   ]
 }

@@ -14,6 +14,8 @@ const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
 const SYNC_MINUTES = Number(process.env.SYNC_INTERVAL_MINUTES || 5);
 const GHOST_DAYS = Number(process.env.GHOST_AFTER_DAYS || 21);
 const CRON_SECRET = process.env.CRON_SECRET || '';
+// `npm run demo`: sample data in memory, no Gmail, no sign-in.
+const DEMO = process.argv.includes('--demo');
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
@@ -36,7 +38,7 @@ app.get('/logout', (req, res) => {
 // asks for read-only Gmail access.
 app.get('/auth/google', (req, res) => {
   if (!gmail.gmailConfigured()) {
-    return res.status(500).send('Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README).');
+    return res.status(500).send('Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see docs/DEPLOY.md).');
   }
   res.redirect(gmail.authUrl({ withGmail: !gmail.gmailConnected() }));
 });
@@ -96,7 +98,7 @@ app.get('/api/state', (req, res) => {
   const db = getDb();
   res.json({
     applications: db.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) })),
-    gmail: {
+    gmail: DEMO ? demoGmailState(db) : {
       configured: gmail.gmailConfigured(),
       connected: gmail.gmailConnected(),
       lastSync: db.lastSync,
@@ -109,6 +111,10 @@ app.get('/api/state', (req, res) => {
     ghostDays: GHOST_DAYS,
   });
 });
+
+function demoGmailState(db) {
+  return { configured: true, connected: true, lastSync: db.lastSync, lastSyncError: null, syncMinutes: SYNC_MINUTES, classifier: 'demo data', progress: null };
+}
 
 // --- applications CRUD ----------------------------------------------------
 function addManualStatus(a, stage) {
@@ -194,6 +200,11 @@ app.delete('/api/applications/:id', (req, res) => {
 
 // --- Gmail ----------------------------------------------------------------
 app.post('/api/sync', async (req, res) => {
+  if (DEMO) {
+    getDb().lastSync = new Date().toISOString();
+    broadcast();
+    return res.json({ added: 0, demo: true });
+  }
   if (gmail.isRescanning()) return res.status(202).json({ rescanning: true });
   try {
     const result = await gmail.sync();
@@ -208,6 +219,7 @@ app.post('/api/sync', async (req, res) => {
 // Re-read every email with the current classifier, keeping your edits. Runs in the
 // background; progress comes through /api/state and live updates.
 app.post('/api/rescan', (req, res) => {
+  if (DEMO) return res.status(400).json({ error: 'Re-scan reads Gmail, so it is off in demo mode' });
   if (!gmail.gmailConnected()) return res.status(400).json({ error: 'Connect Gmail first' });
   if (gmail.isRescanning()) return res.status(409).json({ error: 'A re-scan is already running' });
   gmail.rescan()
@@ -238,12 +250,14 @@ async function runSync() {
 gmail.onProgress(broadcast);
 
 // --- start up / shut down ---------------------------------------------------
+if (DEMO && authEnabled) throw new Error('Demo mode runs without sign-in; unset ALLOWED_EMAIL to use it');
 checkAuthConfig();
-await initStore();
+await initStore({ demo: DEMO });
 await gmail.initGmail();
 
 app.listen(PORT, HOST, () => {
   console.log(`Job tracker running at ${gmail.PUBLIC_URL} (listening on ${HOST}:${PORT})`);
+  if (DEMO) return console.log('Demo mode: sample data, kept in memory only. Nothing is read from Gmail or saved.');
   console.log(`Storage: ${process.env.DATABASE_URL ? 'Postgres' : 'local files in data/'} · classifier: ${classifierName()} · sign-in: ${authEnabled ? 'Google' : 'off (local)'}`);
   runSync();
   setInterval(runSync, SYNC_MINUTES * 60_000);

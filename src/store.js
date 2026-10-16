@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { computeStatus } from './stages.js';
+import { buildDemoDb } from './demo.js';
 
 // Storage: Postgres when DATABASE_URL is set (hosted, e.g. Neon), otherwise JSON
 // files in data/ (local). Either way the whole tracker is one JSON document held in
 // memory; writes are batched so a sync of many emails doesn't hammer the database.
+// Demo mode keeps everything in memory only, starting from sample data.
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SAVE_DELAY_MS = 800;
@@ -13,11 +15,16 @@ const SAVE_DELAY_MS = 800;
 const emptyDb = () => ({ applications: [], processed: {}, lastSync: null, lastSyncError: null });
 let db = emptyDb();
 let pool = null;
+let memory = null; // Map of key -> value in demo mode; nothing touches disk
 
 export const usingDatabase = () => Boolean(pool);
 
-export async function initStore() {
-  if (process.env.DATABASE_URL) {
+export async function initStore({ demo = false } = {}) {
+  if (demo) {
+    memory = new Map();
+    db = buildDemoDb();
+    for (const a of db.applications) refresh(a);
+  } else if (process.env.DATABASE_URL) {
     const { default: pg } = await import('pg');
     pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
     await pool.query(`create table if not exists app_state (
@@ -34,6 +41,7 @@ let saveTimer = null;
 let writing = Promise.resolve();
 
 export function save() {
+  if (memory) return;
   if (!pool) {
     const tmp = DB_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
@@ -57,6 +65,7 @@ export function flush() {
 
 // Small extra values (the Gmail sign-in token, backups) stored next to the data.
 export async function getKv(key) {
+  if (memory) return memory.get(key) ?? null;
   if (pool) {
     const { rows } = await pool.query('select value from app_state where key = $1', [key]);
     return rows[0]?.value ?? null;
@@ -66,7 +75,9 @@ export async function getKv(key) {
 
 export async function setKv(key, value, alreadyJson = false) {
   const json = alreadyJson ? value : JSON.stringify(value);
-  if (pool) {
+  if (memory) {
+    memory.set(key, JSON.parse(json));
+  } else if (pool) {
     await pool.query(
       `insert into app_state (key, value, updated_at) values ($1, $2::jsonb, now())
        on conflict (key) do update set value = excluded.value, updated_at = now()`, [key, json]);
@@ -76,7 +87,8 @@ export async function setKv(key, value, alreadyJson = false) {
 }
 
 export async function deleteKv(key) {
-  if (pool) await pool.query('delete from app_state where key = $1', [key]);
+  if (memory) memory.delete(key);
+  else if (pool) await pool.query('delete from app_state where key = $1', [key]);
   else fs.rmSync(path.join(DATA_DIR, `${key}.json`), { force: true });
 }
 

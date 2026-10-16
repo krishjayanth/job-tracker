@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --watch --env-file-if-exists=.env server.js",
+    "demo": "node server.js --demo",
+    "test": "node --test \"test/*.test.js\"",
     "migrate": "node --env-file-if-exists=.env scripts/migrate-to-db.js"
   },
   "keywords": [],
