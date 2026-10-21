@@ -24,7 +24,7 @@ function styleSheet(ws) {
 // Builds an .xlsx with one row per application plus a sheet of every email event.
 export async function buildWorkbook(applications) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Job Tracker';
+  wb.creator = 'nuj';
   wb.created = new Date();
 
   const apps = wb.addWorksheet('Applications');

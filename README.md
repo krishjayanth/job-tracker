@@ -1,4 +1,4 @@
-# Job Tracker
+# nuj
 
 [![CI](https://github.com/krishjayanth/job-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/krishjayanth/job-tracker/actions/workflows/ci.yml)
 ![Node 22+](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)

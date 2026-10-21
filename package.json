@@ -1,5 +1,5 @@
 {
-  "name": "job-tracker",
+  "name": "nuj",
   "version": "1.0.0",
   "description": "Job application tracker that auto-updates from Gmail",
   "scripts": {

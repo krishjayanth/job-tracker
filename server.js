@@ -261,7 +261,7 @@ await initStore({ demo: DEMO });
 await gmail.initGmail();
 
 app.listen(PORT, HOST, () => {
-  console.log(`Job tracker running at ${gmail.PUBLIC_URL} (listening on ${HOST}:${PORT})`);
+  console.log(`nuj running at ${gmail.PUBLIC_URL} (listening on ${HOST}:${PORT})`);
   if (DEMO) return console.log('Demo mode: sample data, kept in memory only. Nothing is read from Gmail or saved.');
   console.log(`Storage: ${process.env.DATABASE_URL ? 'Postgres' : 'local files in data/'} · classifier: ${classifierName()} · sign-in: ${authEnabled ? 'Google' : 'off (local)'}`);
   runSync();

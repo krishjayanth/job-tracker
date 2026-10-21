@@ -1,6 +1,6 @@
-# Deploying Job Tracker
+# Deploying nuj
 
-Job Tracker runs on free tiers: **Render** for the web service, **Neon** for Postgres, **Groq** for the email
+nuj runs on free tiers: **Render** for the web service, **Neon** for Postgres, **Groq** for the email
 classifier and a **Google Cloud** OAuth client for sign-in and read-only Gmail access. Setup takes about 15 minutes.
 
 To just look around, you don't need any of this: `npm install && npm run demo` runs it locally with sample data.

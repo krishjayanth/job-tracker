@@ -2,7 +2,7 @@
 // signed cookie (HMAC with SESSION_SECRET), so there's nothing extra to store.
 import crypto from 'node:crypto';
 
-const COOKIE = 'jt_session';
+const COOKIE = 'nuj_session';
 const MAX_AGE_DAYS = 30;
 const ALLOWED = (process.env.ALLOWED_EMAIL || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const SECRET = process.env.SESSION_SECRET || '';
