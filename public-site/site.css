@@ -60,9 +60,8 @@ img { display: block; max-width: 100%; height: auto; }
 .nav.scrolled { border-bottom-color: var(--border); }
 .nav .wrap { display: flex; align-items: center; gap: 1.5rem; height: 4rem; }
 .brand { display: inline-flex; align-items: center; gap: .6rem; color: var(--text); font-weight: 600; letter-spacing: -.02em; text-decoration: none; }
-.brand svg { width: 1.6rem; height: 1.6rem; }
-.mark rect { fill: var(--accent); }
-.mark path { fill: none; stroke: var(--accent-text); stroke-width: 2.2; stroke-linecap: round; }
+.logo-mark { display: block; height: 1.9rem; aspect-ratio: 386 / 277; background: currentColor;
+  -webkit-mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; }
 .nav-links { display: flex; gap: .25rem; margin: 0 auto; font-size: .875rem; }
 .nav-links a { padding: .4rem .75rem; border-radius: 999px; color: var(--muted); text-decoration: none; transition: color 150ms ease, background-color 150ms ease; }
 .nav-links a:hover, .nav-links a[aria-current] { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }

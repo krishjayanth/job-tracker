@@ -134,9 +134,8 @@ input, textarea { caret-color: var(--accent); }
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; color: var(--text); text-decoration: none; }
-.brand-mark { width: 26px; height: 26px; }
-.brand-bg { fill: var(--accent); }
-.brand-flow { fill: none; stroke: var(--accent-text); stroke-width: 2.2; stroke-linecap: round; }
+.logo-mark { display: block; height: 30px; aspect-ratio: 386 / 277; background: currentColor;
+  -webkit-mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 
 .gmail-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-right: 4px; }

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Sign in · nuj</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon.png">
+  <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -15,9 +17,8 @@
     .card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
       padding: 32px 28px; display: grid; gap: 18px; justify-items: center; text-align: center;
       }
-    .mark { width: 44px; height: 44px; }
-    .mark rect { fill: var(--accent); }
-    .mark path { fill: none; stroke: var(--accent-text); stroke-width: 2.2; stroke-linecap: round; }
+    .logo-mark { display: block; height: 52px; aspect-ratio: 386 / 277; background: var(--text);
+      -webkit-mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; }
     h1 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
     p { margin: 0; color: var(--muted); }
     .error { color: var(--danger); font-size: 14px; }
@@ -33,8 +34,7 @@
 </head>
 <body>
   <main class="card">
-    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6"/><path d="M5 12h4c2.5 0 3.5-4 6-4h4M9 12c2.5 0 3.5 4 6 4h4"/></svg>
-    <h1>nuj</h1>
+    <h1><span class="logo-mark" role="img" aria-label="nuj"></span></h1>
     <p>Sign in with the Google account this tracker belongs to.</p>
     <p class="error" id="error" hidden></p>
     <a class="btn" href="/auth/google">
