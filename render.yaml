@@ -2,7 +2,7 @@
 # Values marked `sync: false` are secrets you paste in during setup (see README).
 services:
   - type: web
-    name: job-tracker
+    name: nuj
     runtime: node
     plan: free
     buildCommand: npm ci

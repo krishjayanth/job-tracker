@@ -25,22 +25,29 @@ classified by the built-in rules.
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now and fill them in after step 4
 
    `SESSION_SECRET` and `CRON_SECRET` are generated for you, and the site's address comes from Render automatically.
-4. Once it deploys, note the site address at the top of the service, e.g. `https://job-tracker-ab12.onrender.com`.
+4. Once it deploys, note the site address at the top of the service. The Blueprint names the service `nuj`, so
+   the address is `https://nuj.onrender.com`. Addresses are first come, first served: if `nuj` is taken, Render
+   adds a suffix (e.g. `https://nuj-ab12.onrender.com`), so use whatever Render shows in the steps below.
+   Render sets the address when the service is created; renaming the service later doesn't change it.
 
 ## 4. Google sign-in and Gmail access
 1. In the [Google Cloud console](https://console.cloud.google.com), create a project and enable the **Gmail API**
    (APIs & Services › Library › Gmail API › Enable).
 2. **Google Auth Platform › Clients › Create client**, and choose **Web application**.
-3. Under **Authorized redirect URIs**, add `https://<your-site>.onrender.com/oauth2callback`.
+3. Under **Authorized redirect URIs**, add `https://nuj.onrender.com/oauth2callback`.
    To run it locally too, also add `http://localhost:5178/oauth2callback`.
 4. Copy the **Client ID** and **Client secret** into Render's `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
    Render redeploys automatically.
 5. **Audience:** either click **Publish app**, or keep it in Testing and add yourself as a test user. In Testing
    mode, Google expires the Gmail sign-in every 7 days. A published personal app shows an "unverified app" warning,
    which you can get past with *Advanced › Go to …*.
+6. **Branding:** set the app's links to the public pages:
+   - Home page: `https://nuj.onrender.com/welcome`
+   - Privacy policy: `https://nuj.onrender.com/privacy`
+   - Terms of service: `https://nuj.onrender.com/terms`
 
 ## 5. Sign in
-Open your Render URL and click **Sign in with Google**. The first time, Google also asks for read-only Gmail access.
+Open https://nuj.onrender.com and click **Sign in with Google**. The first time, Google also asks for read-only Gmail access.
 Syncing starts on its own after that, beginning with the last 90 days of email.
 
 ## 6. Keep it awake (free tier)
@@ -48,11 +55,24 @@ Free Render services sleep after 15 minutes without visitors, which pauses synci
 https://cron-job.org that requests this URL every 10 minutes:
 
 ```
-https://<your-site>.onrender.com/api/cron/sync?key=<CRON_SECRET>
+https://nuj.onrender.com/api/cron/sync?key=<CRON_SECRET>
 ```
 
 Copy `CRON_SECRET` from Render's Environment tab. This keeps the service awake and syncing. It fits within Render's
 free 750 hours a month as long as it's your only free service.
+
+## Moving an existing deployment to the nuj address
+A service created under another name (e.g. `job-tracker-ab12.onrender.com`) keeps that address. To move to
+`nuj.onrender.com`:
+
+1. Create a new service from this repository named `nuj` (Blueprint or **New › Web Service**).
+2. Copy every environment variable from the old service, including the **same `DATABASE_URL`**, so your
+   applications and Gmail connection carry over. Don't set `PUBLIC_URL`.
+3. In Google Cloud, add `https://nuj.onrender.com/oauth2callback` as a redirect URI and update the branding links
+   (section 4, steps 3 and 6).
+4. Point the cron job (section 6) at the new address.
+5. Sign in again at the new address; sign-ins don't carry across addresses.
+6. Delete the old service, so two copies aren't syncing the same database.
 
 ## Moving local data to the database (optional)
 If you've been running it locally, copy your tracker into Neon once:
