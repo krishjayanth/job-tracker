@@ -24,6 +24,10 @@ app.use(express.json());
 // --- public routes (no sign-in needed) ---------------------------------------
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+// Landing page (/welcome), privacy policy (/privacy) and terms (/terms). Public so
+// visitors and Google's OAuth review can read them without signing in.
+app.use(express.static('public-site', { extensions: ['html'], index: false }));
+
 app.get('/login', (req, res) => {
   if (!authEnabled) return res.redirect('/');
   res.sendFile(path.resolve('public-login/login.html'));

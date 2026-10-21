@@ -48,8 +48,8 @@ export function endSession(res) {
   res.clearCookie(COOKIE, { path: '/' });
 }
 
-// Express middleware: let signed-in requests through; send everyone else to /login
-// (pages) or a 401 (API calls).
+// Express middleware: let signed-in requests through; send everyone else to the
+// landing page (home), /login (other pages) or a 401 (API calls).
 export function requireLogin(req, res, next) {
   if (!authEnabled) return next();
   const session = readSession(req);
@@ -58,5 +58,5 @@ export function requireLogin(req, res, next) {
     return next();
   }
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Sign in required' });
-  res.redirect('/login');
+  res.redirect(req.path === '/' ? '/welcome' : '/login');
 }

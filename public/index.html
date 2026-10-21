@@ -55,6 +55,10 @@
           deadlines are kept, and deleted applications stay deleted. A backup is saved first.
           On Groq's free tier, emails beyond the daily limit are sorted by the built-in rules.</p>
         <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
+        <div id="disconnect" class="menu-note" hidden>
+          <p>Stop reading your inbox and delete the stored Gmail access. Your applications stay.</p>
+          <button id="disconnect-btn" class="btn" type="button" style="margin-top:10px">Disconnect Gmail</button>
+        </div>
         <div id="account" class="menu-note" hidden>
           <p>Signed in as <strong id="account-email"></strong></p>
           <a class="btn" href="/logout" style="margin-top:10px;text-decoration:none">Sign out</a>

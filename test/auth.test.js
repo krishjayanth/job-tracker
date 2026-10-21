@@ -31,8 +31,9 @@ test('a signed session cookie lets you in', () => {
   assert.equal(r.user.email, 'me@example.com');
 });
 
-test('without a session, pages redirect to /login and the API returns 401', () => {
-  assert.equal(request('/').redirect, '/login');
+test('without a session, home goes to the landing page, other pages to /login, and the API returns 401', () => {
+  assert.equal(request('/').redirect, '/welcome');
+  assert.equal(request('/index.html').redirect, '/login');
   assert.equal(request('/api/state').status, 401);
 });
 

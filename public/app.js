@@ -154,6 +154,7 @@ function renderGmail() {
     }
   }
   $('#sync-btn').hidden = !g.connected;
+  $('#disconnect').hidden = !g.connected;
   $('#more-btn').hidden = !g.connected && !state.user;
   $('#account').hidden = !state.user;
   $('#account-email').textContent = state.user || '';
@@ -695,6 +696,17 @@ $('#rescan-btn').onclick = async () => {
   $('#rescan-btn').disabled = true;
   try {
     await api('POST', '/api/rescan');
+    menu.hidePopover();
+  } catch (err) {
+    alert(err.message);
+  }
+  load();
+};
+
+$('#disconnect-btn').onclick = async () => {
+  if (!confirm('Disconnect Gmail? The tracker stops updating until you connect again.')) return;
+  try {
+    await api('POST', '/api/disconnect');
     menu.hidePopover();
   } catch (err) {
     alert(err.message);
