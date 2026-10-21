@@ -40,7 +40,8 @@ app.get('/auth/google', (req, res) => {
   if (!gmail.gmailConfigured()) {
     return res.status(500).send('Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see docs/DEPLOY.md).');
   }
-  res.redirect(gmail.authUrl({ withGmail: !gmail.gmailConnected() }));
+  // ?gmail=1 asks for Gmail again even if a token is stored (reconnecting).
+  res.redirect(gmail.authUrl({ withGmail: req.query.gmail === '1' || !gmail.gmailConnected() }));
 });
 
 app.get('/oauth2callback', async (req, res) => {

@@ -151,6 +151,8 @@ function isRateLimit(err) {
     (status === 403 && (reasons.some(r => /rateLimitExceeded|quotaExceeded/.test(r)) || /quota exceeded/i.test(err.message)));
 }
 
+const isInvalidGrant = err => err.message === 'invalid_grant' || err.response?.data?.error === 'invalid_grant';
+
 async function withRetry(fn, attempts = 6) {
   for (let i = 0; ; i++) {
     try {
@@ -304,7 +306,14 @@ async function runSync({ mode, sinceEpoch } = {}) {
     save();
     return { added, scanned: batch.length, remaining };
   } catch (err) {
-    db.lastSyncError = err.message;
+    // Google revoked or expired the refresh token. Forget it so the next sign-in
+    // asks for Gmail access again instead of reusing the dead token.
+    if (isInvalidGrant(err)) {
+      await disconnect();
+      db.lastSyncError = 'Google sign-in for Gmail expired or was revoked';
+    } else {
+      db.lastSyncError = err.message;
+    }
     save();
     throw err;
   }

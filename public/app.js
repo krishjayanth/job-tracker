@@ -129,7 +129,11 @@ function renderGmail() {
       Google sign-in isn't configured yet: set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>
       (or add <code>credentials.json</code> when running locally). docs/DEPLOY.md has the steps. You can still add applications by hand.</div></div>`;
   } else if (!g.connected) {
-    el.innerHTML = `<span class="dot off"></span> <a href="/auth/google">Connect Gmail</a>`;
+    el.innerHTML = `<span class="dot off"></span> <a href="/auth/google?gmail=1">Connect Gmail</a>`;
+    if (g.lastSyncError) {
+      banner.innerHTML = `<div class="banner error">${icon('alert')}<div><strong>${esc(g.lastSyncError)}.</strong>
+        <a href="/auth/google?gmail=1">Reconnect Gmail</a> to keep syncing.</div></div>`;
+    }
   } else {
     const err = g.lastSyncError;
     const p = g.progress;
@@ -146,7 +150,7 @@ function renderGmail() {
         ? `<strong>The Gmail API isn't turned on for your Google Cloud project.</strong>
            <a href="${esc(enableUrl)}" target="_blank" rel="noopener">Turn it on</a>, wait a minute, then click Sync.`
         : `<strong>Gmail sync failed:</strong> ${esc(err.replace(/\.+$/, ''))}.
-           If your sign-in expired, <a href="/auth/google">reconnect Gmail</a>.`}</div></div>`;
+           If your sign-in expired, <a href="/auth/google?gmail=1">reconnect Gmail</a>.`}</div></div>`;
     }
   }
   $('#sync-btn').hidden = !g.connected;
