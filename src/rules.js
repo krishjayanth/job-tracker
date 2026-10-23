@@ -9,6 +9,7 @@
 const RULES = [
   ['offer', /\b(pleased|excited|happy|delighted|thrilled) to (extend|offer) (you )?(a |an |the |our )?(formal |verbal |official |conditional )?(offer|position|role|internship|job|employment)\b|\boffer letter\b|\boffer of employment\b|\bjob offer\b|\b(formal|verbal|conditional) offer\b/i],
   ['rejected', /\bunfortunately\b|\bnot (to )?(be )?mov(e|ing) forward\b|\b(decided|chosen) to (pursue|proceed|move forward) with other\b|\bother candidates\b|\bnot been selected\b|\bno longer (being )?considered\b|\bposition has been filled\b|\bwill not be (proceeding|progressing)\b|\bregret to inform\b|\bnot a match at this time\b/i],
+  ['withdrawn', /\b(you|you've|you have) (have )?withdrawn your (job )?application\b|\bapplication (has been |was )?withdrawn\b|\bwithdrawal of your application\b|\bconfirm(ing)? (that )?you('ve| have)? withdr[ae]wn?\b/i],
   ['oa', /\b(online|technical|coding|skills?) (assessment|challenge|test)\b|\bhackerrank\b|\bcodesignal\b|\bcodility\b|\btake[- ]home\b|\bhirevue\b|\bmodern ?hire\b|\bspark ?hire\b|\bharqen\b|\b(ai|one-way|recorded|pre-recorded|asynchronous|async|on-demand|digital) (video )?interview\b|\bcomplete (the|an|your) assessment\b|\bassessment (link|invitation)\b|\b(pre-employment|cognitive) assessment\b|\binvited to (an? |the )?[\w -]{0,30}assessment\b/i],
   ['interview', /\b(schedule|invite you to|invitation to|availability for|book) (an? |your |a time for (an? |your )?)?(phone |video |virtual |onsite |on-site |technical |final |first )?(round )?(interview|screen|call|chat|conversation)\b|\binterview (invitation|request|confirmation|scheduled)\b|\bphone screen\b|\bnext round\b/i],
   ['applied', /\bthank(s| you) for (your )?(applying|application|interest|submitting)\b|\bapplication (has been |was )?(received|submitted|sent)\b|\bwe('ve| have) received your (job )?application\b|\bsuccessfully (applied|submitted)\b|\byour application (to|for|was sent)\b|\b(started|complete) your (job )?application\b|\breceived your [\w .&'-]{1,40} application\b/i],
@@ -30,7 +31,7 @@ const SUBJECT_COMPANY = [
   /\b(?:hackerrank|codesignal) (.+?) (?:(?:beginner|coding|online|technical) )*assessment\b/i,
   /\byour (?:recent )?(.+?) (?:job )?application\b/i,
   new RegExp(String.raw`\bat (.+?)${END}`, 'i'),
-  /^(.+?) (?:application|interview|assessment)\b/i,
+  /^(.+?) (?:(?:online|coding|technical|skills?|video|phone) )?(?:application|interview|assessment)\b/i,
   /^([^:–|]{2,40}?)\s*(?::|–|\||\s-)\s*/,
   new RegExp(String.raw`(?:interview|assessment|offer) (?:with|from|at) (.+?)${END}`, 'i'),
 ];
