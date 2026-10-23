@@ -74,3 +74,14 @@ test('deleting an account removes its data, key and Gmail sign-in, and only its 
   const again = await users.getUser('sub-friend', 'friend@example.com');
   assert.deepEqual(again.store.applications, []);
 });
+
+test('someone new is asked how to sort before anything is synced; existing users are not', async () => {
+  const fresh = await users.getUser('sub-fresh', 'friend@example.com');
+  assert.equal(fresh.needsSetup(), true);
+  fresh.finishSetup();
+  assert.equal(fresh.needsSetup(), false);
+
+  const synced = await users.getUser('sub-synced', 'friend@example.com');
+  synced.store.db.lastSync = new Date().toISOString();
+  assert.equal(synced.needsSetup(), false);
+});

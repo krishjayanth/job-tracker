@@ -277,6 +277,49 @@
     </div>
   </dialog>
 
+  <dialog id="setup-dialog" class="sheet setup" aria-labelledby="setup-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-mail"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="setup-title">How should nuj read your emails?</h2>
+        <p>Gmail is connected. Before nuj looks at anything, choose how it sorts your application emails. You can change this later.</p>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <section class="setup-option" id="setup-ai">
+        <div class="setup-option-head">
+          <svg class="icon"><use href="#i-sparkles"/></svg>
+          <strong>AI sorting with Groq</strong><span class="rec-tag">Recommended</span>
+        </div>
+        <p>An AI reads each application email to work out the company, role and stage. More accurate, and it catches deadlines like "within 5 days". Needs a free Groq key.</p>
+        <div id="setup-server" hidden>
+          <button class="btn btn-primary" type="button" id="setup-use-server">Start with AI sorting</button>
+          <p class="fine-note">This server already has a Groq key set up for you.</p>
+        </div>
+        <form id="setup-key-form" class="key-form" autocomplete="off">
+          <div class="key-input">
+            <svg class="icon"><use href="#i-key"/></svg>
+            <input id="setup-key" type="password" spellcheck="false" placeholder="Paste your key (gsk_…)" aria-label="Groq API key" aria-describedby="setup-msg">
+          </div>
+          <button class="btn btn-primary" type="submit">Save and start</button>
+        </form>
+        <a class="setup-link" id="setup-get-key" href="https://console.groq.com/keys" target="_blank" rel="noopener">Get a free key at console.groq.com<svg class="icon"><use href="#i-external"/></svg></a>
+        <p id="setup-msg" class="key-msg" role="status"></p>
+      </section>
+      <section class="setup-option">
+        <div class="setup-option-head">
+          <svg class="icon"><use href="#i-list"/></svg>
+          <strong>Built-in rules</strong>
+        </div>
+        <p>Pattern matching on common hiring emails. Nothing leaves nuj, but it misses more and needs more fixing by hand.</p>
+        <button class="btn" type="button" id="setup-rules">Start with built-in rules</button>
+      </section>
+    </div>
+    <div class="sheet-foot">
+      <span class="fine"><svg class="icon"><use href="#i-shield"/></svg><span>nuj then reads application emails from the last <span id="setup-days">90</span> days. It never sends or changes email.</span></span>
+    </div>
+  </dialog>
+
   <dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
     <div class="sheet-head">
       <span class="sheet-icon"><svg class="icon"><use href="#i-flag"/></svg></span>

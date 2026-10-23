@@ -102,6 +102,18 @@ export class User {
     return this;
   }
 
+  // Someone new picks how their emails are read (a Groq key or the built-in rules)
+  // before anything is synced. Anyone who has synced before already made that choice.
+  needsSetup() {
+    const db = this.store.db;
+    return !db.setupDone && !db.lastSync && !Object.keys(db.processed || {}).length;
+  }
+
+  finishSetup() {
+    this.store.db.setupDone = true;
+    this.store.save();
+  }
+
   // The Groq client to classify this user's emails with, or null for the rules.
   groq() {
     if (this.apiKey && !this.keyRecord.rejected) return groqClient(this.apiKey);

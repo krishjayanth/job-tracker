@@ -147,10 +147,13 @@ app.get('/api/state', async (req, res) => {
       lastSync: db.lastSync,
       lastSyncError: db.lastSyncError,
       syncMinutes: SYNC_MINUTES,
+      initialDays: gmail.INITIAL_DAYS,
       classifier: classifierName(user.groq()),
       progress: user.mailbox.progress,
     },
     groq: DEMO ? null : user.groqInfo(),
+    // Gmail is connected but nothing has been read yet: ask how to sort first.
+    needsSetup: !DEMO && user.mailbox.connected() && user.needsSetup(),
     user: authEnabled ? user.email : null,
     reports,
     demo: DEMO,
@@ -289,6 +292,7 @@ app.post('/api/sync', async (req, res) => {
     return res.json({ added: 0, demo: true });
   }
   if (user.mailbox.isRescanning()) return res.status(202).json({ rescanning: true });
+  if (user.needsSetup()) return res.status(409).json({ error: 'Choose how nuj should read your emails first' });
   try {
     const result = await user.mailbox.sync();
     broadcast(user.id);
@@ -311,6 +315,15 @@ app.post('/api/rescan', (req, res) => {
     .catch(err => console.error(`[rescan] ${user.id} failed: ${err.message}`))
     .finally(() => broadcast(user.id));
   res.status(202).json({ started: true });
+});
+
+// The first-run choice is made (a Groq key saved, or the built-in rules): start reading.
+app.post('/api/setup', (req, res) => {
+  const user = req.account;
+  user.finishSetup();
+  res.json({ ok: true });
+  broadcast(user.id);
+  runSync(user);
 });
 
 // Re-read just this application's emails, for when one was sorted wrong.

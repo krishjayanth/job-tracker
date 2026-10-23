@@ -7,7 +7,7 @@ import { classify } from './classify.js';
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 const LOGIN_SCOPES = ['openid', 'email'];
-const INITIAL_DAYS = Number(process.env.INITIAL_SYNC_DAYS || 90);
+export const INITIAL_DAYS = Number(process.env.INITIAL_SYNC_DAYS || 90);
 const MAX_PER_SYNC = Number(process.env.MAX_EMAILS_PER_SYNC || 500);
 export const PORT = Number(process.env.PORT || 5178);
 // Where Google sends you back after signing in: PUBLIC_URL if it's a real web address,
@@ -215,6 +215,7 @@ export class Mailbox {
       this.onProgress();
       await store.backup('db_before_rescan');
 
+      db.setupDone = true; // about to clear lastSync and processed; this isn't a new account
       const snapshots = store.snapshotEdits();
       const oldest = db.applications.flatMap(a => a.events).map(e => Date.parse(e.date)).reduce((m, t) => Math.min(m, t), Date.now());
       const sinceEpoch = Math.floor(Math.min(oldest, Date.now() - INITIAL_DAYS * 86_400_000) / 1000) - 86_400;
@@ -287,6 +288,8 @@ export class Mailbox {
     const store = this.user.store;
     const db = store.db;
     if (!this.connected() || this.stopped) return { added: 0, skipped: true };
+    if (this.user.needsSetup()) return { added: 0, skipped: true, needsSetup: true };
+    db.setupDone = true; // a sync that runs means the choice was made (a re-scan clears lastSync)
     const gmail = google.gmail({ version: 'v1', auth: this.getClient() });
 
     // Re-scan a day of overlap so nothing slips between syncs; processed ids dedupe.

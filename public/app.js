@@ -176,8 +176,74 @@ function renderGmail() {
   $('#reports-link').hidden = !state.reports;
   $('#reports-count').textContent = state.reports?.open || '';
   $('#delete-section').hidden = state.demo;
+  renderSetup();
   renderGroq();
 }
+
+// First run: nothing is read until you choose a Groq key or the built-in rules.
+let setupAsked = false;
+function renderSetup() {
+  const dialog = $('#setup-dialog');
+  if (!state.needsSetup) {
+    if (dialog.open) dialog.close();
+    return;
+  }
+  $('#banner').innerHTML = `<div class="banner">${icon('mail')}<div><strong>nuj hasn't read any email yet.</strong>
+    Choose how it should sort your application emails to start tracking. <a href="#" data-open-setup>Choose now</a></div></div>`;
+  const server = state.groq?.source === 'server' && !state.groq.problem;
+  $('#setup-server').hidden = !server;
+  $('#setup-key-form').hidden = server;
+  $('#setup-get-key').hidden = server;
+  $('#setup-days').textContent = state.gmail.initialDays || 90;
+  // Ask once per visit; after that the banner brings it back.
+  if (!setupAsked && !dialog.open) {
+    setupAsked = true;
+    dialog.showModal();
+  }
+}
+const setupMsg = (text, tone = '') => { $('#setup-msg').className = `key-msg ${tone}`; $('#setup-msg').textContent = text; };
+async function startTracking(how) {
+  await api('POST', '/api/setup');
+  $('#setup-dialog').close();
+  toast(`Reading your inbox with ${how}. Applications appear as they're found`);
+  load();
+}
+$('#banner').addEventListener('click', e => {
+  if (!e.target.closest('[data-open-setup]')) return;
+  e.preventDefault();
+  $('#setup-dialog').showModal();
+});
+$('#setup-rules').onclick = async e => {
+  e.target.disabled = true;
+  try { await startTracking('the built-in rules'); } catch (err) { setupMsg(err.message, 'err'); }
+  e.target.disabled = false;
+};
+$('#setup-use-server').onclick = async e => {
+  e.target.disabled = true;
+  try { await startTracking('AI sorting'); } catch (err) { setupMsg(err.message, 'err'); }
+  e.target.disabled = false;
+};
+$('#setup-key-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('#setup-key');
+  const key = input.value.trim();
+  if (!key) { setupMsg('Paste your Groq key, or start with the built-in rules.', 'err'); return input.focus(); }
+  if (!key.startsWith('gsk_')) { setupMsg('Groq keys start with gsk_. Check it was copied in full.', 'err'); return input.focus(); }
+  const btn = e.submitter || e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.classList.add('busy');
+  setupMsg('Checking the key with Groq…');
+  try {
+    await api('PUT', '/api/groq-key', { key });
+    input.value = '';
+    await startTracking('AI sorting');
+  } catch (err) {
+    setupMsg(err.message, 'err');
+    input.focus();
+  }
+  btn.disabled = false;
+  btn.classList.remove('busy');
+});
 
 // Your Groq key: where it stands (sidebar, menu, settings sheet), and a banner when it needs you.
 function renderGroq() {
