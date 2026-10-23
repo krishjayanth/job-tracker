@@ -3,6 +3,7 @@ import path from 'node:path';
 import { google } from 'googleapis';
 import { refresh, newId, normalizeCompany, getKv, setKv, deleteKv } from './store.js';
 import { classify } from './classify.js';
+import { HIRING_SENDERS } from './jobcheck.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -21,16 +22,15 @@ if (process.env.PUBLIC_URL && !isWebUrl(process.env.PUBLIC_URL)) {
 }
 const REDIRECT_URI = `${PUBLIC_URL}/oauth2callback`;
 
-// Narrow the inbox down to likely application emails before classifying.
-const ATS_SENDERS = [
-  'greenhouse.io', 'greenhouse-mail.io', 'lever.co', 'myworkday.com', 'ashbyhq.com',
-  'smartrecruiters.com', 'icims.com', 'jobvite.com', 'workablemail.com', 'successfactors.com',
-  'taleo.net', 'hackerrank.com', 'codesignal.com', 'hirevue.com', 'modernhire.com', 'jobs-noreply@linkedin.com', 'indeedapply@indeed.com',
-];
+// Narrow the inbox down to likely application emails before classifying: anything from
+// hiring software, or with an application-ish subject from anyone (employers often write
+// directly). The job check in classify.js then turns away non-job "applications".
 const BASE_QUERY = [
   '-category:promotions -category:social -from:jobalerts-noreply@linkedin.com',
-  `{subject:(application OR applying OR applied OR interview OR assessment OR offer OR candidacy OR "next steps" OR "your interest") from:(${ATS_SENDERS.join(' OR ')})}`,
+  `{subject:(application OR applying OR applied OR interview OR assessment OR offer OR candidacy OR "next steps" OR "your interest") from:(${HIRING_SENDERS.join(' OR ')})}`,
 ].join(' ');
+// Senders you've blocked are left out of the search (Gmail queries stay well under their size limit).
+const blockedQuery = db => Object.keys(db.blockedSenders || {}).slice(0, 200).map(d => `-from:${d}`).join(' ');
 
 // Google OAuth client: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (hosted), or a
 // downloaded credentials.json (local).
@@ -296,7 +296,7 @@ export class Mailbox {
     const since = db.lastSync
       ? `after:${Math.floor(Date.parse(db.lastSync) / 1000) - 86_400}`
       : sinceEpoch ? `after:${sinceEpoch}` : `newer_than:${INITIAL_DAYS}d`;
-    const q = `${since} ${BASE_QUERY}`;
+    const q = `${since} ${BASE_QUERY} ${blockedQuery(db)}`.trim();
 
     try {
       const ids = [];
@@ -332,7 +332,9 @@ export class Mailbox {
           date: new Date(Number(msg.internalDate)).toISOString(),
           body: bodyText(msg.payload),
         };
-        const result = await classify(email, { groq: this.user.groq(), onKeyRejected: () => this.user.keyRejected() });
+        // Blocked after this search began, or beyond the search's exclusion list.
+        const result = store.isBlocked(email.from) ? null
+          : await classify(email, { groq: this.user.groq(), onKeyRejected: () => this.user.keyRejected() });
         // Saved per message so an interrupted sync resumes where it left off.
         db.processed[msg.id] = true;
         if (!result) {

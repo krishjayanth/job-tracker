@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { computeStatus } from './stages.js';
 import { buildDemoDb } from './demo.js';
+import { senderDomain } from './jobcheck.js';
 
 // Storage: Postgres when DATABASE_URL is set (hosted, e.g. Neon), otherwise JSON
 // files in data/ (local). Either way it's a key-value table of JSON values, and each
@@ -231,6 +232,39 @@ export class Store {
     };
     this.db.applications.push(app);
     return app;
+  }
+
+  // Senders you've said never send job emails (by domain): skipped by every sync, and
+  // what's already filed from them is removed. Returns how many emails were removed.
+  blockSender(domain) {
+    const db = this.db;
+    db.blockedSenders ??= {};
+    db.blockedSenders[domain] = { at: new Date().toISOString() };
+    const fromIt = e => !e.manual && e.from && senderDomain(e.from) === domain;
+    let removed = 0;
+    for (const a of db.applications) {
+      const gone = a.events.filter(fromIt);
+      if (!gone.length) continue;
+      removed += gone.length;
+      for (const e of gone) {
+        if (e.messageId) db.ignored[e.messageId] = true;
+        if (e.messageId) delete db.assignments[e.messageId];
+      }
+      a.events = a.events.filter(e => !fromIt(e));
+      if (a.events.length) refresh(a);
+    }
+    db.applications = db.applications.filter(a => a.events.length);
+    return removed;
+  }
+
+  // Start reading a sender again. Emails removed when it was blocked stay removed.
+  unblockSender(domain) {
+    delete this.db.blockedSenders?.[domain];
+  }
+
+  isBlocked(from) {
+    const domain = senderDomain(from);
+    return Boolean(domain && this.db.blockedSenders?.[domain]);
   }
 
   // Delete an application, remembering its emails so a re-scan doesn't bring it back.

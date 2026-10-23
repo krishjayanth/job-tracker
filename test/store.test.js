@@ -143,3 +143,24 @@ test('reassignEmail: a new application, or not an application at all', () => {
   assert.equal(s.db.ignored[third.messageId], true);
   assert.equal(s.reassignEmail('nope', { action: 'confirm' }).status, 404);
 });
+
+test('blocking a sender removes its emails, drops emptied applications and skips it from now on', () => {
+  const bills = s.createApplication({ company: 'Simplebills', source: 'gmail' });
+  bills.events.push(email('2026-09-01', 'applied', { from: 'SimpleBills <hello@simplebills.com>' }));
+  refresh(bills);
+  const mixed = s.createApplication({ company: 'Contoso', source: 'gmail' });
+  mixed.events.push(email('2026-09-01', 'applied', { from: 'Contoso <jobs@contoso.com>' }));
+  mixed.events.push(email('2026-09-02', 'oa', { from: 'Billing <billing@simplebills.com>' }));
+  refresh(mixed);
+  const blockedId = bills.events[0].messageId;
+
+  assert.equal(s.blockSender('simplebills.com'), 2);
+  assert.deepEqual(s.applications.map(a => a.company), ['Contoso']);
+  assert.equal(mixed.events.length, 1);
+  assert.equal(mixed.status, 'applied');
+  assert.equal(s.db.ignored[blockedId], true);
+  assert.equal(s.isBlocked('X <a@simplebills.com>'), true);
+
+  s.unblockSender('simplebills.com');
+  assert.equal(s.isBlocked('X <a@simplebills.com>'), false);
+});

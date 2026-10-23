@@ -8,6 +8,7 @@ import { buildWorkbook } from './src/export.js';
 import * as gmail from './src/gmail.js';
 import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
+import { canBlockDomain, senderDomain } from './src/jobcheck.js';
 import { addReport, listReports, openCount, setReportStatus, deleteReport, deleteReportsBy } from './src/reports.js';
 import { getUser, allUsers, deleteUser, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
@@ -140,7 +141,13 @@ app.get('/api/state', async (req, res) => {
   const reports = canSeeReports(user) ? { open: await openCount() } : null;
   const db = user.store.db;
   res.json({
-    applications: db.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) })),
+    applications: db.applications.map(a => ({
+      ...a,
+      path: stagePath(a, { ghostDays: GHOST_DAYS }),
+      // The sender domain you could block from each email (none for Gmail, hiring software...).
+      events: a.events.map(e => e.from && canBlockDomain(senderDomain(e.from)) ? { ...e, blockable: senderDomain(e.from) } : e),
+    })),
+    blockedSenders: Object.keys(db.blockedSenders || {}).sort(),
     gmail: DEMO ? demoGmailState(db) : {
       configured: gmail.gmailConfigured(),
       connected: user.mailbox.connected(),
@@ -260,6 +267,20 @@ app.post('/api/emails/:eventId/assign', (req, res) => {
   if (error) return res.status(status).json({ error });
   changed(req.account);
   res.json({ app: a });
+});
+
+// Never read a sender again ("Ignore everything from simplebills.com"), and undo that.
+app.post('/api/blocked-senders', (req, res) => {
+  const domain = String(req.body?.domain || '').trim().toLowerCase();
+  if (!canBlockDomain(domain)) return res.status(400).json({ error: "That sender can't be blocked: it's a shared email service or hiring software" });
+  const removed = req.account.store.blockSender(domain);
+  changed(req.account);
+  res.json({ domain, removed });
+});
+app.delete('/api/blocked-senders/:domain', (req, res) => {
+  req.account.store.unblockSender(String(req.params.domain).toLowerCase());
+  changed(req.account);
+  res.json({ ok: true });
 });
 
 // Excel export of the given applications (in the order shown), or all of them.

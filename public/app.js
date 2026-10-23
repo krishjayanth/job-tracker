@@ -176,6 +176,10 @@ function renderGmail() {
   $('#reports-link').hidden = !state.reports;
   $('#reports-count').textContent = state.reports?.open || '';
   $('#delete-section').hidden = state.demo;
+  const blocked = state.blockedSenders || [];
+  $('#blocked-section').hidden = !blocked.length;
+  $('#blocked-list').innerHTML = blocked.map(d =>
+    `<li><span>${esc(d)}</span><button class="btn btn-sm btn-quiet" type="button" data-unblock="${esc(d)}">Read again</button></li>`).join('');
   renderSetup();
   renderGroq();
 }
@@ -774,6 +778,10 @@ function filerHtml(a, e) {
         <button class="btn btn-primary" type="button" data-move="${e.id}" disabled>Move email</button>
         <button class="btn btn-quiet" type="button" data-ignore="${e.id}">Not about an application</button>
       </div>
+      ${e.blockable ? `<div class="block-row">
+        <button class="btn btn-quiet btn-danger" type="button" data-block="${esc(e.blockable)}">Ignore everything from ${esc(e.blockable)}</button>
+        <span>Removes its emails here and skips it from now on. Use it for senders that never send job emails.</span>
+      </div>` : ''}
     </div>`;
 }
 
@@ -990,6 +998,29 @@ $('#drawer').addEventListener('click', async e => {
     if (!filer.hidden) { filer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); filer.querySelector('select').focus(); }
     return;
   }
+  const block = e.target.closest('[data-block]');
+  if (block) {
+    // Two clicks: it removes every email from that sender, across applications.
+    if (!block.classList.contains('confirming')) {
+      block.classList.add('confirming');
+      block.textContent = `Click again to ignore ${block.dataset.block}`;
+      setTimeout(() => { if (block.isConnected) { block.classList.remove('confirming'); block.textContent = `Ignore everything from ${block.dataset.block}`; } }, 4000);
+      return;
+    }
+    block.disabled = true;
+    try {
+      const { domain, removed } = await api('POST', '/api/blocked-senders', { domain: block.dataset.block });
+      const id = openId;
+      await load();
+      const a = state.applications.find(x => x.id === id);
+      if (a) openDrawer(a); else closeDrawer();
+      toast(`Ignoring ${domain} · removed ${removed} ${removed === 1 ? 'email' : 'emails'}`);
+    } catch (err) {
+      block.disabled = false;
+      $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
+    }
+    return;
+  }
   const remove = e.target.closest('[data-remove-event]');
   if (remove) {
     const id = openId;
@@ -1084,6 +1115,13 @@ menu.addEventListener('beforetoggle', e => {
   const r = $('#more-btn').getBoundingClientRect();
   menu.style.top = `${r.bottom + 6}px`;
   menu.style.left = `${Math.max(8, r.right - 300)}px`;
+});
+$('#blocked-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-unblock]');
+  if (!b) return;
+  b.disabled = true;
+  await api('DELETE', `/api/blocked-senders/${encodeURIComponent(b.dataset.unblock)}`);
+  load();
 });
 $('#rescan-btn').onclick = async () => {
   $('#rescan-btn').disabled = true;
