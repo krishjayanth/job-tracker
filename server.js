@@ -207,6 +207,7 @@ app.patch('/api/applications/:id', (req, res) => {
     a.deadlineDone = a.deadline;
     a.manualDeadline = null;
   }
+  if (req.body.deadlineDone === false) a.deadlineDone = null; // undo "done" on an email's deadline
   refresh(a);
   changed(req.account);
   res.json(a);

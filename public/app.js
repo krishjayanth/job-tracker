@@ -263,7 +263,7 @@ function renderSummary() {
   const active = apps.filter(a => !['offer', 'rejected', 'withdrawn'].includes(a.status)).length;
   const reachedInterview = apps.filter(a => a.path.includes('interview') || a.status === 'offer').length;
   const offers = apps.filter(a => a.status === 'offer').length;
-  const waiting = apps.filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline)).length;
+  const waiting = apps.filter(needsAction).length;
 
   const delta = (n, text, none = 'None this month') => n
     ? `<span class="delta up">${icon('up')}${text}</span>`
@@ -456,11 +456,14 @@ function filterByNode(id) {
   $('#apps-title').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// Only things you can clear: an open deadline (mark it done) or an email nuj wasn't sure
+// about (say it's right, or fix it). An interview with no date isn't a to-do until it has one.
+const needsAction = a => Boolean(dueInfo(a.deadline) || a.needsReview);
+
 function renderActions() {
-  // Anything with an open deadline, plus assessments/interviews/offers. Deadlines first,
-  // soonest at the top; the rest by most recent activity.
+  // Deadlines first, soonest at the top; then emails to check, newest first.
   const items = state.applications
-    .filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline) || a.needsReview)
+    .filter(needsAction)
     .sort((a, b) => {
       const da = dueInfo(a.deadline) ? a.deadline : null, db = dueInfo(b.deadline) ? b.deadline : null;
       if (da && db) return da.localeCompare(db);
@@ -471,22 +474,44 @@ function renderActions() {
   $('#action-list').innerHTML = items.length
     ? items.map(a => {
       const due = dueInfo(a.deadline);
-      // Warm when it's due within a day, plain when later, quieter when there's no deadline.
-      const tone = !due ? 'quiet' : due.level === 'urgent' || due.level === 'overdue' ? 'urgent' : '';
+      // Warm when it's due within a day.
+      const tone = due && (due.level === 'urgent' || due.level === 'overdue') ? 'urgent' : '';
+      const why = due ? ACTION_STAGES[a.status] || 'Next step to complete' : 'Check which application an email belongs to';
       return `
-      <li class="action-row ${tone}"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
+      <li class="action-row ${tone}" data-row="${a.id}"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
         ${avatar(a.company, 'sm')}
         <span class="what">
           <span class="co">${esc(a.company)}</span>
-          <span class="why" style="display:block">${a.needsReview ? 'Confirm which application an email belongs to' : ACTION_STAGES[a.status] || 'Next step to complete'}${a.role ? ` · ${esc(a.role)}` : ''}</span>
+          <span class="why" style="display:block">${why}${a.role ? ` · ${esc(a.role)}` : ''}</span>
         </span>
         <span class="action-side">
-          ${due ? dueChip(a.deadline) : `<span class="age">${timeAgo(a.lastActivity)}</span><span class="open-hint" aria-hidden="true">Open${icon('chevron')}</span>`}
-          ${due ? `<button class="done-btn" type="button" data-done="${a.id}" title="Mark this deadline as done">${icon('check')}Done</button>` : ''}
+          ${due
+            ? `${dueChip(a.deadline)}<button class="done-btn" type="button" data-done="${a.id}" title="Mark this deadline as done">${icon('check')}Done</button>`
+            : `<span class="check-chip">Check</span><button class="done-btn" type="button" data-looks-right="${a.id}" title="The emails are on the right application">${icon('check')}Looks right</button>`}
         </span>
       </div></li>`;
     }).join('')
-    : `<li class="action-empty">Nothing waiting on you right now. Assessments, interviews and offers show up here as their emails arrive.</li>`;
+    : `<li class="action-empty"><strong>You're all caught up.</strong>Deadlines from assessment and interview emails show up here, along with any email nuj wasn't sure how to file. Add a deadline to an application to track it here.</li>`;
+}
+
+// A short note at the bottom of the screen, with Undo for things you can take back.
+let toastTimer;
+function toast(text, undo) {
+  let el = $('#toast');
+  if (!el) {
+    el = Object.assign(document.createElement('div'), { id: 'toast', className: 'toast' });
+    el.setAttribute('role', 'status');
+    document.body.append(el);
+  }
+  el.innerHTML = `${icon('check')}<span>${esc(text)}</span>${undo ? '<button type="button" data-undo>Undo</button>' : ''}`;
+  el.querySelector('[data-undo]')?.addEventListener('click', async () => {
+    el.classList.remove('show');
+    await undo();
+    load();
+  }, { once: true });
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 6000);
 }
 
 function renderTabs() {
@@ -908,11 +933,35 @@ $('#drawer').addEventListener('change', e => {
   filer.querySelector('[data-move]').disabled = !pick.value;
   if (pick.value === 'new') filer.querySelector('[data-new="company"]').focus();
 });
+// Resolving a row: it folds away at once, then the server catches up.
+const foldRow = id => $(`#action-list [data-row="${id}"]`)?.classList.add('leaving');
 $('#action-list').addEventListener('click', async e => {
   const done = e.target.closest('[data-done]');
   if (done) {
+    const a = state.applications.find(x => x.id === done.dataset.done);
+    // A deadline you typed is put back as typed; one from an email is simply reopened.
+    const restore = a.manualDeadline ? { deadline: isoDate(a.manualDeadline) } : { deadlineDone: false };
     done.disabled = true;
-    await api('PATCH', `/api/applications/${done.dataset.done}`, { deadlineDone: true });
+    foldRow(a.id);
+    try {
+      await api('PATCH', `/api/applications/${a.id}`, { deadlineDone: true });
+      toast(`${a.company}: deadline marked done`, () => api('PATCH', `/api/applications/${a.id}`, restore));
+    } catch (err) {
+      toast(err.message);
+    }
+    return load();
+  }
+  const right = e.target.closest('[data-looks-right]');
+  if (right) {
+    const a = state.applications.find(x => x.id === right.dataset.looksRight);
+    right.disabled = true;
+    foldRow(a.id);
+    try {
+      for (const ev of a.events.filter(needsCheck)) await api('POST', `/api/emails/${ev.id}/assign`, { action: 'confirm' });
+      toast(`${a.company}: emails confirmed`);
+    } catch (err) {
+      toast(err.message);
+    }
     return load();
   }
   const item = e.target.closest('[data-open]');

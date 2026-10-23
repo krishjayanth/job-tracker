@@ -167,18 +167,39 @@ input, textarea { caret-color: var(--accent); }
   padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
-.action-side { display: grid; justify-items: end; gap: 2px; }
+.action-side { display: grid; justify-items: end; gap: 5px; }
+/* Always there, not only on hover: every row can be cleared, on touch too. */
 .done-btn {
-  display: none; align-items: center; gap: 3px; height: 22px; padding: 0 7px; border-radius: 6px;
-  border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 11.5px; font-weight: 500; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 7px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); font-size: 11.5px; font-weight: 500; cursor: pointer;
+  transition: color var(--fast), border-color var(--fast), background var(--fast), transform 160ms var(--ease);
 }
 .done-btn .icon { width: 12px; height: 12px; }
-.done-btn:hover { color: var(--offer); border-color: color-mix(in srgb, var(--offer) 45%, transparent); }
-.action-row:hover .done-btn, .done-btn:focus-visible { display: inline-flex; }
-.open-hint { display: none; align-items: center; gap: 2px; font-size: 12px; font-weight: 500; color: var(--accent); }
-.open-hint .icon { width: 13px; height: 13px; transform: rotate(-90deg); }
-.action-row:hover .age, .action-item:focus-visible .age { display: none; }
-.action-row:hover .open-hint, .action-item:focus-visible .open-hint { display: inline-flex; }
+.done-btn:hover { color: var(--offer); border-color: color-mix(in srgb, var(--offer) 50%, transparent); background: color-mix(in srgb, var(--offer) 8%, var(--surface)); }
+.done-btn:active { transform: scale(.95); transition-duration: 60ms; }
+.done-btn[disabled] { opacity: .6; cursor: default; }
+/* A cleared row folds away straight away, before the server answers. */
+.action-row { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .3s var(--ease), opacity .2s ease; }
+.action-row > .action-item { min-height: 0; overflow: hidden; }
+.action-row.leaving { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
+.action-item .check-chip { margin: 0; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 24px; z-index: 20;
+  display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 12px;
+  background: var(--text); color: var(--accent-text); font-size: 13px; font-weight: 500;
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .8);
+  transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
+  transition: transform .32s var(--ease), opacity .2s ease;
+}
+.toast.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.toast .icon { width: 15px; height: 15px; color: #059669; }
+.toast button {
+  height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: rgba(0, 0, 0, .08); color: inherit;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.toast button:hover { background: rgba(0, 0, 0, .14); }
+.toast:not(:has(button)) { padding-right: 14px; }
 .deadline-field { display: flex; gap: 8px; }
 .deadline-field input { flex: 1; }
 
@@ -288,7 +309,7 @@ input, textarea { caret-color: var(--accent); }
   background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums;
 }
 .count-badge:empty { display: none; }
-.action-list { list-style: none; margin: 0 -8px; padding: 0; display: grid; gap: 2px; max-height: 380px; overflow-y: auto; }
+.action-list { list-style: none; margin: 0 -8px; padding: 0; display: grid; align-content: start; gap: 2px; max-height: 380px; overflow-y: auto; }
 .action-item {
   display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
   padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer;
@@ -299,12 +320,12 @@ input, textarea { caret-color: var(--accent); }
 /* Due today, tomorrow or overdue: a warm wash so it reads before the list does */
 .action-row.urgent .action-item { background: color-mix(in srgb, var(--danger) 5%, transparent); }
 .action-row.urgent .action-item:hover { background: color-mix(in srgb, var(--danger) 9%, transparent); }
-.action-row.quiet .co { color: var(--text-2); }
 .action-item .what { min-width: 0; }
 .action-item .co { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .action-item .why { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .action-item .age { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .action-empty { color: var(--muted); font-size: 13px; padding: 8px; line-height: 1.55; }
+.action-empty strong { display: block; margin-bottom: 2px; color: var(--text); font-weight: 600; }
 
 /* ------------------------------------------------------------------ avatars + pills */
 .avatar {
