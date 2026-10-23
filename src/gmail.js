@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { google } from 'googleapis';
 import {
-  getDb, save, flush, createApplication, findApplication, refresh, newId, normalizeCompany,
+  getDb, save, flush, createApplication, matchApplication, assignedApplication, refresh, newId, normalizeCompany,
   snapshotEdits, restoreEdits, backup, getKv, setKv, deleteKv,
 } from './store.js';
 import { classify } from './classify.js';
@@ -28,7 +28,7 @@ const REDIRECT_URI = `${PUBLIC_URL}/oauth2callback`;
 const ATS_SENDERS = [
   'greenhouse.io', 'greenhouse-mail.io', 'lever.co', 'myworkday.com', 'ashbyhq.com',
   'smartrecruiters.com', 'icims.com', 'jobvite.com', 'workablemail.com', 'successfactors.com',
-  'taleo.net', 'hackerrank.com', 'codesignal.com', 'jobs-noreply@linkedin.com', 'indeedapply@indeed.com',
+  'taleo.net', 'hackerrank.com', 'codesignal.com', 'hirevue.com', 'modernhire.com', 'jobs-noreply@linkedin.com', 'indeedapply@indeed.com',
 ];
 const BASE_QUERY = [
   '-category:promotions -category:social -from:jobalerts-noreply@linkedin.com',
@@ -279,19 +279,32 @@ async function runSync({ mode, sinceEpoch } = {}) {
       }
 
       const { company, role, jobId = '' } = result;
-      let app = findApplication({ threadId: msg.threadId, company, role, jobId });
-      if (!app) app = createApplication({ company, role, jobId, source: 'gmail' });
-      if (!app.role && role) app.role = role;
-      if (!app.jobId && jobId) app.jobId = jobId;
-      // "CapitalOne" (from a sender address) -> "Capital One" (from a subject), unless you renamed it.
-      if (!app.renamed && !/\s/.test(app.company) && /\s/.test(result.company) &&
-          normalizeCompany(app.company) === normalizeCompany(result.company)) {
-        app.company = result.company;
+      let review = result.review;
+      // An email you've already filed yourself goes where you said.
+      let app = assignedApplication(msg.id);
+      const assigned = Boolean(app);
+      if (!app) {
+        const match = matchApplication({ threadId: msg.threadId, company, role, jobId });
+        // A reply in a thread you already have settles which application it is.
+        if (match.thread) review = review.filter(r => r.about !== 'application');
+        if (match.guess) review.push({ about: 'application', text: `You have several applications at ${match.app.company}, and this email doesn't say which job it's about.` });
+        app = match.app || createApplication({ company, role, jobId, source: 'gmail' });
+        if (!app.role && role) app.role = role;
+        if (!app.jobId && jobId) app.jobId = jobId;
+        // "CapitalOne" (from a sender address) -> "Capital One" (from a subject), unless you renamed it.
+        if (!app.renamed && !/\s/.test(app.company) && /\s/.test(result.company) &&
+            normalizeCompany(app.company) === normalizeCompany(result.company)) {
+          app.company = result.company;
+        }
       }
       app.events.push({
         id: newId(), date: email.date, stage: result.stage, subject: email.subject,
         from: email.from, snippet: msg.snippet, messageId: msg.id, threadId: msg.threadId, jobId,
         ...(result.deadline && { deadline: result.deadline }),
+        ...(result.summary && { summary: result.summary }),
+        ...(result.reasoning && { reasoning: result.reasoning }),
+        ...(review.length && { review }),
+        ...(assigned && { reviewed: true }),
       });
       refresh(app);
       added++;

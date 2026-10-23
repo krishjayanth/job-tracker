@@ -74,9 +74,13 @@ A sync runs on a timer, from the **Sync** button, or when an external pinger cal
 free tier awake):
 
 1. **Narrow the inbox.** A Gmail search keeps only emails from hiring platforms or with application-related subjects.
-2. **Classify each email.** Groq returns `{stage, company, role, job_id}` as strict JSON. Hand-tuned rules then
-   check it, and they handle the email alone if the LLM is unavailable.
-3. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role.
+2. **Classify each email.** Groq first writes out its reasoning (who is hiring, what the email asks, which job), then
+   returns the stage, company, role, job ID, deadline, a one-line summary and its confidence as strict JSON. AI and
+   recorded video interviews (HireVue and the like) count as assessments. Hand-tuned rules then check it, and they
+   handle the email alone if the LLM is unavailable.
+3. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role. When the model
+   was unsure, the rules disagree, or the email could belong to several applications, it's flagged in "Needs your
+   action" so you can confirm it or move it to the right application. Your answers are kept through a re-scan.
 4. **Derive status from the timeline.** Status is never stored directly. It's recomputed from the application's
    events, so a late "thanks for applying" email can't undo an interview and a manual correction always wins.
 5. **Save and broadcast.** The change is persisted and pushed to every open browser over Server-Sent Events.
@@ -88,7 +92,7 @@ free tier awake):
   hiring-software vendor, and the rules' rejection and offer checks override the model.
   ([`src/classify.js`](src/classify.js))
 - **Graceful degradation.** Groq's free tier allows about 8K tokens a minute. Requests are kept lean (an excerpt of
-  the email, low reasoning effort) and rate limits back off. When the wait is too long, that email falls back to
+  the email; `GROQ_REASONING_EFFORT` trades accuracy for tokens) and rate limits back off. When the wait is too long, that email falls back to
   the rules, so a sync never stalls. ([`src/groq.js`](src/groq.js))
 - **Resumable, quota-aware sync.** Each processed message is recorded right away, so an interrupted sync picks up
   where it stopped. The sync window only advances once the backlog is cleared, and Gmail calls are paced with

@@ -103,6 +103,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth web client |
 | `GROQ_API_KEY` | — | Enables the Groq classifier |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
+| `GROQ_REASONING_EFFORT` | `medium` | `low` uses fewer tokens per email, but reads tricky emails less carefully |
 | `CRON_SECRET` | — | Key for `/api/cron/sync` (16+ characters) |
 | `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked while awake |
 | `INITIAL_SYNC_DAYS` | 90 | How far back the first sync looks |

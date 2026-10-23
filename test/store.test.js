@@ -1,9 +1,12 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getDb, createApplication, findApplication, refresh, snapshotEdits, restoreEdits, newId } from '../src/store.js';
+import {
+  getDb, createApplication, findApplication, matchApplication, assignedApplication, reassignEmail,
+  refresh, snapshotEdits, restoreEdits, newId,
+} from '../src/store.js';
 
 // These only touch the in-memory document; nothing calls save().
-beforeEach(() => { getDb().applications.length = 0; });
+beforeEach(() => { const db = getDb(); db.applications.length = 0; db.assignments = {}; db.ignored = {}; });
 
 const email = (date, stage, extra = {}) => ({ id: newId(), date, stage, messageId: newId(), ...extra });
 
@@ -95,4 +98,50 @@ test('re-scan keeps an edited application whose emails no longer classify', () =
   getDb().applications.length = 0;
   assert.deepEqual(restoreEdits(snapshots), { restored: 0, kept: 1 });
   assert.equal(getDb().applications[0].notes, 'Keep me');
+});
+
+test('matchApplication: a pick among several applications at one company is a guess', () => {
+  gmailApp({ company: 'Contoso', role: 'Data Analyst Intern' });
+  gmailApp({ company: 'Contoso', role: 'Software Engineer Intern' });
+  assert.equal(matchApplication({ company: 'Contoso' }).guess, true);
+  assert.equal(matchApplication({ company: 'Contoso', role: 'Software Engineer Intern' }).guess, false);
+  gmailApp({ company: 'Fabrikam' });
+  assert.equal(matchApplication({ company: 'Fabrikam' }).guess, false);
+});
+
+test('reassignEmail: confirming marks the email checked and remembers where it goes', () => {
+  const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-05', 'oa', { review: [{ about: 'application', text: '?' }] }]] });
+  assert.equal(a.needsReview, true);
+  const e = a.events[1];
+  reassignEmail(e.id, { action: 'confirm' });
+  assert.equal(a.needsReview, false);
+  assert.equal(assignedApplication(e.messageId), a);
+});
+
+test('reassignEmail: moving an email takes its stage along and empties out a stray application', () => {
+  const right = gmailApp({ company: 'Contoso', role: 'Software Engineer Intern' });
+  const stray = gmailApp({ company: 'Unknown company', events: [['2026-09-05', 'interview']] });
+  const e = stray.events[0];
+  const { app } = reassignEmail(e.id, { action: 'move', to: right.id });
+  assert.equal(app, right);
+  assert.equal(right.status, 'interview');
+  assert.ok(!getDb().applications.includes(stray));
+  // After a re-scan the ids are new; the email still finds its way back by another of its emails.
+  const assignment = getDb().assignments[e.messageId];
+  getDb().applications.length = 0;
+  const rebuilt = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied', { messageId: assignment.anchors[0] }]] });
+  assert.equal(assignedApplication(e.messageId), rebuilt);
+});
+
+test('reassignEmail: a new application, or not an application at all', () => {
+  const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-03', 'applied'], ['2026-09-04', 'applied']] });
+  const [, second, third] = a.events;
+  const { app } = reassignEmail(second.id, { action: 'new', company: 'Fabrikam', role: 'Analyst' });
+  assert.equal(app.company, 'Fabrikam');
+  assert.deepEqual(app.events, [second]);
+  assert.equal(reassignEmail(third.id, { action: 'new', company: '  ' }).status, 400);
+  reassignEmail(third.id, { action: 'ignore' });
+  assert.equal(a.events.length, 1);
+  assert.equal(getDb().ignored[third.messageId], true);
+  assert.equal(reassignEmail('nope', { action: 'confirm' }).status, 404);
 });

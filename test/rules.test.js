@@ -28,8 +28,21 @@ test('stage: offer wording only counts when the subject says so', () => {
 });
 
 test('stage: "interview" in the subject wins over a plain confirmation body', () => {
-  const e = email('AI Interview: Relecloud', 'Thank you for your application. Your AI interview link is below.');
+  const e = email('Interview with Relecloud', 'Thank you for your application. Pick a time that works for you.');
   assert.equal(classifyWithRules(e).stage, 'interview');
+});
+
+test('stage: AI and recorded video interviews (HireVue etc.) are assessments', () => {
+  const cases = [
+    email('AI Interview: Relecloud', 'Thank you for your application. Your AI interview link is below.'),
+    email('Relecloud Interview Invitation', 'Please complete your HireVue interview within 5 days.'),
+    email('Next steps with Contoso', 'You are invited to a one-way video interview. Record your answers at any time.'),
+    email('Fabrikam: interview invitation', 'Complete your interview by Friday.', 'Fabrikam <noreply@hirevue.com>'),
+  ];
+  for (const e of cases) assert.equal(classifyWithRules(e).stage, 'oa', e.subject);
+  // A HireVue rejection is still a rejection.
+  const no = email('Your Contoso application', 'Thank you for completing your HireVue. Unfortunately, we will not be moving forward.');
+  assert.equal(classifyWithRules(no).stage, 'rejected');
 });
 
 test('non-application emails are ignored', () => {

@@ -112,5 +112,28 @@ export function buildDemoDb(now = Date.now()) {
     events: [{ id: crypto.randomUUID(), date: added, stage: 'applied', manual: true, subject: 'Added manually' }],
   });
 
+  // A recorded HireVue interview counts as an assessment.
+  const at = daysAgo => new Date(now - daysAgo * DAY).toISOString();
+  applications.find(a => a.company === 'Relecloud').events.push({
+    id: crypto.randomUUID(), date: at(1), stage: 'oa', subject: 'Relecloud: complete your video interview',
+    from: 'Relecloud <noreply@hirevue.com>', snippet: 'Record your answers on HireVue at any time in the next 5 days.',
+    summary: 'HireVue video interview to complete within 5 days', deadline: at(-4),
+  });
+  // A second application at one company, and an email that doesn't say which job it's about.
+  applications.push({
+    id: crypto.randomUUID(), company: 'Datum Corporation', role: 'Data Analyst Intern', jobId: '', url: '', notes: '',
+    source: 'gmail', createdAt: at(20),
+    events: [
+      { id: crypto.randomUUID(), date: at(20), stage: 'applied', subject: 'Thank you for applying to Datum Corporation: Data Analyst Intern', from: SENDERS[1]('Datum Corporation'), snippet: SNIPPETS.applied },
+      {
+        id: crypto.randomUUID(), date: at(0.3), stage: 'applied', subject: 'An update on your Datum Corporation application',
+        from: SENDERS[1]('Datum Corporation'), snippet: 'Your application is still under review. We appreciate your patience.',
+        summary: 'Still under review; the email doesn’t name the job',
+        reasoning: 'Sent through Greenhouse on behalf of Datum Corporation, named in the subject and signature. It only says the application is still being reviewed, with no title or requisition ID, so it is a status update on an existing application.',
+        review: [{ about: 'application', text: "You have several applications at Datum Corporation, and this email doesn't say which job it's about." }],
+      },
+    ],
+  });
+
   return { applications, processed: {}, ignored: {}, lastSync: new Date(now).toISOString(), lastSyncError: null };
 }

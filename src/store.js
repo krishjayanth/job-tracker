@@ -12,7 +12,7 @@ export const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SAVE_DELAY_MS = 800;
 
-const emptyDb = () => ({ applications: [], processed: {}, lastSync: null, lastSyncError: null });
+const emptyDb = () => ({ applications: [], processed: {}, assignments: {}, lastSync: null, lastSyncError: null });
 let db = emptyDb();
 let pool = null;
 let memory = null; // Map of key -> value in demo mode; nothing touches disk
@@ -109,6 +109,7 @@ export function refresh(app) {
   app.lastActivity = app.events.at(-1)?.date ?? app.createdAt;
   app.appliedAt = app.events[0]?.date ?? app.createdAt;
   app.deadline = activeDeadline(app);
+  app.needsReview = app.events.some(e => e.review?.length && !e.reviewed);
   return app;
 }
 
@@ -188,23 +189,31 @@ export function createApplication({ company, role = '', jobId = '', url = '', no
 
 // Find which application an email belongs to: same Gmail thread first, then same
 // company (+ role when both sides know it), otherwise null.
-export function findApplication({ threadId, company, role, jobId }) {
+export function findApplication(email) {
+  return matchApplication(email).app;
+}
+
+// Like findApplication, plus how sure the match is: `guess` is true when the email
+// was put with one of several applications at that company without a role or ID to go on.
+export function matchApplication({ threadId, company, role, jobId }) {
+  const none = { app: null, guess: false };
   if (threadId) {
     const byThread = db.applications.find(a => a.events.some(e => e.threadId === threadId));
-    if (byThread) return byThread;
+    if (byThread) return { app: byThread, guess: false, thread: true };
   }
   const key = normalizeCompany(company);
-  if (!key) return null;
+  if (!key) return none;
   // Aliases remember the names an application had before you renamed it.
   let sameCompany = db.applications.filter(a =>
     [a.company, ...(a.aliases || [])].some(name => normalizeCompany(name) === key));
-  if (sameCompany.length === 0) return null;
+  if (sameCompany.length === 0) return none;
+  const several = sameCompany.length > 1;
   // A job ID is the strongest signal: same ID is the same job; a different ID is a different job.
   if (jobId) {
     const byId = sameCompany.find(a => a.jobId === jobId);
-    if (byId) return byId;
+    if (byId) return { app: byId, guess: false };
     sameCompany = sameCompany.filter(a => !a.jobId);
-    if (sameCompany.length === 0) return null;
+    if (sameCompany.length === 0) return none;
   }
   if (role) {
     // Same job worded slightly differently across emails ("Software Engineer Intern"
@@ -214,11 +223,65 @@ export function findApplication({ threadId, company, role, jobId }) {
       const ar = normalizeCompany(a.role);
       return ar && (ar.includes(r) || r.includes(ar));
     });
-    if (exact) return exact;
+    if (exact) return { app: exact, guess: false };
     // A different, known role at the same company is a separate application.
     const unknownRole = sameCompany.filter(a => !a.role);
-    if (unknownRole.length) return unknownRole.at(-1);
-    return null;
+    if (unknownRole.length) return { app: unknownRole.at(-1), guess: several };
+    return none;
   }
-  return sameCompany.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))[0];
+  return { app: sameCompany.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))[0], guess: several };
+}
+
+// Where you've said an email belongs. Kept by Gmail message id so a re-scan puts it
+// back: by application id, else by another email of that application, else by name.
+export function assignedApplication(messageId) {
+  const to = db.assignments?.[messageId];
+  if (!to) return null;
+  return db.applications.find(a => a.id === to.appId) ||
+    db.applications.find(a => a.events.some(e => to.anchors?.includes(e.messageId))) ||
+    findApplication({ company: to.company, role: to.role, jobId: to.jobId }) ||
+    createApplication({ company: to.company, role: to.role, jobId: to.jobId, source: 'gmail' });
+}
+
+// Your answer to "is this email filed under the right application?":
+//   confirm          it is; stop asking
+//   move, to         it belongs to another application
+//   new, company…    it belongs to an application that isn't in the tracker yet
+//   ignore           it isn't about an application at all
+// Returns {app} (where the email is now, or null), or {error, status}.
+export function reassignEmail(eventId, { action, to, company, role = '', jobId = '' }) {
+  const from = db.applications.find(a => a.events.some(e => e.id === eventId));
+  if (!from) return { error: 'Email not found', status: 404 };
+  const event = from.events.find(e => e.id === eventId);
+  db.assignments ??= {};
+
+  let target = null;
+  if (action === 'confirm') target = from;
+  else if (action === 'move') target = db.applications.find(a => a.id === to);
+  else if (action === 'new') {
+    if (!company?.trim()) return { error: 'Company is required', status: 400 };
+    target = createApplication({ company: company.trim(), role: role.trim(), jobId: jobId.trim(), source: 'gmail' });
+  } else if (action !== 'ignore') return { error: 'Unknown action', status: 400 };
+  if (action === 'move' && !target) return { error: 'Application not found', status: 404 };
+
+  if (target !== from) from.events = from.events.filter(e => e !== event);
+  if (target) {
+    if (target !== from) target.events.push(event);
+    event.reviewed = true;
+    if (event.messageId) {
+      db.assignments[event.messageId] = {
+        appId: target.id, company: target.company, role: target.role, jobId: target.jobId,
+        anchors: target.events.filter(e => e.messageId && e !== event).map(e => e.messageId).slice(0, 5),
+      };
+    }
+    refresh(target);
+  } else if (event.messageId) {
+    db.ignored ??= {};
+    db.ignored[event.messageId] = true;
+    delete db.assignments[event.messageId];
+  }
+  // An application whose only email just left has nothing to show.
+  if (from.events.length === 0) db.applications = db.applications.filter(a => a !== from);
+  else refresh(from);
+  return { app: target };
 }

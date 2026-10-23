@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initStore, getDb, save, flush, createApplication, refresh, newId } from './src/store.js';
+import { initStore, getDb, save, flush, createApplication, refresh, newId, reassignEmail } from './src/store.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
 import { buildWorkbook } from './src/export.js';
@@ -174,6 +174,15 @@ app.patch('/api/applications/:id', (req, res) => {
   save();
   broadcast();
   res.json(a);
+});
+
+// Confirm or correct which application an email belongs to (see reassignEmail).
+app.post('/api/emails/:eventId/assign', (req, res) => {
+  const { app: a, error, status } = reassignEmail(req.params.eventId, req.body || {});
+  if (error) return res.status(status).json({ error });
+  save();
+  broadcast();
+  res.json({ app: a });
 });
 
 // Excel export of the given applications (in the order shown), or all of them.

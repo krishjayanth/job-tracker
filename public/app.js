@@ -405,7 +405,7 @@ function renderActions() {
   // Anything with an open deadline, plus assessments/interviews/offers. Deadlines first,
   // soonest at the top; the rest by most recent activity.
   const items = state.applications
-    .filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline))
+    .filter(a => ACTION_STAGES[a.status] || dueInfo(a.deadline) || a.needsReview)
     .sort((a, b) => {
       const da = dueInfo(a.deadline) ? a.deadline : null, db = dueInfo(b.deadline) ? b.deadline : null;
       if (da && db) return da.localeCompare(db);
@@ -423,7 +423,7 @@ function renderActions() {
         ${avatar(a.company, 'sm')}
         <span class="what">
           <span class="co">${esc(a.company)}</span>
-          <span class="why" style="display:block">${ACTION_STAGES[a.status] || 'Next step to complete'}${a.role ? ` · ${esc(a.role)}` : ''}</span>
+          <span class="why" style="display:block">${a.needsReview ? 'Confirm which application an email belongs to' : ACTION_STAGES[a.status] || 'Next step to complete'}${a.role ? ` · ${esc(a.role)}` : ''}</span>
         </span>
         <span class="action-side">
           ${due ? dueChip(a.deadline) : `<span class="age">${timeAgo(a.lastActivity)}</span><span class="open-hint" aria-hidden="true">Open${icon('chevron')}</span>`}
@@ -480,7 +480,7 @@ function renderTable() {
     <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}">
       <td>
         <div class="company">${avatar(a.company)}
-          <div style="min-width:0"><div class="name">${esc(a.company)}</div><div class="sub">${esc(a.role)}</div></div>
+          <div style="min-width:0"><div class="name">${esc(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may belong to another application">Check</span>` : ''}</div><div class="sub">${esc(a.role)}</div></div>
         </div>
       </td>
       <td class="col-role">
@@ -518,24 +518,86 @@ function renderTable() {
 let openId = null;
 let lastFocus = null;
 
+const needsCheck = e => e.review?.length && !e.reviewed;
+
 function timelineHtml(a) {
   return [...a.events].reverse().map(e => `
     <li style="--c:${color(e.stage)}">
       <span class="tdot"></span>
       <div class="thead">
-        <span class="tstage">${STAGE_LABEL[e.stage]}${e.manual ? ' · set by you' : ''}</span>
+        <span class="tstage">${STAGE_LABEL[e.stage]}${e.manual ? ' · set by you' : ''}${needsCheck(e) ? ' · <span class="tcheck">not sure</span>' : ''}</span>
         <span class="tdate">${new Date(e.date).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
       </div>
       <div class="tsubject">${esc(decode(e.subject || STAGE_LABEL[e.stage]))}</div>
-      ${e.snippet ? `<div class="tsnippet">${esc(decode(e.snippet))}</div>` : ''}
-      ${e.messageId ? `<a class="tlink" href="https://mail.google.com/mail/u/0/#all/${e.messageId}" target="_blank" rel="noopener">Open in Gmail ${icon('external')}</a>` : ''}
+      ${e.summary ? `<div class="tsnippet">${esc(e.summary)}</div>` : e.snippet ? `<div class="tsnippet">${esc(decode(e.snippet))}</div>` : ''}
+      ${!e.manual ? `<div class="tlinks">
+        ${e.messageId ? `<a class="tlink" href="https://mail.google.com/mail/u/0/#all/${e.messageId}" target="_blank" rel="noopener">Open in Gmail ${icon('external')}</a>` : ''}
+        <button class="tlink" type="button" data-fix="${e.id}">Wrong application?</button>
+      </div>${filerHtml(a, e)}` : ''}
     </li>`).join('');
+}
+
+// "Which application does this email belong to?" A choice of your other applications,
+// a new one, or none at all. Hidden until you ask to fix an email.
+function filerHtml(a, e) {
+  const others = state.applications
+    .filter(x => x.id !== a.id)
+    .sort((x, y) => x.company.localeCompare(y.company) || (x.role || '').localeCompare(y.role || ''));
+  return `
+    <div class="filer" data-filer="${e.id}" hidden>
+      <div class="field"><label for="move-${e.id}">This email belongs to</label>
+        <select id="move-${e.id}" data-move-to>
+          <option value="">Choose an application…</option>
+          ${others.map(x => `<option value="${x.id}">${esc(x.company)}${x.role ? ` · ${esc(x.role)}` : ''}${x.jobId ? ` (${esc(x.jobId)})` : ''}</option>`).join('')}
+          <option value="new">A new application…</option>
+        </select>
+      </div>
+      <div class="fields filer-new" hidden>
+        <div class="field"><label for="new-co-${e.id}">Company</label><input id="new-co-${e.id}" data-new="company" placeholder="e.g. Stripe"></div>
+        <div class="field"><label for="new-role-${e.id}">Role</label><input id="new-role-${e.id}" data-new="role" placeholder="Optional"></div>
+      </div>
+      <div class="filer-actions">
+        <button class="btn btn-primary" type="button" data-move="${e.id}" disabled>Move email</button>
+        <button class="btn btn-quiet" type="button" data-ignore="${e.id}">Not about an application</button>
+      </div>
+    </div>`;
+}
+
+// Emails the classifier wasn't sure about, with why, and a one-click answer.
+function reviewHtml(a) {
+  const flagged = a.events.filter(needsCheck).reverse();
+  if (!flagged.length) return '';
+  return `
+    <div class="review-card">
+      <div class="review-head">${icon('alert')}Is this the right application?</div>
+      ${flagged.map(e => `
+        <div class="review-item">
+          <div class="tsubject">${esc(decode(e.subject))}</div>
+          ${e.summary ? `<div class="review-summary">${esc(e.summary)}</div>` : ''}
+          <ul class="review-reasons">${e.review.map(r => `<li>${esc(r.text)}</li>`).join('')}</ul>
+          ${e.reasoning ? `<details class="review-why"><summary>How the email was read</summary><p>${esc(e.reasoning)}</p></details>` : ''}
+          <div class="filer-actions">
+            <button class="btn" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's ${esc(a.company)}</button>
+            <button class="btn btn-quiet" type="button" data-fix="${e.id}">No, fix it</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function assignEmail(eventId, body) {
+  const fromId = openId;
+  const { app: to } = await api('POST', `/api/emails/${eventId}/assign`, body);
+  await load();
+  // Stay on this application if it's still here; otherwise follow the email.
+  const next = state.applications.find(x => x.id === fromId) || state.applications.find(x => x.id === to?.id);
+  if (next) openDrawer(next); else closeDrawer();
 }
 
 function refreshDrawerTimeline() {
   const a = state.applications.find(x => x.id === openId);
   const list = $('#drawer .timeline');
-  if (a && list) list.innerHTML = timelineHtml(a);
+  // Don't snap shut a "Wrong application?" picker you're using.
+  if (a && list && !list.querySelector('.filer:not([hidden])')) list.innerHTML = timelineHtml(a);
 }
 
 function openDrawer(app) {
@@ -562,6 +624,7 @@ function openDrawer(app) {
       </div>`}
     </div>
     <div class="drawer-body">
+      ${isNew ? '' : reviewHtml(a)}
       <form id="app-form" novalidate>
         <div class="section-title">Details</div>
         <div class="fields">
@@ -668,7 +731,41 @@ const openById = id => openDrawer(state.applications.find(a => a.id === id));
 
 $('#add-btn').onclick = () => openDrawer(null);
 $('#scrim').onclick = closeDrawer;
-$('#drawer').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeDrawer(); });
+$('#drawer').addEventListener('click', async e => {
+  if (e.target.closest('[data-close]')) return closeDrawer();
+  const fix = e.target.closest('[data-fix]');
+  if (fix) {
+    // The review card's "No, fix it" opens the same picker as the timeline's link.
+    const filer = $(`#drawer [data-filer="${fix.dataset.fix}"]`);
+    filer.hidden = !filer.hidden;
+    if (!filer.hidden) { filer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); filer.querySelector('select').focus(); }
+    return;
+  }
+  const button = e.target.closest('[data-confirm], [data-move], [data-ignore]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    if (button.dataset.confirm) return await assignEmail(button.dataset.confirm, { action: 'confirm' });
+    if (button.dataset.ignore) return await assignEmail(button.dataset.ignore, { action: 'ignore' });
+    const filer = button.closest('.filer');
+    const to = filer.querySelector('[data-move-to]').value;
+    if (to !== 'new') return await assignEmail(button.dataset.move, { action: 'move', to });
+    const company = filer.querySelector('[data-new="company"]');
+    if (!company.value.trim()) { button.disabled = false; return company.focus(); }
+    await assignEmail(button.dataset.move, { action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value });
+  } catch (err) {
+    button.disabled = false;
+    $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
+  }
+});
+$('#drawer').addEventListener('change', e => {
+  const pick = e.target.closest('[data-move-to]');
+  if (!pick) return;
+  const filer = pick.closest('.filer');
+  filer.querySelector('.filer-new').hidden = pick.value !== 'new';
+  filer.querySelector('[data-move]').disabled = !pick.value;
+  if (pick.value === 'new') filer.querySelector('[data-new="company"]').focus();
+});
 $('#action-list').addEventListener('click', async e => {
   const done = e.target.closest('[data-done]');
   if (done) {
