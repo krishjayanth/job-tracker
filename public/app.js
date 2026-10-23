@@ -84,9 +84,21 @@ async function api(method, url, body) {
     method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    noteError(`${method} ${url} → ${res.status} ${data.error || res.statusText}`);
+    throw new Error(data.error || res.statusText);
+  }
   return data;
 }
+
+// The last few things that went wrong in this tab, attached to problem reports.
+const recentErrors = [];
+function noteError(text) {
+  recentErrors.push(`${new Date().toLocaleTimeString()} ${text}`);
+  if (recentErrors.length > 10) recentErrors.shift();
+}
+window.addEventListener('error', e => noteError(`${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
+window.addEventListener('unhandledrejection', e => noteError(`Unhandled: ${e.reason?.message || e.reason}`));
 
 async function setStatus(id, status) {
   await api('PATCH', `/api/applications/${id}`, { status });
@@ -161,6 +173,8 @@ function renderGmail() {
   $('#account-email').textContent = state.user || '';
   $('#side-user').hidden = !state.user;
   $('#side-user').textContent = state.user || '';
+  $('#reports-link').hidden = !state.reports;
+  $('#reports-count').textContent = state.reports?.open || '';
   $('#delete-section').hidden = state.demo;
   renderGroq();
 }
@@ -755,6 +769,7 @@ function openDrawer(app) {
         ${a.jobId ? `<span class="num">ID ${esc(a.jobId)}</span>` : ''}
         <span>Applied ${shortDate(a.appliedAt)}</span>
         ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${icon('link')}Job posting</a>` : ''}
+        <button class="meta-link" type="button" data-report="${a.id}">${icon('flag')}Report a problem</button>
       </div>`}
     </div>
     <div class="drawer-body">
@@ -1285,22 +1300,160 @@ let view = 'dashboard';
 function route() {
   const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
   const soon = SOON[id];
+  const reports = id === 'reports';
   const prev = view;
-  view = soon ? id : 'dashboard';
-  $('#view-dashboard').hidden = Boolean(soon);
+  view = soon ? id : reports ? 'reports' : 'dashboard';
+  $('#view-dashboard').hidden = view !== 'dashboard';
   $('#view-soon').hidden = !soon;
+  $('#view-reports').hidden = !reports;
   if (soon) renderSoon(id);
-  const current = soon ? id : id === 'applications' ? 'applications' : 'dashboard';
+  if (reports) loadReports();
+  const current = soon || reports ? id : id === 'applications' ? 'applications' : 'dashboard';
   document.querySelectorAll('.side-link').forEach(l => {
     if (l.dataset.view === current) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
   });
-  $('#crumb').textContent = soon ? soon.label : current === 'applications' ? 'Applications' : 'Dashboard';
+  $('#crumb').textContent = soon ? soon.label : reports ? 'Reports' : current === 'applications' ? 'Applications' : 'Dashboard';
   closeNav();
-  if (!soon && prev !== 'dashboard') renderSankey(); // its width was 0 while hidden
+  if (view === 'dashboard' && prev !== 'dashboard') renderSankey(); // its width was 0 while hidden
   if (id === 'applications') requestAnimationFrame(() => $('#apps-title').scrollIntoView({ behavior: 'smooth', block: 'start' }));
   else window.scrollTo({ top: 0 });
 }
 window.addEventListener('hashchange', route);
+
+// ---------------------------------------------------------------- problem reports
+// Anyone can send one (sidebar, menu, or an application's panel); the owner reads them on Reports.
+const reportDialog = $('#report-dialog');
+let reportAppId = null;
+function openReport(appId) {
+  if (menu.matches(':popover-open')) menu.hidePopover();
+  closeNav();
+  const a = appId && state.applications.find(x => x.id === appId);
+  reportAppId = a ? a.id : null;
+  $('#report-app-row').hidden = !a;
+  $('#report-app-name').textContent = a ? a.company : '';
+  $('#report-include-app').checked = false; // its emails are only shared if you say so
+  $('#report-form').querySelector(`input[value="${a ? 'sorting' : 'bug'}"]`).checked = true;
+  reportMsg('');
+  $('#report-send').disabled = false;
+  reportDialog.showModal();
+  $('#report-message').focus();
+}
+const reportMsg = (text, tone = '') => { $('#report-msg').className = `key-msg ${tone}`; $('#report-msg').textContent = text; };
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-report]');
+  if (b) openReport(b.dataset.report);
+});
+reportDialog.addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) reportDialog.close();
+});
+$('#report-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const message = $('#report-message').value.trim();
+  if (!message) { reportMsg('Tell us what went wrong first.', 'err'); return $('#report-message').focus(); }
+  const a = reportAppId && state.applications.find(x => x.id === reportAppId);
+  const context = {};
+  if ($('#report-include-tech').checked) {
+    Object.assign(context, {
+      view: location.hash || '#/', url: location.pathname, userAgent: navigator.userAgent,
+      classifier: state.gmail?.classifier, syncError: state.gmail?.lastSyncError, errors: recentErrors,
+    });
+  }
+  if (a && $('#report-include-app').checked) {
+    context.app = {
+      company: a.company, role: a.role, status: a.status,
+      timeline: a.events.map(ev => `${isoDate(ev.date)} ${STAGE_LABEL[ev.stage]}${ev.manual ? ' (set by you)' : ''}: ${decode(ev.subject || '')}`),
+    };
+  } else if (a) {
+    context.app = { company: a.company, status: a.status };
+  }
+  const btn = $('#report-send');
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try {
+    await api('POST', '/api/reports', { kind: new FormData(e.target).get('kind'), message, context });
+    $('#report-message').value = '';
+    reportDialog.close();
+    toast('Report sent. Thanks for letting us know');
+  } catch (err) {
+    reportMsg(err.message, 'err');
+    btn.disabled = false;
+  }
+  btn.classList.remove('busy');
+});
+
+// The owner's list of reports.
+const REPORT_KIND = { sorting: 'Sorted wrong', bug: 'Something broke', other: 'Idea or other' };
+const REPORT_TONE = { sorting: 'interview', bug: 'rejected', other: 'applied' };
+let reports = [];
+let reportFilter = 'open';
+async function loadReports() {
+  try {
+    ({ reports } = await api('GET', '/api/reports'));
+  } catch {
+    location.hash = '#/'; // not the owner
+    return;
+  }
+  renderReports();
+}
+function renderReports() {
+  const counts = { open: 0, resolved: 0 };
+  reports.forEach(r => counts[r.status]++);
+  $('#report-tabs').innerHTML = [['open', 'Open', counts.open], ['resolved', 'Resolved', counts.resolved], ['all', 'All', reports.length]]
+    .map(([id, label, n]) => `<button class="tab" role="tab" type="button" aria-selected="${reportFilter === id}" data-report-filter="${id}">${label}<span class="n">${n}</span></button>`).join('');
+  const shown = reports.filter(r => reportFilter === 'all' || r.status === reportFilter);
+  $('#report-list').innerHTML = shown.length ? shown.map(r => {
+    const c = r.context || {};
+    const details = [
+      c.app && ['Application', `${esc(c.app.company)}${c.app.role ? ` · ${esc(c.app.role)}` : ''}${c.app.status ? ` · ${STAGE_LABEL[c.app.status] || esc(c.app.status)}` : ''}`],
+      c.app?.timeline?.length && ['Timeline', `<ol>${c.app.timeline.map(t => `<li>${esc(t)}</li>`).join('')}</ol>`],
+      c.errors?.length && ['Recent errors', `<ol class="mono">${c.errors.map(t => `<li>${esc(t)}</li>`).join('')}</ol>`],
+      c.syncError && ['Last sync error', esc(c.syncError)],
+      c.classifier && ['Sorting', esc(c.classifier)],
+      c.view && ['Page', esc(c.view)],
+      c.userAgent && ['Browser', esc(c.userAgent)],
+    ].filter(Boolean);
+    return `
+    <li class="report ${r.status}">
+      <div class="report-head">
+        <span class="pill" style="--c:${color(REPORT_TONE[r.kind] || 'applied')}">${REPORT_KIND[r.kind] || 'Other'}</span>
+        <span class="report-from">${esc(r.email || 'Unknown sender')}</span>
+        <span class="report-when" title="${esc(new Date(r.createdAt).toLocaleString())}">${timeAgo(r.createdAt)}</span>
+      </div>
+      <p class="report-message">${esc(r.message)}</p>
+      ${details.length ? `<details class="report-details"><summary>Details</summary>
+        <dl>${details.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>` : ''}
+      <div class="report-actions">
+        ${r.email ? `<a class="btn btn-sm" href="mailto:${esc(r.email)}?subject=${encodeURIComponent('Your nuj report')}">${icon('mail')}Reply</a>` : ''}
+        <button class="btn btn-sm" type="button" data-report-status="${r.id}" data-to="${r.status === 'open' ? 'resolved' : 'open'}">${icon(r.status === 'open' ? 'check' : 'refresh')}${r.status === 'open' ? 'Mark resolved' : 'Reopen'}</button>
+        <button class="btn btn-sm btn-quiet btn-danger" type="button" data-report-delete="${r.id}">${icon('trash')}Delete</button>
+      </div>
+    </li>`;
+  }).join('') : `<li class="action-empty"><strong>${reportFilter === 'open' ? 'No open reports' : 'Nothing here'}</strong>When someone uses "Report a problem", it shows up here.</li>`;
+}
+$('#report-tabs').addEventListener('click', e => {
+  const t = e.target.closest('[data-report-filter]');
+  if (t) { reportFilter = t.dataset.reportFilter; renderReports(); }
+});
+$('#report-list').addEventListener('click', async e => {
+  const status = e.target.closest('[data-report-status]');
+  if (status) {
+    status.disabled = true;
+    await api('PATCH', `/api/reports/${status.dataset.reportStatus}`, { status: status.dataset.to });
+    return loadReports();
+  }
+  const del = e.target.closest('[data-report-delete]');
+  if (del) {
+    if (!del.classList.contains('confirming')) {
+      del.classList.add('confirming');
+      del.innerHTML = `${icon('trash')}Click again to delete`;
+      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); del.innerHTML = `${icon('trash')}Delete`; } }, 4000);
+      return;
+    }
+    del.disabled = true;
+    await api('DELETE', `/api/reports/${del.dataset.reportDelete}`);
+    loadReports();
+  }
+});
 // Clicking the link you're on still takes you there (e.g. back up to the applications).
 $('#sidebar').addEventListener('click', e => {
   const link = e.target.closest('a[href^="#/"]');
@@ -1339,7 +1492,10 @@ let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderSankey, 150); });
 
 // Live updates: the server pings whenever a sync or edit changes the data.
-new EventSource('/api/events').onmessage = () => load();
+new EventSource('/api/events').onmessage = e => {
+  load();
+  if (e.data === 'reports' && view === 'reports') loadReports();
+};
 // Keep relative times ("synced 2m ago") fresh.
 setInterval(renderGmail, 30_000);
 

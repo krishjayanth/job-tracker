@@ -44,6 +44,7 @@
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
       <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+      <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
     </defs>
   </svg>
@@ -56,10 +57,12 @@
       <div class="side-label">Workspace</div>
       <a class="side-link" href="#/" data-view="dashboard"><svg class="icon"><use href="#i-dashboard"/></svg>Dashboard</a>
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
+      <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
       <div class="side-label">Coming soon</div>
       <div id="soon-links"></div>
     </nav>
     <div class="side-bottom">
+      <button id="report-open" class="side-link side-report" type="button" data-report><svg class="icon"><use href="#i-flag"/></svg>Report a problem</button>
       <button id="groq-open" class="side-card" type="button" hidden>
         <span class="side-card-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
         <span class="side-card-text"><strong>AI email sorting</strong><small><i id="groq-side-dot" class="dot"></i><span id="groq-side-status"></span></small></span>
@@ -101,6 +104,13 @@
             <svg class="icon chev"><use href="#i-chevron"/></svg>
           </button>
         </div>
+        <div class="menu-note">
+          <button class="menu-row" type="button" data-report>
+            <svg class="icon"><use href="#i-flag"/></svg>
+            <span><strong>Report a problem</strong><small>Something broke or was sorted wrong</small></span>
+            <svg class="icon chev"><use href="#i-chevron"/></svg>
+          </button>
+        </div>
         <div id="disconnect" class="menu-note" hidden>
           <p>Stop reading your inbox and cancel nuj's Gmail access. Your applications stay.</p>
           <button id="disconnect-btn" class="btn" type="button" style="margin-top:10px">Disconnect Gmail</button>
@@ -110,7 +120,7 @@
           <a class="btn" href="/logout" style="margin-top:10px;text-decoration:none">Sign out</a>
         </div>
         <div id="delete-section" class="menu-note" hidden>
-          <p>Delete your applications, Groq key and Gmail access from nuj for good.</p>
+          <p>Delete your applications, Groq key, problem reports and Gmail access from nuj for good.</p>
           <button id="delete-account-btn" class="btn btn-danger" type="button" style="margin-top:10px">Delete my account</button>
         </div>
       </div>
@@ -201,6 +211,19 @@
     </section>
   </main>
 
+  <main class="page" id="view-reports" hidden>
+    <section class="summary">
+      <div class="summary-head">
+        <h1>Reports</h1>
+        <span class="since">Problems people sent from nuj. Only you can see this page.</span>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="stage-tabs" id="report-tabs" role="tablist" aria-label="Filter reports"></div>
+      <ul id="report-list" class="report-list"></ul>
+    </section>
+  </main>
+
   <main class="page soon-page" id="view-soon" hidden>
     <section id="soon" class="coming"></section>
   </main>
@@ -251,6 +274,45 @@
     <div class="sheet-foot">
       <span class="fine"><svg class="icon"><use href="#i-shield"/></svg>Stored encrypted and used only to read your job emails.</span>
       <button id="groq-remove" class="btn btn-quiet btn-danger" type="button" hidden>Remove my key</button>
+    </div>
+  </dialog>
+
+  <dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-flag"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="report-title">Report a problem</h2>
+        <p id="report-sub">Tell us what went wrong. Your report and email address go to the person who runs nuj.</p>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <form id="report-form" class="sheet-body" novalidate>
+      <fieldset class="segmented" aria-label="What kind of problem">
+        <label><input type="radio" name="kind" value="sorting"><span>Sorted wrong</span></label>
+        <label><input type="radio" name="kind" value="bug" checked><span>Something broke</span></label>
+        <label><input type="radio" name="kind" value="other"><span>Idea or other</span></label>
+      </fieldset>
+      <div class="field">
+        <label for="report-message">What happened?</label>
+        <textarea id="report-message" name="message" rows="5" maxlength="4000" placeholder="What you did, what you expected, and what happened instead"></textarea>
+      </div>
+      <label class="check-row" id="report-app-row" hidden>
+        <input type="checkbox" id="report-include-app">
+        <span><strong>Include <span id="report-app-name"></span>'s details</strong>
+          <small>Company, role, status and timeline, including the email subjects. Helps fix wrong sorting.</small></span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" id="report-include-tech" checked>
+        <span><strong>Include technical details</strong>
+          <small>The page you're on, your browser, recent error messages and the last sync error.</small></span>
+      </label>
+      <p id="report-msg" class="key-msg" role="status"></p>
+    </form>
+    <div class="sheet-foot">
+      <span class="fine"><svg class="icon"><use href="#i-shield"/></svg>Only the person who runs nuj can read reports.</span>
+      <button class="btn btn-primary" type="submit" form="report-form" id="report-send">Send report</button>
     </div>
   </dialog>
 

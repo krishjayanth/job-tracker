@@ -8,6 +8,7 @@ import { buildWorkbook } from './src/export.js';
 import * as gmail from './src/gmail.js';
 import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
+import { addReport, listReports, openCount, setReportStatus, deleteReport, deleteReportsBy } from './src/reports.js';
 import { getUser, allUsers, deleteUser, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -122,14 +123,21 @@ app.get('/api/events', (req, res) => {
   res.flushHeaders();
   if (!clients.has(id)) clients.set(id, new Set());
   clients.get(id).add(res);
+  if (canSeeReports(req.account)) ownerClients.add(res);
   // Comment pings keep proxies (like Render's) from closing an idle stream.
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-  req.on('close', () => { clearInterval(ping); clients.get(id)?.delete(res); });
+  req.on('close', () => { clearInterval(ping); clients.get(id)?.delete(res); ownerClients.delete(res); });
 });
 
+// The owner reads everyone's problem reports (in demo mode, whoever is looking).
+const canSeeReports = user => user.owner || DEMO;
+const ownerClients = new Set();
+const tellOwner = () => { for (const res of ownerClients) res.write('data: reports\n\n'); };
+
 // --- state ----------------------------------------------------------------
-app.get('/api/state', (req, res) => {
+app.get('/api/state', async (req, res) => {
   const user = req.account;
+  const reports = canSeeReports(user) ? { open: await openCount() } : null;
   const db = user.store.db;
   res.json({
     applications: db.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) })),
@@ -144,6 +152,7 @@ app.get('/api/state', (req, res) => {
     },
     groq: DEMO ? null : user.groqInfo(),
     user: authEnabled ? user.email : null,
+    reports,
     demo: DEMO,
     ghostDays: GHOST_DAYS,
   });
@@ -328,6 +337,31 @@ app.post('/api/disconnect', async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- problem reports ------------------------------------------------------------
+// Anyone signed in can send one; only the owner can read and manage them.
+app.post('/api/reports', async (req, res) => {
+  const { kind, message, context } = req.body || {};
+  const { report, error } = await addReport({ userId: req.account.id, email: req.account.email, kind, message, context });
+  if (error) return res.status(400).json({ error });
+  console.log(`[reports] new ${report.kind} report from ${report.email || report.userId}`);
+  tellOwner();
+  res.json({ ok: true });
+});
+
+const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the owner can see reports' });
+app.get('/api/reports', ownerOnly, async (req, res) => res.json({ reports: await listReports() }));
+app.patch('/api/reports/:id', ownerOnly, async (req, res) => {
+  const r = await setReportStatus(req.params.id, req.body?.status);
+  if (!r) return res.status(404).json({ error: 'Not found' });
+  tellOwner();
+  res.json(r);
+});
+app.delete('/api/reports/:id', ownerOnly, async (req, res) => {
+  await deleteReport(req.params.id);
+  tellOwner();
+  res.json({ ok: true });
+});
+
 // --- your Groq key and your account -----------------------------------------
 app.put('/api/groq-key', async (req, res) => {
   if (DEMO) return res.status(400).json({ error: 'Groq keys are off in demo mode' });
@@ -354,6 +388,7 @@ app.delete('/api/account', async (req, res) => {
   if (DEMO) return res.status(400).json({ error: 'There is no account to delete in demo mode' });
   const { id } = req.account;
   await deleteUser(id);
+  await deleteReportsBy(id);
   console.log(`[users] deleted ${id}`);
   endSession(res);
   res.json({ ok: true });

@@ -709,6 +709,57 @@ table.apps { width: 100%; border-collapse: collapse; }
 .fine .icon { width: 14px; height: 14px; }
 #groq-remove { height: 30px; padding: 0 10px; }
 
+/* ------------------------------------------------------------------ problem reports */
+.side-report { width: 100%; border: 0; background: none; cursor: pointer; font: inherit; }
+.side-badge {
+  margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 600;
+  background: var(--danger); color: #000;
+}
+.side-badge:empty { display: none; }
+.meta-link {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding: 0; border: 0; background: none;
+  color: var(--muted); font: inherit; cursor: pointer;
+}
+.meta-link .icon { width: 13px; height: 13px; }
+.meta-link:hover { color: var(--text); }
+
+/* Three-way choice: one pill slides between options */
+.segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: 11px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.segmented label { position: relative; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span {
+  display: grid; place-items: center; height: 32px; padding: 0 8px; border-radius: 8px;
+  color: var(--muted); font-size: 13px; font-weight: 500; text-align: center; cursor: pointer;
+  transition: background var(--fast), color var(--fast), box-shadow var(--fast);
+}
+.segmented span:hover { color: var(--text); }
+.segmented input:checked + span { background: var(--surface-hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong), 0 1px 2px rgba(0, 0, 0, .5); }
+.segmented input:focus-visible + span { box-shadow: var(--focus); }
+#report-form .field textarea { min-height: 120px; }
+.check-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; cursor: pointer; }
+.check-row input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: #fff; }
+.check-row strong { display: block; font-weight: 500; font-size: 13px; }
+.check-row small { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+.report-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.report { padding: 14px 16px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.report.resolved { opacity: .6; }
+.report-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.report-from { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.report-when { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+.report-message { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: var(--text-2); }
+.report-details { margin-top: 10px; font-size: 12.5px; }
+.report-details summary { color: var(--muted); cursor: pointer; width: max-content; }
+.report-details summary:hover { color: var(--text); }
+.report-details dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 0; }
+.report-details dt { color: var(--muted); }
+.report-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text-2); }
+.report-details ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.report-details .mono { font-family: var(--mono); font-size: 11.5px; }
+.report-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.report-actions a.btn { text-decoration: none; }
+
 /* ------------------------------------------------------------------ coming soon */
 .soon-page { min-height: calc(100vh - 60px); align-content: start; }
 .coming {
