@@ -313,10 +313,12 @@ export class Store {
       if (exact) return { app: exact, guess: false };
       // A different, known role at the same company is a separate application.
       const unknownRole = sameCompany.filter(a => !a.role);
-      if (unknownRole.length) return { app: unknownRole.at(-1), guess: several };
+      if (unknownRole.length) return { app: unknownRole.at(-1), guess: several, candidates: several ? sameCompany : undefined };
       return none;
     }
-    return { app: sameCompany.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))[0], guess: several };
+    sameCompany.sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
+    // `candidates`: the applications it could be, for something smarter than "the latest" to choose from.
+    return { app: sameCompany[0], guess: several, candidates: several ? sameCompany : undefined };
   }
 
   // Where you've said an email belongs. Kept by Gmail message id so a re-scan puts it

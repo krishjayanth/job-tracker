@@ -4,6 +4,7 @@ import { google } from 'googleapis';
 import { refresh, newId, normalizeCompany, getKv, setKv, deleteKv } from './store.js';
 import { classify } from './classify.js';
 import { HIRING_SENDERS } from './jobcheck.js';
+import { pickApplicationWithGroq } from './groq.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -273,6 +274,23 @@ export class Mailbox {
     return { emails: emails.length, changed, notJob };
   }
 
+  // Which of these same-company applications an email is about, by the model, or null
+  // when there's no key or it can't tell.
+  async pickApplication(email, candidates = []) {
+    const groq = this.user.groq();
+    if (!groq || candidates.length < 2) return null;
+    try {
+      const i = await pickApplicationWithGroq(groq, email, candidates.map(a => ({
+        role: a.role, jobId: a.jobId, status: a.status, appliedAt: a.appliedAt,
+        subjects: a.events.filter(e => !e.manual && e.subject).slice(-4).map(e => e.subject),
+      })));
+      return i >= 0 ? candidates[i] : null;
+    } catch (err) {
+      if (err.status === 401 || err.status === 403) this.user.keyRejected();
+      return null;
+    }
+  }
+
   // Keep going in batches until the backlog (e.g. the first 90-day scan) is cleared.
   async drain(opts) {
     let added = 0, scanned = 0, result;
@@ -351,8 +369,11 @@ export class Mailbox {
           const match = store.matchApplication({ threadId: msg.threadId, company, role, jobId });
           // A reply in a thread you already have settles which application it is.
           if (match.thread) review = review.filter(r => r.about !== 'application');
-          if (match.guess) review.push({ about: 'application', text: `You have several applications at ${match.app.company}, and this email doesn't say which job it's about.` });
-          app = match.app || store.createApplication({ company, role, jobId, source: 'gmail' });
+          // Several applications at this company and nothing in the email to tell them apart:
+          // with a key, let the model choose from that short list; otherwise ask you.
+          const picked = match.guess ? await this.pickApplication(email, match.candidates) : null;
+          if (match.guess && !picked) review.push({ about: 'application', text: `You have several applications at ${match.app.company}, and this email doesn't say which job it's about.` });
+          app = picked || match.app || store.createApplication({ company, role, jobId, source: 'gmail' });
           if (!app.role && role) app.role = role;
           if (!app.jobId && jobId) app.jobId = jobId;
           // "CapitalOne" (from a sender address) -> "Capital One" (from a subject), unless you renamed it.

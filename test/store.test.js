@@ -164,3 +164,12 @@ test('blocking a sender removes its emails, drops emptied applications and skips
   s.unblockSender('simplebills.com');
   assert.equal(s.isBlocked('X <a@simplebills.com>'), false);
 });
+
+test('a guessed match lists every application it could have been', () => {
+  gmailApp({ company: 'Contoso', role: 'Data Analyst Intern' });
+  gmailApp({ company: 'Contoso', role: 'Software Engineer' });
+  const m = s.matchApplication({ company: 'Contoso' });
+  assert.equal(m.guess, true);
+  assert.equal(m.candidates.length, 2);
+  assert.equal(s.matchApplication({ company: 'Contoso', role: 'Software Engineer' }).candidates, undefined);
+});

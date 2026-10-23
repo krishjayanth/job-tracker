@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeWithRules, classifyWithRules, classify } from '../src/classify.js';
-import { GATE_MODEL } from '../src/groq.js';
+import { GATE_MODEL, pickApplicationWithGroq } from '../src/groq.js';
 
 const email = { from: 'Relecloud <noreply@hirevue.com>', subject: 'Relecloud interview invitation', date: '2026-10-01T12:00:00.000Z',
   body: 'Hi, thanks for applying to Relecloud. Please complete your HireVue interview. Requisition ID: R-12345.' };
@@ -81,4 +81,16 @@ test('pipeline: emails from hiring software skip the job check', async () => {
   const r = await classify({ ...vague, from: 'Contoso <no-reply@us.greenhouse-mail.io>' }, { groq });
   assert.equal(r.company, 'Contoso');
   assert.ok(!groq.calls.includes(GATE_MODEL));
+});
+
+test('picking an application: uses the model\'s choice only when it is sure and in range', async () => {
+  const answer = out => ({ chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify(out) } }] }) } } });
+  const apps = [
+    { role: 'Data Analyst Intern', jobId: '', status: 'applied', appliedAt: '2026-09-01T00:00:00Z', subjects: ['Thanks for applying: Data Analyst Intern'] },
+    { role: 'Software Engineer', jobId: 'R-1', status: 'oa', appliedAt: '2026-09-10T00:00:00Z', subjects: [] },
+  ];
+  const mail = { from: 'x@contoso.com', subject: 'Next steps', body: 'About the analyst internship...' };
+  assert.equal(await pickApplicationWithGroq(answer({ reasoning: '', choice: 0, confidence: 'high' }), mail, apps), 0);
+  assert.equal(await pickApplicationWithGroq(answer({ reasoning: '', choice: 1, confidence: 'low' }), mail, apps), -1);
+  assert.equal(await pickApplicationWithGroq(answer({ reasoning: '', choice: 5, confidence: 'high' }), mail, apps), -1);
 });
