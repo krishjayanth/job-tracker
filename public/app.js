@@ -53,10 +53,11 @@ const isoDate = iso => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+// Avatars stay in greys so colour only ever means a stage; the shade still tells companies apart.
 function avatarColor(name) {
   let h = 0;
   for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(${h} 52% 50%)`;
+  return `hsl(0 0% ${14 + (h % 5) * 3}%)`;
 }
 const initials = name => name.replace(/[^\p{L}\p{N}\s&]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
 const avatar = (name, size = '') => `<span class="avatar ${size}" style="background:${avatarColor(name)}" aria-hidden="true">${esc(initials(name))}</span>`;
@@ -158,24 +159,34 @@ function renderGmail() {
   $('#rescan-btn').disabled = !g.connected || g.progress?.mode === 'rescan';
   $('#account').hidden = !state.user;
   $('#account-email').textContent = state.user || '';
+  $('#side-user').hidden = !state.user;
+  $('#side-user').textContent = state.user || '';
   $('#delete-section').hidden = state.demo;
   renderGroq();
 }
 
-// Your Groq key: where it stands in the menu, and a banner when it needs you.
+// Your Groq key: where it stands (sidebar, menu, settings sheet), and a banner when it needs you.
 function renderGroq() {
   const k = state.groq;
   $('#groq-section').hidden = !k;
+  $('#groq-open').hidden = !k;
   if (!k) return;
-  const free = '<a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>';
   const ending = k.last4 ? ` ending in <strong>…${esc(k.last4)}</strong>` : '';
-  $('#groq-status').innerHTML =
-    k.problem === 'unreadable' ? `Your saved key${ending} can't be read any more, because the server's secret changed. Add it again.`
-    : k.problem === 'rejected' ? `Groq stopped accepting ${k.source === 'own' ? `your key${ending}` : "this server's key"}. Emails are sorted by the built-in rules until you add a new one from ${free}.`
-    : k.source === 'own' ? `Emails are read by Groq with your key${ending}. Paste a new one to replace it.`
-    : k.source === 'server' ? `Emails are read by Groq with this server's key. You can add your own instead.`
-    : `Emails are sorted by the built-in rules. Add a free key from ${free} to have an AI read them more carefully.`;
-  $('#groq-key').placeholder = k.source === 'own' ? 'New key (gsk_…)' : 'gsk_…';
+  // tone: on (AI is reading), off (built-in rules), err (needs you)
+  const [tone, title, short, detail] =
+    k.problem === 'unreadable' ? ['err', 'Your key needs adding again', 'Needs your key', `Your saved key${ending} can't be read any more because the server's secret changed. Paste it again below.`]
+    : k.problem === 'rejected' ? ['err', 'Groq stopped accepting the key', 'Key rejected', `Groq refused ${k.source === 'own' ? `your key${ending}` : "this server's key"}, so emails are sorted by the built-in rules until you add a new one.`]
+    : k.source === 'own' ? ['on', 'On, using your key', `Your key …${esc(k.last4 || '')}`, `Emails are read by Groq with your key${ending}. Paste a new one below to replace it.`]
+    : k.source === 'server' ? ['on', "On, using this server's key", "Server's key", `Emails are read by Groq with this server's key. You can add your own instead.`]
+    : ['off', 'Off, using built-in rules', 'Built-in rules', 'Add a free Groq key to have an AI read each email more carefully.'];
+  $('#groq-state').dataset.tone = tone;
+  $('#groq-state-title').textContent = title;
+  $('#groq-status').innerHTML = detail;
+  $('#groq-side-dot').className = `dot ${tone}`;
+  $('#groq-side-status').innerHTML = short;
+  $('#groq-menu-status').innerHTML = short;
+  $('#groq-key').placeholder = k.source === 'own' ? 'Paste a new key to replace it' : 'gsk_…';
+  $('#groq-form button[type="submit"]').textContent = k.source === 'own' && !k.problem ? 'Replace key' : 'Save key';
   $('#groq-remove').hidden = k.source !== 'own';
 
   const banner = $('#banner');
@@ -193,8 +204,7 @@ const dismissed = name => { try { return localStorage.getItem(`dismissed:${name}
 $('#banner').addEventListener('click', e => {
   if (e.target.closest('[data-open-menu]')) {
     e.preventDefault();
-    menu.showPopover();
-    $('#groq-key').focus();
+    openGroq();
   }
   const dismiss = e.target.closest('[data-dismiss]');
   if (dismiss) {
@@ -278,6 +288,7 @@ function renderSummary() {
 }
 
 function renderSankey() {
+  if (view !== 'dashboard') return; // drawn when you come back; a hidden chart has no width
   const apps = state.applications;
   $('#flow-caption').textContent = apps.length ? `No reply after ${state.ghostDays} days counts as “No response”` : '';
   drawSankey($('#sankey'), apps, { large: false });
@@ -500,12 +511,60 @@ function sortValue(a, key) {
   return a[key] || '';
 }
 
+// Search: every word has to appear somewhere in the application (company, role, ID, notes or an email subject).
+const searchText = a => [a.company, a.role, a.jobId, a.notes, ...a.events.map(e => decode(e.subject))].join('\n').toLowerCase();
+const queryWords = () => query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+// Escape, then mark where the search words appear.
+function hl(text) {
+  const t = String(text ?? '');
+  const words = queryWords();
+  if (!words.length) return esc(t);
+  const lower = t.toLowerCase();
+  const hit = new Array(t.length).fill(false);
+  for (const w of words) for (let i = lower.indexOf(w); i !== -1; i = lower.indexOf(w, i + 1)) hit.fill(true, i, i + w.length);
+  let out = '', i = 0;
+  while (i < t.length) {
+    let j = i;
+    while (j < t.length && hit[j] === hit[i]) j++;
+    out += hit[i] ? `<mark>${esc(t.slice(i, j))}</mark>` : esc(t.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+// When the match is only in the notes, show the bit of notes that matched.
+function notesMatch(a, words) {
+  const notes = a.notes || '';
+  if (!words.length || !words.some(w => notes.toLowerCase().includes(w))) return '';
+  if ([a.company, a.role, a.jobId].join(' ').toLowerCase().includes(words[0])) return '';
+  const at = Math.max(0, notes.toLowerCase().indexOf(words.find(w => notes.toLowerCase().includes(w))) - 24);
+  return `<div class="match-note">Notes: ${at ? '…' : ''}${hl(notes.slice(at, at + 90))}${notes.length > at + 90 ? '…' : ''}</div>`;
+}
+
+function renderFilterChips(shown, total) {
+  const chips = [];
+  if (query.trim()) chips.push(['query', `“${esc(query.trim())}”`]);
+  if (filter !== 'all') chips.push(['filter', `<i class="dot" style="--c:${color(filter)}"></i>${STAGE_LABEL[filter]}`]);
+  if (month !== 'all') chips.push(['month', monthLabel(month)]);
+  $('#results-line').textContent = !total ? '' : chips.length ? `${shown} of ${total}` : `${total}`;
+  const el = $('#filter-chips');
+  el.hidden = !chips.length;
+  el.innerHTML = chips.map(([k, label]) =>
+    `<span class="chip">${label}<button type="button" data-unfilter="${k}" aria-label="Remove this filter">${icon('x')}</button></span>`).join('') +
+    (chips.length > 1 ? `<button class="chip-clear" type="button" data-unfilter="all">Clear all</button>` : '');
+}
+function setQuery(value) {
+  query = value;
+  $('#search').value = value;
+  $('#search-clear').hidden = !value;
+  renderTable();
+}
+
 function renderTable() {
-  const q = query.trim().toLowerCase();
+  const words = queryWords();
   const rows = state.applications
     .filter(inMonth)
     .filter(a => filter === 'all' || a.status === filter)
-    .filter(a => !q || [a.company, a.role, a.jobId].some(v => (v || '').toLowerCase().includes(q)))
+    .filter(a => { const text = searchText(a); return words.every(w => text.includes(w)); })
     .sort((a, b) => {
       const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
       const cmp = x < y ? -1 : x > y ? 1 : 0;
@@ -524,18 +583,19 @@ function renderTable() {
     <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}">
       <td>
         <div class="company">${avatar(a.company)}
-          <div style="min-width:0"><div class="name">${esc(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may belong to another application">Check</span>` : ''}</div><div class="sub">${esc(a.role)}</div></div>
+          <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may belong to another application">Check</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
         </div>
       </td>
       <td class="col-role">
-        <div class="role">${a.role ? esc(a.role) : '<span class="dim">No role found</span>'}</div>
-        ${a.jobId ? `<div class="jobid">ID ${esc(a.jobId)}</div>` : ''}
+        <div class="role">${a.role ? hl(a.role) : '<span class="dim">No role found</span>'}</div>
+        ${a.jobId ? `<div class="jobid">ID ${hl(a.jobId)}</div>` : ''}
+        ${notesMatch(a, words)}
       </td>
       <td>${statusSelect(a)}${dueChip(a.deadline) ? `<div>${dueChip(a.deadline)}</div>` : ''}</td>
       <td class="col-applied date">${shortDate(a.appliedAt)}</td>
       <td class="col-latest latest">
         <div class="when">${timeAgo(a.lastActivity)}</div>
-        ${last?.subject ? `<div class="what" title="${esc(decode(last.subject))}">${esc(decode(last.subject))}</div>` : ''}
+        ${last?.subject ? `<div class="what" title="${esc(decode(last.subject))}">${hl(decode(last.subject))}</div>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -546,6 +606,9 @@ function renderTable() {
     b.closest('th').setAttribute('aria-sort', b.dataset.sort === sort.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
   });
 
+  renderFilterChips(rows.length, state.applications.length);
+  $('#side-count').textContent = state.applications.length || '';
+  const q = query.trim();
   const empty = $('#empty');
   empty.hidden = rows.length > 0;
   if (!state.applications.length) {
@@ -553,7 +616,8 @@ function renderTable() {
       ${state.gmail.connected ? 'Application emails from Gmail will appear here automatically.' : 'Connect Gmail, or add one by hand.'}
       <div><button class="btn btn-primary" type="button" data-add>${icon('plus')}Add application</button></div>`;
   } else {
-    empty.innerHTML = `<strong>No matches</strong>${q ? `Nothing matches “${esc(query.trim())}”` : 'No applications'}${filter !== 'all' ? ` in ${STAGE_LABEL[filter]}` : ''}${month !== 'all' ? ` applied in ${monthLabel(month)}` : ''}.
+    empty.innerHTML = `<strong>No matches</strong>${q ? `Nothing matches “${esc(q)}”` : 'No applications'}${filter !== 'all' ? ` in ${STAGE_LABEL[filter]}` : ''}${month !== 'all' ? ` applied in ${monthLabel(month)}` : ''}.
+      ${q ? '<div class="empty-tip">Search looks through companies, roles, job IDs, your notes and email subjects.</div>' : ''}
       <div><button class="btn" type="button" data-clear>Clear filters</button></div>`;
   }
 }
@@ -687,7 +751,14 @@ function openDrawer(app) {
           <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
         </div>
       </form>
-      ${isNew ? '' : `<div><div class="section-title">Timeline</div><ul class="timeline">${timelineHtml(a)}</ul></div>`}
+      ${isNew ? '' : `<div>
+        <div class="section-row">
+          <div class="section-title">Timeline</div>
+          ${a.events.some(e => !e.manual && e.messageId) ? `<button class="btn btn-sm" id="rescan-app" type="button" title="Read this application's emails again, in case one was sorted wrong">${icon('refresh')}<span>Re-scan emails</span></button>` : ''}
+        </div>
+        <p id="rescan-note" class="rescan-note" role="status" hidden></p>
+        <ul class="timeline">${timelineHtml(a)}</ul>
+      </div>`}
     </div>
     <div class="drawer-foot">
       ${isNew ? '<span></span>' : `<button class="btn btn-danger" id="delete-btn" type="button">${icon('trash')}Delete</button>`}
@@ -737,6 +808,33 @@ function openDrawer(app) {
     await load();
     openDrawer(state.applications.find(x => x.id === a.id));
     $('#saved-note').innerHTML = `<span class="saved-note">${icon('check')}Deadline done</span>`;
+  });
+
+  // Read this application's emails again with the current classifier (e.g. after adding a Groq key).
+  $('#rescan-app')?.addEventListener('click', async () => {
+    const btn = $('#rescan-app');
+    const n = a.events.filter(e => !e.manual && e.messageId).length;
+    btn.disabled = true;
+    btn.classList.add('spin');
+    btn.querySelector('span').textContent = 'Re-scanning…';
+    const note = (text, tone = '') => { const el = $('#rescan-note'); if (!el) return; el.hidden = false; el.className = `rescan-note ${tone}`; el.textContent = text; };
+    note(`Reading ${n} ${n === 1 ? 'email' : 'emails'} again…`);
+    try {
+      const r = await api('POST', `/api/applications/${a.id}/rescan`);
+      await load();
+      openDrawer(state.applications.find(x => x.id === a.id));
+      note(r.changed
+        ? `Re-read ${r.emails} ${r.emails === 1 ? 'email' : 'emails'} · ${r.changed} sorted differently now.`
+        : `Re-read ${r.emails} ${r.emails === 1 ? 'email' : 'emails'} · nothing changed.${r.notJob ? ` ${r.notJob} no longer look like application emails; use “Wrong application?” to move them.` : ''}`, 'ok');
+      if (r.changed && a.events.some(e => e.manual)) {
+        $('#rescan-note').textContent += ' A status you set by hand still wins; change it above if needed.';
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.classList.remove('spin');
+      btn.querySelector('span').textContent = 'Re-scan emails';
+      note(err.message, 'err');
+    }
   });
 
   if (!isNew) {
@@ -855,29 +953,75 @@ $('#disconnect-btn').onclick = async () => {
   load();
 };
 
-const groqMsg = (text, tone = '') => { $('#groq-msg').className = `menu-msg ${tone}`; $('#groq-msg').textContent = text; };
+// AI email sorting sheet (your Groq key)
+const groqDialog = $('#groq-dialog');
+function openGroq() {
+  if (menu.matches(':popover-open')) menu.hidePopover();
+  closeNav();
+  groqMsg('');
+  groqDialog.showModal();
+  $('#groq-key').focus();
+}
+$('#groq-open').onclick = openGroq;
+$('#groq-menu-btn').onclick = openGroq;
+groqDialog.addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) groqDialog.close();
+});
+groqDialog.addEventListener('close', () => {
+  $('#groq-key').value = '';
+  setReveal(false);
+});
+
+const groqMsg = (text, tone = '') => { $('#groq-msg').className = `key-msg ${tone}`; $('#groq-msg').textContent = text; };
+const setReveal = on => {
+  $('#groq-key').type = on ? 'text' : 'password';
+  const btn = $('#groq-reveal');
+  btn.setAttribute('aria-pressed', on);
+  btn.setAttribute('aria-label', on ? 'Hide key' : 'Show key');
+  btn.innerHTML = icon(on ? 'eye-off' : 'eye');
+};
+$('#groq-reveal').onclick = () => setReveal($('#groq-key').type === 'password');
+// Check the shape as you type, so a half-copied key is caught before Groq is asked.
+$('#groq-key').addEventListener('input', e => {
+  const v = e.target.value.trim();
+  e.target.closest('.key-input').classList.toggle('invalid', v.length > 3 && !v.startsWith('gsk_'));
+  groqMsg(v.length > 3 && !v.startsWith('gsk_') ? 'Groq keys start with gsk_. Check it was copied in full.' : '');
+});
 $('#groq-form').addEventListener('submit', async e => {
   e.preventDefault();
   const input = $('#groq-key');
   const key = input.value.trim();
   if (!key) return input.focus();
-  const save = e.submitter || $('#groq-form button');
+  const save = e.submitter || $('#groq-form button[type="submit"]');
   save.disabled = true;
-  groqMsg('Checking the key with Groq…');
+  save.classList.add('busy');
+  groqMsg('Checking the key with Groq…', 'pending');
   try {
     await api('PUT', '/api/groq-key', { key });
     input.value = '';
+    setReveal(false);
     groqMsg('Saved. New emails will be read with your key.', 'ok');
     await load();
   } catch (err) {
     groqMsg(err.message, 'err');
+    input.focus();
   }
   save.disabled = false;
+  save.classList.remove('busy');
 });
 $('#groq-remove').onclick = async () => {
-  if (!confirm('Remove your Groq key? Emails will be sorted by the built-in rules.')) return;
+  const btn = $('#groq-remove');
+  // Two clicks rather than a dialog on top of a dialog.
+  if (!btn.classList.contains('confirming')) {
+    btn.classList.add('confirming');
+    btn.textContent = 'Click again to remove';
+    setTimeout(() => { btn.classList.remove('confirming'); btn.textContent = 'Remove my key'; }, 4000);
+    return;
+  }
+  btn.classList.remove('confirming');
+  btn.textContent = 'Remove my key';
   await api('DELETE', '/api/groq-key');
-  groqMsg('Removed.', 'ok');
+  groqMsg('Removed. Emails will be sorted by the built-in rules.', 'ok');
   load();
 };
 
@@ -933,10 +1077,17 @@ document.querySelector('thead').addEventListener('click', e => {
 });
 $('#empty').addEventListener('click', e => {
   if (e.target.closest('[data-add]')) openDrawer(null);
-  if (e.target.closest('[data-clear]')) {
-    filter = 'all'; month = 'all'; query = ''; $('#search').value = '';
-    renderMonths(); renderTabs(); renderTable();
-  }
+  if (e.target.closest('[data-clear]')) clearFilters('all');
+});
+function clearFilters(which) {
+  if (which === 'filter' || which === 'all') filter = 'all';
+  if (which === 'month' || which === 'all') month = 'all';
+  if (which === 'query' || which === 'all') { query = ''; $('#search').value = ''; $('#search-clear').hidden = true; }
+  renderMonths(); renderTabs(); renderTable();
+}
+$('#filter-chips').addEventListener('click', e => {
+  const b = e.target.closest('[data-unfilter]');
+  if (b) clearFilters(b.dataset.unfilter);
 });
 $('#month').addEventListener('change', e => {
   month = e.target.value;
@@ -980,16 +1131,124 @@ $('#flow-dialog').addEventListener('click', e => {
   // Clicks on the backdrop land on the <dialog> element itself.
   if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) e.currentTarget.close();
 });
-$('#search').addEventListener('input', e => { query = e.target.value; renderTable(); });
+$('#search').addEventListener('input', e => setQuery(e.target.value));
+// Esc empties the search first, then leaves it.
+$('#search').addEventListener('keydown', e => {
+  if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); }
+  else if (e.key === 'Escape') e.target.blur();
+});
+$('#search-clear').addEventListener('click', () => { setQuery(''); $('#search').focus(); });
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeDrawer();
+  if (e.key === 'Escape' && $('#sidebar').classList.contains('open')) closeNav();
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
-  if (e.key === '/' && !typing && !$('#drawer').classList.contains('open') && !$('#flow-dialog').open) {
+  if (e.key === '/' && !typing && !$('#drawer').classList.contains('open') && !$('#flow-dialog').open && !groqDialog.open) {
     e.preventDefault();
+    if (view !== 'dashboard') location.hash = '#/applications';
     $('#search').focus();
   }
 });
+
+// ---------------------------------------------------------------- sections (sidebar)
+// Planned sections: listed now so the sidebar shows where nuj is going, each with a
+// "coming soon" page saying what it will do.
+const SOON = {
+  analytics: {
+    label: 'Analytics', icon: 'chart', c: 'applied', preview: 'bars',
+    blurb: 'See which applications turn into interviews, how fast companies reply, and how your search changes week to week.',
+    points: ['Response and interview rates by month', 'Average time to hear back, by company', 'Which roles and sources work best for you'],
+  },
+  calendar: {
+    label: 'Calendar', icon: 'calendar', c: 'interview', preview: 'calendar',
+    blurb: 'Every assessment deadline and interview from your inbox, on one calendar you can add to Google Calendar.',
+    points: ['Deadlines and interviews pulled from emails', 'Reminders before anything is due', 'Sync to Google Calendar'],
+  },
+  contacts: {
+    label: 'Contacts', icon: 'users', c: 'oa', preview: 'list',
+    blurb: 'The recruiters and interviewers you hear from, linked to their applications, so you know who to follow up with.',
+    points: ['Recruiters found in your application emails', 'Last contact and follow-up nudges', 'Notes for each person'],
+  },
+  goals: {
+    label: 'Goals', icon: 'target', c: 'offer', preview: 'rings',
+    blurb: 'Set a weekly target for applications and follow-ups, and watch your streak build.',
+    points: ['Weekly application targets', 'Streaks and progress at a glance', 'A gentle nudge when you fall behind'],
+  },
+  resume: {
+    label: 'Resume insights', icon: 'file', c: 'in_progress', preview: 'list',
+    blurb: 'Compare the roles that move forward with the ones that don’t, and see what to sharpen in your resume.',
+    points: ['Patterns in roles that reach interviews', 'Keywords from postings you applied to', 'Suggestions you choose to act on'],
+  },
+};
+$('#soon-links').innerHTML = Object.entries(SOON).map(([id, s]) =>
+  `<a class="side-link upcoming" href="#/${id}" data-view="${id}">${icon(s.icon)}${s.label}<span class="soon-tag">Soon</span></a>`).join('');
+
+function soonPreview(kind, c) {
+  const bars = [38, 62, 46, 80, 54, 70, 92];
+  if (kind === 'bars') return `<div class="ghost-kpis">${'<span></span>'.repeat(3)}</div>
+    <div class="ghost-bars">${bars.map((h, i) => `<span style="--h:${h}%;--d:${i}"></span>`).join('')}</div>`;
+  if (kind === 'calendar') return `<div class="ghost-cal">${Array.from({ length: 28 }, (_, i) =>
+    `<span class="${[4, 9, 17, 22].includes(i) ? 'on' : ''}" style="--d:${i % 7}"></span>`).join('')}</div>`;
+  if (kind === 'rings') return `<div class="ghost-rings">${[72, 45, 88].map((p, i) =>
+    `<svg viewBox="0 0 40 40" style="--d:${i}"><circle cx="20" cy="20" r="16"/><circle class="on" cx="20" cy="20" r="16" pathLength="100" style="stroke-dasharray:${p} 100"/></svg>`).join('')}</div>`;
+  return `<div class="ghost-list">${[78, 62, 70, 54].map((w, i) => `<span style="--w:${w}%;--d:${i}"><i></i><b></b></span>`).join('')}</div>`;
+}
+
+function renderSoon(id) {
+  const s = SOON[id];
+  $('#soon').style.setProperty('--c', color(s.c));
+  $('#soon').innerHTML = `
+    <div class="soon-icon">${icon(s.icon)}</div>
+    <span class="soon-badge"><i></i>Coming soon</span>
+    <h1>${s.label}</h1>
+    <p class="soon-blurb">${s.blurb}</p>
+    <div class="soon-preview" aria-hidden="true">${soonPreview(s.preview, s.c)}</div>
+    <ul class="soon-points">${s.points.map(p => `<li>${icon('check')}${p}</li>`).join('')}</ul>
+    <p class="soon-note">We're building this now. It will appear here once it's ready, using the applications you already track.</p>
+    <a class="btn" href="#/">${icon('back')}Back to dashboard</a>`;
+}
+
+let view = 'dashboard';
+function route() {
+  const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
+  const soon = SOON[id];
+  const prev = view;
+  view = soon ? id : 'dashboard';
+  $('#view-dashboard').hidden = Boolean(soon);
+  $('#view-soon').hidden = !soon;
+  if (soon) renderSoon(id);
+  const current = soon ? id : id === 'applications' ? 'applications' : 'dashboard';
+  document.querySelectorAll('.side-link').forEach(l => {
+    if (l.dataset.view === current) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
+  });
+  $('#crumb').textContent = soon ? soon.label : current === 'applications' ? 'Applications' : 'Dashboard';
+  closeNav();
+  if (!soon && prev !== 'dashboard') renderSankey(); // its width was 0 while hidden
+  if (id === 'applications') requestAnimationFrame(() => $('#apps-title').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  else window.scrollTo({ top: 0 });
+}
+window.addEventListener('hashchange', route);
+// Clicking the link you're on still takes you there (e.g. back up to the applications).
+$('#sidebar').addEventListener('click', e => {
+  const link = e.target.closest('a[href^="#/"]');
+  if (link && link.getAttribute('href') === location.hash) route();
+});
+
+// On small screens the sidebar slides in over the page.
+function openNav() {
+  $('#sidebar').classList.add('open');
+  $('#nav-scrim').hidden = false;
+  $('#nav-toggle').setAttribute('aria-expanded', 'true');
+}
+function closeNav() {
+  if (!$('#sidebar').classList.contains('open')) return;
+  $('#sidebar').classList.remove('open');
+  $('#nav-scrim').hidden = true;
+  $('#nav-toggle').setAttribute('aria-expanded', 'false');
+}
+$('#nav-toggle').onclick = openNav;
+$('#nav-scrim').onclick = closeNav;
+route();
 
 $('#sync-btn').onclick = async () => {
   const btn = $('#sync-btn');
@@ -1005,8 +1264,6 @@ $('#sync-btn').onclick = async () => {
 
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderSankey, 150); });
-// Chart colours come from CSS variables, so redraw when the system theme flips.
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
 
 // Live updates: the server pings whenever a sync or edit changes the data.
 new EventSource('/api/events').onmessage = () => load();

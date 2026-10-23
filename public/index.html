@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="dark">
   <title>nuj</title>
   <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon.png">
   <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -32,13 +32,54 @@
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
       <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></symbol>
+      <symbol id="i-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1.5"/><rect width="7" height="5" x="14" y="3" rx="1.5"/><rect width="7" height="9" x="14" y="12" rx="1.5"/><rect width="7" height="5" x="3" y="16" rx="1.5"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15v4"/><path d="M17 17h4"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
     </defs>
   </svg>
 
-  <header class="topbar">
-    <a class="brand" href="/" aria-label="nuj home">
+  <aside id="sidebar" class="sidebar" aria-label="Sections">
+    <a class="brand side-brand" href="#/" aria-label="nuj dashboard">
       <span class="logo-mark" role="img" aria-label="nuj"></span>
     </a>
+    <nav class="side-nav">
+      <div class="side-label">Workspace</div>
+      <a class="side-link" href="#/" data-view="dashboard"><svg class="icon"><use href="#i-dashboard"/></svg>Dashboard</a>
+      <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
+      <div class="side-label">Coming soon</div>
+      <div id="soon-links"></div>
+    </nav>
+    <div class="side-bottom">
+      <button id="groq-open" class="side-card" type="button" hidden>
+        <span class="side-card-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
+        <span class="side-card-text"><strong>AI email sorting</strong><small><i id="groq-side-dot" class="dot"></i><span id="groq-side-status"></span></small></span>
+      </button>
+      <div id="side-user" class="side-user" hidden></div>
+    </div>
+  </aside>
+  <div id="nav-scrim" class="nav-scrim" hidden></div>
+
+  <div class="shell">
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="nav-toggle" class="icon-btn nav-toggle" type="button" aria-label="Open sections" aria-controls="sidebar" aria-expanded="false">
+        <svg class="icon"><use href="#i-menu"/></svg>
+      </button>
+      <a class="brand" href="#/" aria-label="nuj dashboard">
+        <span class="logo-mark" role="img" aria-label="nuj"></span>
+      </a>
+      <span id="crumb" class="crumb">Dashboard</span>
+    </div>
     <div class="topbar-actions">
       <div id="gmail-status" class="gmail-status" role="status"></div>
       <button id="sync-btn" class="btn btn-quiet" type="button" title="Check Gmail now">
@@ -54,14 +95,11 @@
           On Groq's free tier, emails beyond the daily limit are sorted by the built-in rules.</p>
         <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
         <div id="groq-section" class="menu-note" hidden>
-          <div class="menu-title">Groq API key</div>
-          <p id="groq-status"></p>
-          <form id="groq-form" class="key-form" autocomplete="off">
-            <input id="groq-key" type="password" spellcheck="false" placeholder="gsk_…" aria-label="Groq API key">
-            <button class="btn btn-primary" type="submit">Save</button>
-          </form>
-          <p id="groq-msg" class="menu-msg" role="status"></p>
-          <button id="groq-remove" class="btn btn-quiet" type="button" hidden>Remove my key</button>
+          <button id="groq-menu-btn" class="menu-row" type="button">
+            <svg class="icon"><use href="#i-sparkles"/></svg>
+            <span><strong>AI email sorting</strong><small id="groq-menu-status"></small></span>
+            <svg class="icon chev"><use href="#i-chevron"/></svg>
+          </button>
         </div>
         <div id="disconnect" class="menu-note" hidden>
           <p>Stop reading your inbox and cancel nuj's Gmail access. Your applications stay.</p>
@@ -82,7 +120,7 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page" id="view-dashboard">
     <div id="banner"></div>
 
     <section class="summary" aria-labelledby="summary-title">
@@ -119,17 +157,21 @@
 
     <section class="panel apps-panel" aria-labelledby="apps-title">
       <div class="panel-head apps-head">
-        <h2 id="apps-title">Applications</h2>
+        <div class="head-text">
+          <h2 id="apps-title">Applications</h2>
+          <span class="hint num" id="results-line" aria-live="polite"></span>
+        </div>
         <div class="toolbar">
+          <div class="search" role="search">
+            <svg class="icon"><use href="#i-search"/></svg>
+            <input id="search" type="search" placeholder="Search company, role, job ID, notes or emails" aria-label="Search applications" autocomplete="off" spellcheck="false">
+            <button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden><svg class="icon"><use href="#i-x"/></svg></button>
+            <kbd>/</kbd>
+          </div>
           <label class="select-wrap" title="Show applications sent in one month">
             <svg class="icon"><use href="#i-calendar"/></svg>
             <select id="month" aria-label="Filter by month applied"></select>
             <svg class="icon chev"><use href="#i-chevron"/></svg>
-          </label>
-          <label class="search">
-            <svg class="icon"><use href="#i-search"/></svg>
-            <input id="search" type="search" placeholder="Search company, role or job ID" aria-label="Search applications">
-            <kbd>/</kbd>
           </label>
           <button class="btn" id="export-btn" type="button" title="Download the applications shown as an Excel file">
             <svg class="icon"><use href="#i-download"/></svg><span>Export</span>
@@ -139,6 +181,7 @@
 
       <div class="stage-tabs" id="stage-tabs" role="tablist" aria-label="Filter by status"></div>
       <div class="stage-bar" id="stage-bar" aria-hidden="true"></div>
+      <div class="filter-chips" id="filter-chips" hidden></div>
 
       <div class="table-wrap">
         <table class="apps">
@@ -157,6 +200,59 @@
       <div id="empty" class="empty" hidden></div>
     </section>
   </main>
+
+  <main class="page soon-page" id="view-soon" hidden>
+    <section id="soon" class="coming"></section>
+  </main>
+  </div>
+
+  <dialog id="groq-dialog" class="sheet" aria-labelledby="groq-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="groq-title">AI email sorting</h2>
+        <p>Groq's AI reads each application email to work out the company, role and stage. Without a key, nuj uses its built-in rules.</p>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <div id="groq-state" class="key-state">
+        <span class="dot"></span>
+        <div><strong id="groq-state-title"></strong><p id="groq-status"></p></div>
+      </div>
+      <ol class="key-steps">
+        <li>
+          <span class="step-n">1</span>
+          <div>
+            <strong>Create a free key</strong>
+            <p>Sign in to Groq and choose Create API Key. It takes about a minute and costs nothing.</p>
+            <a class="btn btn-sm" href="https://console.groq.com/keys" target="_blank" rel="noopener">Open console.groq.com<svg class="icon"><use href="#i-external"/></svg></a>
+          </div>
+        </li>
+        <li>
+          <span class="step-n">2</span>
+          <div>
+            <strong>Paste it here</strong>
+            <form id="groq-form" class="key-form" autocomplete="off">
+              <div class="key-input">
+                <svg class="icon"><use href="#i-key"/></svg>
+                <input id="groq-key" type="password" spellcheck="false" placeholder="gsk_…" aria-label="Groq API key" aria-describedby="groq-msg">
+                <button id="groq-reveal" class="icon-btn" type="button" aria-label="Show key" aria-pressed="false"><svg class="icon"><use href="#i-eye"/></svg></button>
+              </div>
+              <button class="btn btn-primary" type="submit">Save key</button>
+            </form>
+            <p id="groq-msg" class="key-msg" role="status"></p>
+          </div>
+        </li>
+      </ol>
+    </div>
+    <div class="sheet-foot">
+      <span class="fine"><svg class="icon"><use href="#i-shield"/></svg>Stored encrypted and used only to read your job emails.</span>
+      <button id="groq-remove" class="btn btn-quiet btn-danger" type="button" hidden>Remove my key</button>
+    </div>
+  </dialog>
 
   <dialog id="flow-dialog" class="flow-dialog" aria-labelledby="flow-dialog-title">
     <div class="flow-dialog-head">

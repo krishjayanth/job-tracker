@@ -237,6 +237,41 @@ export class Mailbox {
     return this.syncing;
   }
 
+  // Re-read one application's emails with the current classifier and update how each
+  // was read (stage, deadline, summary). Emails stay on this application; your status
+  // changes, notes and "yes, it's this one" answers are kept.
+  async rescanApplication(app) {
+    if (this.syncing) await this.syncing.catch(() => {});
+    const gmail = google.gmail({ version: 'v1', auth: this.getClient() });
+    const emails = app.events.filter(e => !e.manual && e.messageId);
+    let changed = 0, notJob = 0;
+    for (const e of emails) {
+      const { data: msg } = await withRetry(() => gmail.users.messages.get({ userId: 'me', id: e.messageId, format: 'full' }));
+      await sleep(REQUEST_GAP_MS);
+      const result = await classify({
+        from: header(msg, 'From'),
+        subject: header(msg, 'Subject'),
+        date: new Date(Number(msg.internalDate)).toISOString(),
+        body: bodyText(msg.payload),
+      }, { groq: this.user.groq(), onKeyRejected: () => this.user.keyRejected() });
+      if (!result) { notJob++; continue; }
+      const before = JSON.stringify([e.stage, e.deadline, e.summary]);
+      e.stage = result.stage;
+      for (const key of ['deadline', 'summary', 'reasoning']) {
+        if (result[key]) e[key] = result[key]; else delete e[key];
+      }
+      // Which application it belongs to was settled when you confirmed it.
+      const review = e.reviewed ? result.review.filter(r => r.about !== 'application') : result.review;
+      if (review.length) e.review = review; else delete e.review;
+      if (!app.edited?.role && !app.role && result.role) app.role = result.role;
+      if (!app.edited?.jobId && !app.jobId && result.jobId) app.jobId = result.jobId;
+      if (JSON.stringify([e.stage, e.deadline, e.summary]) !== before) changed++;
+    }
+    refresh(app);
+    this.user.store.save();
+    return { emails: emails.length, changed, notJob };
+  }
+
   // Keep going in batches until the backlog (e.g. the first 90-day scan) is cleared.
   async drain(opts) {
     let added = 0, scanned = 0, result;

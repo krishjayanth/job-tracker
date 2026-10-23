@@ -274,6 +274,24 @@ app.post('/api/rescan', (req, res) => {
   res.status(202).json({ started: true });
 });
 
+// Re-read just this application's emails, for when one was sorted wrong.
+app.post('/api/applications/:id/rescan', async (req, res) => {
+  const user = req.account;
+  const a = user.store.applications.find(x => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
+  if (DEMO) return res.status(400).json({ error: 'Re-scan reads Gmail, so it is off in demo mode' });
+  if (!user.mailbox.connected()) return res.status(400).json({ error: 'Connect Gmail first' });
+  if (user.mailbox.isRescanning()) return res.status(409).json({ error: 'A full re-scan is running. This application is included' });
+  if (!a.events.some(e => !e.manual && e.messageId)) return res.status(400).json({ error: 'This application has no Gmail emails to re-read' });
+  try {
+    const result = await user.mailbox.rescanApplication(a);
+    broadcast(user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/disconnect', async (req, res) => {
   await req.account.mailbox.disconnect();
   broadcast(req.account.id);
