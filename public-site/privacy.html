@@ -28,15 +28,15 @@
 
   <main class="legal">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated October 21, 2026</p>
+    <p class="updated">Last updated October 23, 2026</p>
 
     <div class="summary">
       <strong>The short version</strong>
       <ul>
         <li>nuj has read-only access to Gmail and only reads emails that look like job application updates.</li>
         <li>It keeps a summary of each application email (company, role, stage, subject, sender, date). It doesn't keep full email bodies.</li>
-        <li>Part of each matching email is sent to an AI service to work out what it means. Nothing is sold, and there are no ads or analytics.</li>
-        <li>You can disconnect Gmail or ask for your data to be deleted at any time.</li>
+        <li>If you add a Groq API key, part of each matching email is sent to Groq under your key to work out what it means. Nothing is sold, and there are no ads or analytics.</li>
+        <li>Each person's data is kept separate. You can disconnect Gmail or delete your account from the app at any time.</li>
       </ul>
     </div>
 
@@ -54,7 +54,7 @@
 
     <h2 id="collect">What we collect</h2>
     <h3>Your Google account</h3>
-    <p>When you sign in with Google, we receive your email address and whether Google has verified it. We use it only to check that your account is allowed to use the app and to keep you signed in.</p>
+    <p>When you sign in with Google, we receive your email address, Google's ID for your account, and whether Google has verified the email. We use them only to check that your account is allowed to use the app, to keep you signed in, and to keep your data separate from everyone else's.</p>
 
     <h3>Gmail data</h3>
     <p>If you connect Gmail, the app asks Google for read-only access (the <code>gmail.readonly</code> permission). It can't send, delete, label or change any email. Every few minutes it runs a Gmail search that matches emails from hiring platforms (such as Workday, Greenhouse, Lever and HackerRank) or with subjects about applications, assessments, interviews and offers. Only emails matching that search are opened. For each one it reads the sender, subject, date and message text.</p>
@@ -63,10 +63,15 @@
       <li>the company, role, job ID and stage it found (for example "Interview");</li>
       <li>the email's subject, sender, date and Gmail's short preview snippet;</li>
       <li>any deadline found in the email;</li>
+      <li>a one-line summary of the email and, if Groq read it, a short explanation of how it was read;</li>
+      <li>your answers when you confirm or move an email to a different application;</li>
       <li>Gmail's internal message and thread IDs, so the same email isn't processed twice.</li>
     </ul>
     <p>The full text of the email isn't stored.</p>
     <p>To keep syncing, the app stores the access and refresh tokens Google issues for your account.</p>
+
+    <h3>Your Groq API key</h3>
+    <p>If you add a Groq API key, it's stored encrypted and used only to send your own emails to Groq as described below. It's never shown back to you in full (only its last four characters), and you can remove it from the app's menu at any time.</p>
 
     <h3>What you enter</h3>
     <p>Applications you add by hand, notes, links, deadlines and any edits you make are stored with the rest of your applications.</p>
@@ -80,9 +85,9 @@
     <h2 id="share">Who it's shared with</h2>
     <p>We don't sell or rent your information. We share it only with the services that run the app, and only as much as each needs:</p>
     <ul>
-      <li><strong>Groq</strong> (AI processing). For each matching email, the sender, date, subject and up to the first 3,000 characters of the message text are sent to Groq's API, which returns the company, role, job ID and stage. If Groq is unavailable, the app uses built-in rules instead and nothing is sent.</li>
+      <li><strong>Groq</strong> (AI processing), only if you've added a Groq API key. For each matching email, the sender, date, subject and up to the first 3,500 characters of the message text are sent to Groq's API using your key, which returns the company, role, job ID, stage, any deadline, a short summary and an explanation. Without a key, or if Groq is unavailable, the app uses built-in rules instead and nothing is sent.</li>
       <li><strong>Render</strong> (hosting). The app runs on Render's servers.</li>
-      <li><strong>Neon</strong> (database). Your applications, the email details listed above and your Google tokens are stored in a Postgres database hosted by Neon.</li>
+      <li><strong>Neon</strong> (database). Your applications, the email details listed above, your Google tokens and your encrypted Groq key are stored in a Postgres database hosted by Neon.</li>
       <li><strong>Google</strong>, to sign you in and to read Gmail as described above.</li>
     </ul>
     <p>We may also disclose information if required by law, or to protect the security of the app and its users.</p>
@@ -97,15 +102,15 @@
     </ul>
 
     <h2>Security</h2>
-    <p>Connections to the app use HTTPS. Access is limited to the Google accounts the app is set up for, and session cookies are signed and can't be read by scripts in the page. No system is perfectly secure, but we work to protect your information and will tell affected users about any breach as the law requires.</p>
+    <p>Connections to the app use HTTPS. Access is limited to the Google accounts the app is set up for, each person can only see their own data, stored Groq keys are encrypted, and session cookies are signed and can't be read by scripts in the page. No system is perfectly secure, but we work to protect your information and will tell affected users about any breach as the law requires.</p>
 
     <h2 id="retention">Keeping and deleting your data</h2>
     <p>Your data is kept for as long as you use the app. You're in control of it:</p>
     <ul>
       <li><strong>Delete an application</strong> from its details panel. It's removed, and its emails won't be added again.</li>
-      <li><strong>Disconnect Gmail</strong> from the app's menu. Your stored Google tokens are deleted and the app stops reading your inbox.</li>
+      <li><strong>Disconnect Gmail</strong> from the app's menu. Your stored Google tokens are deleted, the app's Gmail access is cancelled at Google, and it stops reading your inbox.</li>
       <li><strong>Remove access from Google's side</strong> at any time at <a href="https://myaccount.google.com/permissions" rel="noopener">myaccount.google.com/permissions</a>.</li>
-      <li><strong>Delete everything.</strong> <a href="#contact">Contact us</a> and we'll delete all data stored for your account within 30 days.</li>
+      <li><strong>Delete everything</strong> with "Delete my account" in the app's menu. Your applications, email details, Google tokens and Groq key are deleted straight away, and the app's Gmail access is cancelled at Google. Copies in the database provider's backups expire on their own schedule. You can also <a href="#contact">contact us</a> and we'll delete all data stored for your account within 30 days.</li>
     </ul>
     <p>Data held by Groq is governed by Groq's own policies.</p>
 

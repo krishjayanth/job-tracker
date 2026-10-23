@@ -11,7 +11,7 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: ALLOWED_EMAIL       # the Google account allowed to sign in
+      - key: ALLOWED_EMAIL       # Google accounts allowed to sign in, comma-separated, owner first
         sync: false
       - key: SESSION_SECRET
         generateValue: true

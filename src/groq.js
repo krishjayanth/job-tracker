@@ -1,9 +1,10 @@
-// LLM classifier via GroqCloud (https://console.groq.com). Used when GROQ_API_KEY is set.
-// Default model: openai/gpt-oss-20b, with strict JSON-schema output.
+// LLM classifier via GroqCloud (https://console.groq.com). Each person brings their own
+// API key (the server's GROQ_API_KEY covers only the owner). Without one, emails are
+// sorted by the built-in rules. Default model: openai/gpt-oss-20b, with strict JSON-schema output.
 import Groq from 'groq-sdk';
 
-const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
-const client = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 0 }) : null;
+export const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+export const SERVER_KEY = process.env.GROQ_API_KEY || '';
 
 // The free tier allows ~8K tokens/minute and ~200K/day for this model, so keep each
 // request lean: an excerpt of the email (where the facts are). Medium reasoning reads
@@ -12,7 +13,29 @@ const MAX_BODY_CHARS = 3_500;
 const REASONING_EFFORT = process.env.GROQ_REASONING_EFFORT || 'medium';
 const MAX_WAIT_SECONDS = 60; // longer than this and we use the rules for this email instead
 
-export const groqModel = () => (client ? MODEL : null);
+// One client per key, reused across syncs.
+const clients = new Map();
+export function groqClient(apiKey) {
+  if (!apiKey) return null;
+  if (!clients.has(apiKey)) clients.set(apiKey, new Groq({ apiKey, maxRetries: 0, timeout: 60_000 }));
+  return clients.get(apiKey);
+}
+
+export const forgetClient = apiKey => clients.delete(apiKey);
+
+// Groq keys look like gsk_ followed by letters and digits.
+export const looksLikeGroqKey = key => /^gsk_[A-Za-z0-9]{20,}$/.test(key);
+
+// Does Groq accept this key? true, false (rejected), or throws when Groq can't be reached.
+export async function checkGroqKey(apiKey) {
+  try {
+    await new Groq({ apiKey, maxRetries: 1, timeout: 15_000 }).models.list();
+    return true;
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) return false;
+    throw err;
+  }
+}
 
 // Properties are generated in this order, so the model works through the email
 // ("reasoning") before it commits to the answers.
@@ -60,7 +83,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Returns {isJob, stage, company, role, jobId, deadline, summary, confidence, reasoning},
 // or undefined when Groq can't answer now.
-export async function classifyWithGroq({ from, subject, date, body }, attempt = 0) {
+export async function classifyWithGroq(client, { from, subject, date, body }, attempt = 0) {
   if (!client) return undefined;
   try {
     const res = await client.chat.completions.create({
@@ -93,7 +116,7 @@ export async function classifyWithGroq({ from, subject, date, body }, attempt = 
       const wait = Number(err.headers?.['retry-after'] ?? 10);
       if (wait <= MAX_WAIT_SECONDS) {
         await sleep(wait * 1000 + 500);
-        return classifyWithGroq({ from, subject, date, body }, 1);
+        return classifyWithGroq(client, { from, subject, date, body }, 1);
       }
       console.warn(`[groq] rate limited for ${wait}s; using rules for this email`);
       return undefined;

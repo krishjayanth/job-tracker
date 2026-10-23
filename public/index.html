@@ -44,7 +44,7 @@
       <button id="sync-btn" class="btn btn-quiet" type="button" title="Check Gmail now">
         <svg class="icon"><use href="#i-refresh"/></svg><span>Sync</span>
       </button>
-      <button id="more-btn" class="icon-btn" type="button" popovertarget="more-menu" aria-label="More sync options" title="More sync options">
+      <button id="more-btn" class="icon-btn" type="button" popovertarget="more-menu" aria-label="Settings and sync options" title="Settings and sync options">
         <svg class="icon"><use href="#i-more"/></svg>
       </button>
       <div id="more-menu" class="menu" popover>
@@ -53,13 +53,27 @@
           deadlines are kept, and deleted applications stay deleted. A backup is saved first.
           On Groq's free tier, emails beyond the daily limit are sorted by the built-in rules.</p>
         <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
+        <div id="groq-section" class="menu-note" hidden>
+          <div class="menu-title">Groq API key</div>
+          <p id="groq-status"></p>
+          <form id="groq-form" class="key-form" autocomplete="off">
+            <input id="groq-key" type="password" spellcheck="false" placeholder="gsk_…" aria-label="Groq API key">
+            <button class="btn btn-primary" type="submit">Save</button>
+          </form>
+          <p id="groq-msg" class="menu-msg" role="status"></p>
+          <button id="groq-remove" class="btn btn-quiet" type="button" hidden>Remove my key</button>
+        </div>
         <div id="disconnect" class="menu-note" hidden>
-          <p>Stop reading your inbox and delete the stored Gmail access. Your applications stay.</p>
+          <p>Stop reading your inbox and cancel nuj's Gmail access. Your applications stay.</p>
           <button id="disconnect-btn" class="btn" type="button" style="margin-top:10px">Disconnect Gmail</button>
         </div>
         <div id="account" class="menu-note" hidden>
           <p>Signed in as <strong id="account-email"></strong></p>
           <a class="btn" href="/logout" style="margin-top:10px;text-decoration:none">Sign out</a>
+        </div>
+        <div id="delete-section" class="menu-note" hidden>
+          <p>Delete your applications, Groq key and Gmail access from nuj for good.</p>
+          <button id="delete-account-btn" class="btn btn-danger" type="button" style="margin-top:10px">Delete my account</button>
         </div>
       </div>
       <button id="add-btn" class="btn btn-primary" type="button">

@@ -157,6 +157,20 @@ input, textarea { caret-color: var(--accent); }
 .menu-note { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .menu-note p { margin-bottom: 0; }
 .menu-note strong { color: var(--text); font-weight: 600; }
+.menu { max-height: calc(100vh - 80px); overflow-y: auto; }
+.key-form { display: flex; gap: 8px; }
+.key-form input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); color: var(--text); font-family: inherit;
+}
+.key-form input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus); }
+.menu .menu-msg { margin: 8px 0 0; }
+.menu .menu-msg:empty { display: none; }
+.menu-msg.ok { color: var(--offer); }
+.menu-msg.err { color: var(--danger); }
+.menu p a { color: var(--accent); }
+#groq-remove { margin-top: 6px; padding-left: 0; }
+#groq-status strong { white-space: nowrap; }
 /* deadline chips: amber when close, red when today/overdue */
 .due {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;

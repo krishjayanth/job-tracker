@@ -1,10 +1,10 @@
 import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, AI_INTERVIEW } from './rules.js';
-import { classifyWithGroq, groqModel } from './groq.js';
+import { classifyWithGroq, MODEL } from './groq.js';
 
 export { classifyWithRules };
 
-export function classifierName() {
-  return groqModel() ? `Groq · ${groqModel().replace(/^openai\//, '')}` : 'rules';
+export function classifierName(groq) {
+  return groq ? `Groq · ${MODEL.replace(/^openai\//, '')}` : 'rules';
 }
 
 const squash = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -68,16 +68,19 @@ export function mergeWithRules(llm, rules, email) {
   };
 }
 
+// Classify with this person's Groq client, or the rules alone when they have none.
+// onKeyRejected runs if Groq refuses the key, so they can be told to replace it.
 // Returns {stage, company, role, jobId, deadline, summary?, reasoning?, review}, or null
 // when the email isn't about an application. `review` lists reasons to double-check it: {about: 'application' | 'stage', text}.
-export async function classify(email) {
+export async function classify(email, { groq = null, onKeyRejected } = {}) {
   let result;
-  if (groqModel()) {
+  if (groq) {
     try {
-      const llm = await classifyWithGroq(email);
+      const llm = await classifyWithGroq(groq, email);
       if (llm) result = mergeWithRules(llm, classifyWithRules(email), email);
     } catch (err) {
-      console.warn(`[classify] Groq call failed, using rules: ${err.message}`);
+      if (err.status === 401 || err.status === 403) onKeyRejected?.();
+      else console.warn(`[classify] Groq call failed, using rules: ${err.message}`);
     }
   }
   if (result === undefined) {

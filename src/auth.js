@@ -1,5 +1,6 @@
-// "Sign in with Google", limited to the email(s) in ALLOWED_EMAIL. The session is a
-// signed cookie (HMAC with SESSION_SECRET), so there's nothing extra to store.
+// "Sign in with Google", limited to the email(s) in ALLOWED_EMAIL; each of them gets
+// their own tracker. The session is a signed cookie (HMAC with SESSION_SECRET), so
+// there's nothing extra to store.
 import crypto from 'node:crypto';
 
 const COOKIE = 'nuj_session';
@@ -22,6 +23,8 @@ export function checkAuthConfig() {
 }
 
 export const isAllowed = email => ALLOWED.includes(String(email).toLowerCase());
+// The first allowed email is the owner: the person who used nuj before it had accounts.
+export const ownerEmail = () => ALLOWED[0] ?? null;
 
 const sign = value => crypto.createHmac('sha256', SECRET).update(value).digest('base64url');
 
@@ -32,13 +35,15 @@ function readSession(req) {
   if (!payload || !mac) return null;
   const expected = sign(payload);
   if (mac.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
-  const { email, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString());
-  if (Date.now() > exp || !isAllowed(email)) return null;
-  return { email };
+  const { sub, email, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString());
+  // Sessions from before accounts carry no account id; those sign in again.
+  if (!sub || Date.now() > exp || !isAllowed(email)) return null;
+  return { id: sub, email };
 }
 
-export function startSession(res, email) {
-  const payload = Buffer.from(JSON.stringify({ email, exp: Date.now() + MAX_AGE_DAYS * 86_400_000 })).toString('base64url');
+// `sub` is Google's stable id for the account; it's what a user's data is kept under.
+export function startSession(res, { sub, email }) {
+  const payload = Buffer.from(JSON.stringify({ sub, email, exp: Date.now() + MAX_AGE_DAYS * 86_400_000 })).toString('base64url');
   res.cookie(COOKIE, `${payload}.${sign(payload)}`, {
     httpOnly: true, secure: SECURE, sameSite: 'lax', maxAge: MAX_AGE_DAYS * 86_400_000, path: '/',
   });

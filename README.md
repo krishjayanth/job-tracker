@@ -103,7 +103,11 @@ free tier awake):
 - **Monotonic status and an acyclic chart.** Status moves forward only, unless an application reaches a terminal
   stage or you correct it by hand. The Sankey path is built so it can never form a cycle.
   ([`src/stages.js`](src/stages.js))
-- **Cheap persistence.** The whole tracker is one JSON document in memory. Writes are debounced into a single
+- **Accounts without a user table.** Each person who signs in gets their own tracker document, Gmail connection
+  and Groq key, keyed by Google's account ID. Every API call works on a per-user `Store` object, so one person's
+  request can't reach another's data. Groq keys are checked on save and stored AES-256-GCM encrypted.
+  ([`src/users.js`](src/users.js))
+- **Cheap persistence.** Each tracker is one JSON document in memory. Writes are debounced into a single
   Postgres `jsonb` upsert and flushed on shutdown, so syncing 500 emails is one write, not 500. The same interface
   falls back to atomic local file writes or, in demo mode, memory only.
 - **Small security surface.** One Google sign-in both identifies the user and grants read-only Gmail access, with
@@ -132,14 +136,16 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 43 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 59 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
-- matching emails to applications
+- matching emails to applications, and confirming or moving an email you've checked
+- merging the LLM's answer with the rules (AI/HireVue interviews as assessments, review flags, deadlines)
 - deadline tracking
 - re-scan edit preservation
-- session cookies, including tampered and unauthorized ones
+- session cookies, including tampered, unauthorized and pre-accounts ones
+- accounts: separate data per person, moving single-user data to the owner, encrypted Groq keys, account deletion
 
 CI runs them on every push, then boots the app in demo mode and checks the API.
 
@@ -148,13 +154,15 @@ CI runs them on every push, then boots the app in demo mode and checks the API.
 | Path | What's there |
 |---|---|
 | [`server.js`](server.js) | Express app: routes, auth gate, SSE, sync scheduling, graceful shutdown |
-| [`src/gmail.js`](src/gmail.js) | OAuth client, Gmail sync and re-scan engine |
+| [`src/gmail.js`](src/gmail.js) | OAuth client; each person's Gmail sync and re-scan engine |
 | [`src/classify.js`](src/classify.js) | Merges the LLM's answer with the rules |
 | [`src/groq.js`](src/groq.js) | Groq client, JSON schema and prompt |
 | [`src/rules.js`](src/rules.js) | Rule-based classifier: stages, companies, roles, job IDs, deadlines |
 | [`src/stages.js`](src/stages.js) | Pipeline stages, status and chart-path logic |
 | [`src/store.js`](src/store.js) | Persistence, application matching, re-scan snapshots |
 | [`src/auth.js`](src/auth.js) | Sign-in sessions and the login middleware |
+| [`src/users.js`](src/users.js) | Accounts: each person's tracker, mailbox and Groq key; account deletion |
+| [`src/secrets.js`](src/secrets.js) | Encryption for stored Groq keys |
 | [`src/export.js`](src/export.js) | Excel export |
 | [`src/demo.js`](src/demo.js) | Sample data for demo mode |
 | [`public/`](public/) | Dashboard (HTML, CSS, JS) |

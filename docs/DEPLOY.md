@@ -12,16 +12,21 @@ To just look around, you don't need any of this: `npm install && npm run demo` r
 The app creates its one table (`app_state`) on first start.
 
 ## 2. Email classifier: Groq
-Sign up at https://console.groq.com and create an **API key**. This is optional: without it, every email is
-classified by the built-in rules.
+Each person adds their own free Groq API key in the app (⋯ menu › Groq API key), so everyone gets their own
+free-tier allowance. Without one, their emails are sorted by the built-in rules. The key is checked with Groq
+when it's saved, stored encrypted with `SESSION_SECRET`, and never sent back to the browser. (If you change
+`SESSION_SECRET`, saved keys can't be read and people are asked to add them again.)
+
+Optionally, sign up at https://console.groq.com and create a key for the server's `GROQ_API_KEY`. It's used only
+for the owner (the first `ALLOWED_EMAIL`), and only until they add a key of their own.
 
 ## 3. Web service: Render
 1. Fork this repository (or push your clone to your own GitHub account).
 2. In Render: **New › Blueprint**, then pick the repository. It reads [`render.yaml`](../render.yaml).
 3. Fill in the values it asks for:
-   - `ALLOWED_EMAIL`: the Gmail address you'll sign in with
+   - `ALLOWED_EMAIL`: the Gmail addresses allowed to sign in, comma-separated, yours first (see step 6)
    - `DATABASE_URL`: the Neon connection string
-   - `GROQ_API_KEY`: from step 2
+   - `GROQ_API_KEY`: optional, from step 2
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now and fill them in after step 4
 
    `SESSION_SECRET` and `CRON_SECRET` are generated for you, and the site's address comes from Render automatically.
@@ -48,6 +53,21 @@ classified by the built-in rules.
 
 ## 5. Sign in
 Open https://nuj.onrender.com and click **Sign in with Google**. The first time, Google also asks for read-only Gmail access.
+
+## 6. Inviting friends
+Everyone in `ALLOWED_EMAIL` gets their own tracker, Gmail connection and Groq key; nobody can see anyone else's.
+To invite someone, add their Gmail address to `ALLOWED_EMAIL` on Render (comma-separated; keep yours first) and
+send them the link. Removing someone stops them signing in and stops their syncing; their data stays until they
+delete their account from the ⋯ menu.
+
+Google limits apps that read Gmail and haven't been through its verification:
+- In **Testing**, only the test users you list (up to 100) can sign in, and Gmail access expires every 7 days.
+- **Published but unverified**, up to 100 people can sign in after clicking through the "unverified app" warning.
+- Beyond that, Google requires verification, including a yearly third-party security assessment.
+
+**Upgrading from single-user nuj:** your existing tracker and Gmail connection move to the first address in
+`ALLOWED_EMAIL` the first time you sign in, and a copy is kept as `db_before_accounts`. Everyone is signed out
+once by the upgrade. Background syncing for each person starts after they've signed in once.
 Syncing starts on its own after that, beginning with the last 90 days of email.
 
 ## 6. Keep it awake (free tier)
@@ -97,11 +117,11 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | Variable | Default | Meaning |
 |---|---|---|
 | `PUBLIC_URL` | Render's address, or `http://localhost:5178` | Site address for Google redirects. Only needed for a custom domain |
-| `ALLOWED_EMAIL` | — | Google account(s) allowed to sign in, comma-separated. **Required when hosted** |
-| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`) |
+| `ALLOWED_EMAIL` | — | Google accounts allowed to sign in, comma-separated; the first is the owner. **Required when hosted** |
+| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`). Also encrypts saved Groq keys |
 | `DATABASE_URL` | — | Postgres connection string. Unset means local files |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth web client |
-| `GROQ_API_KEY` | — | Enables the Groq classifier |
+| `GROQ_API_KEY` | — | Groq key for the owner only; everyone else adds their own in the app |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
 | `GROQ_REASONING_EFFORT` | `medium` | `low` uses fewer tokens per email, but reads tricky emails less carefully |
 | `CRON_SECRET` | — | Key for `/api/cron/sync` (16+ characters) |

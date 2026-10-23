@@ -1,6 +1,8 @@
-// One-time copy of your local tracker (data/db.json) into the hosted Postgres database,
-// so the website starts with all your applications and edits.
-//   DATABASE_URL=postgres://... npm run migrate
+// One-time copy of your local tracker into the hosted Postgres database, so the website
+// starts with all your applications and edits.
+//   DATABASE_URL=postgres://... npm run migrate [data/db_local.json]
+// It's stored the way single-user nuj kept it ("db"), and becomes the owner's (the
+// first ALLOWED_EMAIL) when they first sign in, if they have no tracker there yet.
 // Gmail sign-in is not copied: the hosted site uses a different Google client, so you
 // connect Gmail again by signing in there.
 import fs from 'node:fs';
@@ -12,7 +14,8 @@ if (!url) {
   console.error('Set DATABASE_URL to your Neon connection string first.');
   process.exit(1);
 }
-const file = path.resolve(process.argv[2] || 'data/db.json');
+// data/db_local.json since accounts; data/db.json before.
+const file = path.resolve(process.argv[2] || ['data/db_local.json', 'data/db.json'].find(f => fs.existsSync(f)) || 'data/db_local.json');
 const db = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 const pool = new pg.Pool({ connectionString: url, max: 1 });

@@ -155,10 +155,54 @@ function renderGmail() {
   }
   $('#sync-btn').hidden = !g.connected;
   $('#disconnect').hidden = !g.connected;
-  $('#more-btn').hidden = !g.connected && !state.user;
+  $('#rescan-btn').disabled = !g.connected || g.progress?.mode === 'rescan';
   $('#account').hidden = !state.user;
   $('#account-email').textContent = state.user || '';
+  $('#delete-section').hidden = state.demo;
+  renderGroq();
 }
+
+// Your Groq key: where it stands in the menu, and a banner when it needs you.
+function renderGroq() {
+  const k = state.groq;
+  $('#groq-section').hidden = !k;
+  if (!k) return;
+  const free = '<a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>';
+  const ending = k.last4 ? ` ending in <strong>…${esc(k.last4)}</strong>` : '';
+  $('#groq-status').innerHTML =
+    k.problem === 'unreadable' ? `Your saved key${ending} can't be read any more, because the server's secret changed. Add it again.`
+    : k.problem === 'rejected' ? `Groq stopped accepting ${k.source === 'own' ? `your key${ending}` : "this server's key"}. Emails are sorted by the built-in rules until you add a new one from ${free}.`
+    : k.source === 'own' ? `Emails are read by Groq with your key${ending}. Paste a new one to replace it.`
+    : k.source === 'server' ? `Emails are read by Groq with this server's key. You can add your own instead.`
+    : `Emails are sorted by the built-in rules. Add a free key from ${free} to have an AI read them more carefully.`;
+  $('#groq-key').placeholder = k.source === 'own' ? 'New key (gsk_…)' : 'gsk_…';
+  $('#groq-remove').hidden = k.source !== 'own';
+
+  const banner = $('#banner');
+  if (k.problem && !banner.innerHTML) {
+    banner.innerHTML = `<div class="banner error">${icon('alert')}<div><strong>${k.problem === 'unreadable' ? "Your Groq key needs adding again." : 'Groq stopped accepting your API key.'}</strong>
+      Emails are sorted by the built-in rules for now. <a href="#" data-open-menu>Add a new key</a></div></div>`;
+  } else if (!k.source && state.gmail.connected && !banner.innerHTML && !dismissed('groq-hint')) {
+    banner.innerHTML = `<div class="banner">${icon('alert')}<div><strong>Sort emails more accurately with Groq.</strong>
+      nuj is using its built-in rules. With a free Groq API key, an AI reads each email to work out the company, job and stage.
+      <a href="#" data-open-menu>Add a key</a> · <a href="#" data-dismiss="groq-hint">Not now</a></div></div>`;
+  }
+}
+
+const dismissed = name => { try { return localStorage.getItem(`dismissed:${name}`) === '1'; } catch { return false; } };
+$('#banner').addEventListener('click', e => {
+  if (e.target.closest('[data-open-menu]')) {
+    e.preventDefault();
+    menu.showPopover();
+    $('#groq-key').focus();
+  }
+  const dismiss = e.target.closest('[data-dismiss]');
+  if (dismiss) {
+    e.preventDefault();
+    try { localStorage.setItem(`dismissed:${dismiss.dataset.dismiss}`, '1'); } catch {}
+    $('#banner').innerHTML = '';
+  }
+});
 
 // How to show a deadline: null once it's more than 3 days past (stale).
 function dueInfo(deadline) {
@@ -809,6 +853,51 @@ $('#disconnect-btn').onclick = async () => {
     alert(err.message);
   }
   load();
+};
+
+const groqMsg = (text, tone = '') => { $('#groq-msg').className = `menu-msg ${tone}`; $('#groq-msg').textContent = text; };
+$('#groq-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('#groq-key');
+  const key = input.value.trim();
+  if (!key) return input.focus();
+  const save = e.submitter || $('#groq-form button');
+  save.disabled = true;
+  groqMsg('Checking the key with Groq…');
+  try {
+    await api('PUT', '/api/groq-key', { key });
+    input.value = '';
+    groqMsg('Saved. New emails will be read with your key.', 'ok');
+    await load();
+  } catch (err) {
+    groqMsg(err.message, 'err');
+  }
+  save.disabled = false;
+});
+$('#groq-remove').onclick = async () => {
+  if (!confirm('Remove your Groq key? Emails will be sorted by the built-in rules.')) return;
+  await api('DELETE', '/api/groq-key');
+  groqMsg('Removed.', 'ok');
+  load();
+};
+
+// Two clicks, like deleting an application, since it can't be undone.
+$('#delete-account-btn').onclick = async () => {
+  const btn = $('#delete-account-btn');
+  if (!btn.classList.contains('confirming')) {
+    btn.classList.add('confirming');
+    btn.textContent = 'Click again to delete everything';
+    setTimeout(() => { btn.classList.remove('confirming'); btn.textContent = 'Delete my account'; }, 5000);
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api('DELETE', '/api/account');
+    location.assign(state.user ? '/welcome' : '/');
+  } catch (err) {
+    btn.disabled = false;
+    alert(err.message);
+  }
 };
 
 const rowsEl = $('#rows');

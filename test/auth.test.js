@@ -1,5 +1,6 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 // auth.js reads its settings at import time, so set them first.
 process.env.ALLOWED_EMAIL = 'me@example.com';
@@ -10,7 +11,7 @@ before(async () => { auth = await import('../src/auth.js'); });
 // Just enough of Express's req/res for the session helpers.
 function signIn(email) {
   let cookie;
-  auth.startSession({ cookie: (name, value) => { cookie = `${name}=${encodeURIComponent(value)}`; } }, email);
+  auth.startSession({ cookie: (name, value) => { cookie = `${name}=${encodeURIComponent(value)}`; } }, { sub: `id-${email}`, email });
   return cookie;
 }
 function request(path, cookie) {
@@ -25,10 +26,16 @@ function request(path, cookie) {
   return { ...out, user: req.user };
 }
 
-test('a signed session cookie lets you in', () => {
+test('a signed session cookie lets you in, as your own account', () => {
   const r = request('/api/state', signIn('me@example.com'));
   assert.equal(r.next, true);
-  assert.equal(r.user.email, 'me@example.com');
+  assert.deepEqual(r.user, { id: 'id-me@example.com', email: 'me@example.com' });
+});
+
+test('a session from before accounts (no account id) must sign in again', () => {
+  const payload = Buffer.from(JSON.stringify({ email: 'me@example.com', exp: Date.now() + 1e9 })).toString('base64url');
+  const mac = crypto.createHmac('sha256', process.env.SESSION_SECRET).update(payload).digest('base64url');
+  assert.equal(request('/api/state', `nuj_session=${encodeURIComponent(`${payload}.${mac}`)}`).status, 401);
 });
 
 test('without a session, home goes to the landing page, other pages to /login, and the API returns 401', () => {

@@ -276,11 +276,11 @@
           </details>
           <details>
             <summary>What does the AI see?</summary>
-            <div class="answer"><p>Only emails that match the application search. For each, the sender, date, subject and up to the first 3,000 characters of the message are sent to Groq to work out the company, role and stage. If Groq is unavailable, built-in rules handle it and nothing is sent.</p></div>
+            <div class="answer"><p>Only emails that match the application search, and only if you add your own free Groq API key. For each, the sender, date, subject and up to the first 3,500 characters of the message are sent to Groq to work out the company, role and stage. Without a key, or if Groq is unavailable, built-in rules handle it and nothing is sent.</p></div>
           </details>
           <details>
             <summary>What if it gets an application wrong?</summary>
-            <div class="answer"><p>Fix it in the app: rename the company, change the status, add a deadline or delete it. Your changes are kept, even through a full re-scan of your inbox.</p></div>
+            <div class="answer"><p>Fix it in the app: rename the company, change the status, add a deadline, move an email to the right application, or delete it. Emails it isn't sure about are flagged for you to check. Your changes are kept, even through a full re-scan of your inbox.</p></div>
           </details>
           <details>
             <summary>Can I run my own copy?</summary>
@@ -295,7 +295,7 @@
       <div class="wrap">
         <div class="cta-card" data-reveal>
           <h2>Know where every application stands.</h2>
-          <p>Sign in with the Google account this tracker belongs to, or run your own copy from the source.</p>
+          <p>Sign in with a Google account that's been invited, or run your own copy from the source.</p>
           <div class="actions">
             <a class="btn btn-primary" href="/auth/google">Sign in with Google <span class="arrow" aria-hidden="true">→</span></a>
             <a class="btn btn-ghost" href="https://github.com/krishjayanth/job-tracker" rel="noopener">View on GitHub</a>
