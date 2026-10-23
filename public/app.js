@@ -666,7 +666,8 @@ function timelineHtml(a) {
       ${!e.manual ? `<div class="tlinks">
         ${e.messageId ? `<a class="tlink" href="https://mail.google.com/mail/u/0/#all/${e.messageId}" target="_blank" rel="noopener">Open in Gmail ${icon('external')}</a>` : ''}
         <button class="tlink" type="button" data-fix="${e.id}">Wrong application?</button>
-      </div>${filerHtml(a, e)}` : ''}
+      </div>${filerHtml(a, e)}`
+      : a.events.length > 1 ? `<div class="tlinks"><button class="tlink" type="button" data-remove-event="${e.id}" title="Remove this change; the emails decide the status again">${icon('trash')}Remove</button></div>` : ''}
     </li>`).join('');
 }
 
@@ -906,6 +907,29 @@ $('#drawer').addEventListener('click', async e => {
     const filer = $(`#drawer [data-filer="${fix.dataset.fix}"]`);
     filer.hidden = !filer.hidden;
     if (!filer.hidden) { filer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); filer.querySelector('select').focus(); }
+    return;
+  }
+  const remove = e.target.closest('[data-remove-event]');
+  if (remove) {
+    const id = openId;
+    remove.disabled = true;
+    remove.closest('li').classList.add('leaving');
+    try {
+      const { removed } = await api('DELETE', `/api/applications/${id}/events/${remove.dataset.removeEvent}`);
+      await load();
+      const a = state.applications.find(x => x.id === id);
+      if (a && openId === id) openDrawer(a);
+      toast(`Removed “${STAGE_LABEL[removed.stage]}” · now ${STAGE_LABEL[a.status]}`, async () => {
+        await api('POST', `/api/applications/${id}/events`, removed);
+        await load();
+        const back = state.applications.find(x => x.id === id);
+        if (back && openId === id) openDrawer(back);
+      });
+    } catch (err) {
+      remove.disabled = false;
+      remove.closest('li').classList.remove('leaving');
+      $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
+    }
     return;
   }
   const button = e.target.closest('[data-confirm], [data-move], [data-ignore]');

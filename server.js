@@ -213,6 +213,35 @@ app.patch('/api/applications/:id', (req, res) => {
   res.json(a);
 });
 
+// Remove a status change you made by hand, so the emails decide the status again.
+// Emails can't be removed this way ("Wrong application?" moves them instead).
+app.delete('/api/applications/:id/events/:eventId', (req, res) => {
+  const a = req.account.store.applications.find(x => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
+  const e = a.events.find(x => x.id === req.params.eventId);
+  if (!e) return res.status(404).json({ error: 'That timeline entry is already gone' });
+  if (!e.manual) return res.status(400).json({ error: 'Only changes you made can be removed' });
+  if (a.events.length === 1) return res.status(400).json({ error: "An application needs at least one entry. Delete the application instead" });
+  a.events = a.events.filter(x => x !== e);
+  refresh(a);
+  changed(req.account);
+  res.json({ app: a, removed: e });
+});
+
+// Put back a change removed above (Undo).
+app.post('/api/applications/:id/events', (req, res) => {
+  const a = req.account.store.applications.find(x => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
+  const { id, date, stage, subject } = req.body || {};
+  if (!isStage(stage) || Number.isNaN(Date.parse(date))) return res.status(400).json({ error: 'Not a valid timeline entry' });
+  if (!a.events.some(x => x.id === id)) {
+    a.events.push({ id: typeof id === 'string' && id ? id : newId(), date: new Date(date).toISOString(), stage, manual: true, subject: String(subject || 'Status changed manually') });
+  }
+  refresh(a);
+  changed(req.account);
+  res.json({ app: a });
+});
+
 // Confirm or correct which application an email belongs to (see Store#reassignEmail).
 app.post('/api/emails/:eventId/assign', (req, res) => {
   const { app: a, error, status } = req.account.store.reassignEmail(req.params.eventId, req.body || {});
