@@ -173,3 +173,11 @@ test('a guessed match lists every application it could have been', () => {
   assert.equal(m.candidates.length, 2);
   assert.equal(s.matchApplication({ company: 'Contoso', role: 'Software Engineer' }).candidates, undefined);
 });
+
+test('fixes to sorting are counted by kind', () => {
+  const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-02', 'oa']] });
+  const b = gmailApp({ company: 'Fabrikam' });
+  s.reassignEmail(a.events[0].id, { action: 'confirm' });
+  s.reassignEmail(a.events[1].id, { action: 'move', to: b.id });
+  assert.deepEqual(s.db.corrections, { confirmed: 1, moved: 1 });
+});

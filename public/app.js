@@ -1491,13 +1491,31 @@ const REPORT_TONE = { sorting: 'interview', bug: 'rejected', other: 'applied' };
 let reports = [];
 let reportFilter = 'open';
 async function loadReports() {
+  let stats;
   try {
-    ({ reports } = await api('GET', '/api/reports'));
+    [{ reports }, stats] = await Promise.all([api('GET', '/api/reports'), api('GET', '/api/reports/stats')]);
   } catch {
     location.hash = '#/'; // not the owner
     return;
   }
   renderReports();
+  renderQuality(stats);
+}
+
+// Fixes people make to sorting. "Confirmed" means it was right, so it isn't a fix.
+const FIX_KINDS = { moved: 'moved to another application', notJob: 'marked not an application', statusChanged: 'status changed',
+  deleted: 'applications deleted', senderBlocked: 'senders ignored' };
+function renderQuality({ accounts, withAi, emails, corrections: c }) {
+  const fixes = Object.keys(FIX_KINDS).reduce((n, k) => n + (c[k] || 0), 0);
+  const rate = emails ? Math.round((fixes / emails) * 1000) / 10 : 0;
+  $('#quality').innerHTML = [
+    ['Emails sorted', emails],
+    ['Fixed by people', fixes, emails ? `${rate}% of emails` : ''],
+    ['Confirmed right', c.confirmed || 0, 'from the "Check" list'],
+    ['Accounts on AI sorting', `${withAi}<small> of ${accounts}</small>`],
+  ].map(([label, value, sub]) => `<div class="kpi"><dt>${label}</dt><dd><span class="value">${value}</span>${sub ? `<span class="delta">${sub}</span>` : ''}</dd></div>`).join('');
+  const parts = Object.entries(FIX_KINDS).filter(([k]) => c[k]).map(([k, label]) => `${c[k]} ${label}`);
+  $('#quality-detail').textContent = parts.length ? parts.join(' · ') : 'No fixes yet.';
 }
 function renderReports() {
   const counts = { open: 0, resolved: 0 };

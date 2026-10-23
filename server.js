@@ -210,7 +210,11 @@ app.patch('/api/applications/:id', (req, res) => {
     if ((key === 'role' || key === 'jobId') && value !== (a[key] || '')) a.edited = { ...a.edited, [key]: true };
     a[key] = value;
   }
-  if (req.body.status) addManualStatus(a, req.body.status);
+  if (req.body.status) {
+    // Changing what an email set counts as a correction to the sorting.
+    if (a.source === 'gmail' && isStage(req.body.status) && req.body.status !== a.status) req.account.store.noteCorrection('statusChanged');
+    addManualStatus(a, req.body.status);
+  }
   // Deadline: "YYYY-MM-DD" sets your own (end of that day); "" or done=true clears the current one.
   if (typeof req.body.deadline === 'string') {
     const m = req.body.deadline.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -299,7 +303,9 @@ app.post('/api/export', async (req, res) => {
 });
 
 app.delete('/api/applications/:id', (req, res) => {
-  req.account.store.deleteApplication(req.params.id);
+  const store = req.account.store;
+  if (store.applications.find(x => x.id === req.params.id)?.source === 'gmail') store.noteCorrection('deleted');
+  store.deleteApplication(req.params.id);
   changed(req.account);
   res.json({ ok: true });
 });
@@ -384,6 +390,21 @@ app.post('/api/reports', async (req, res) => {
 
 const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the owner can see reports' });
 app.get('/api/reports', ownerOnly, async (req, res) => res.json({ reports: await listReports() }));
+
+// How sorting is doing across everyone: emails filed, and how often people fix them.
+// Totals only; nothing about anyone's applications or emails.
+app.get('/api/reports/stats', ownerOnly, async (req, res) => {
+  const people = DEMO ? [req.account] : await allUsers();
+  const corrections = {};
+  let emails = 0, withAi = 0;
+  for (const user of people) {
+    const db = user.store.db;
+    if (user.groq()) withAi++;
+    emails += db.applications.reduce((n, a) => n + a.events.filter(e => !e.manual).length, 0);
+    for (const [kind, n] of Object.entries(db.corrections || {})) corrections[kind] = (corrections[kind] || 0) + n;
+  }
+  res.json({ accounts: people.length, withAi, emails, corrections });
+});
 app.patch('/api/reports/:id', ownerOnly, async (req, res) => {
   const r = await setReportStatus(req.params.id, req.body?.status);
   if (!r) return res.status(404).json({ error: 'Not found' });

@@ -234,6 +234,13 @@ export class Store {
     return app;
   }
 
+  // Each time you fix how an email was sorted, counted by kind, so the owner can see
+  // how often sorting needs help (Reports page). Counts only, nothing about the emails.
+  noteCorrection(kind, n = 1) {
+    this.db.corrections ??= {};
+    this.db.corrections[kind] = (this.db.corrections[kind] || 0) + n;
+  }
+
   // Senders you've said never send job emails (by domain): skipped by every sync, and
   // what's already filed from them is removed. Returns how many emails were removed.
   blockSender(domain) {
@@ -254,6 +261,7 @@ export class Store {
       if (a.events.length) refresh(a);
     }
     db.applications = db.applications.filter(a => a.events.length);
+    this.noteCorrection('senderBlocked');
     return removed;
   }
 
@@ -352,6 +360,7 @@ export class Store {
       target = this.createApplication({ company: company.trim(), role: role.trim(), jobId: jobId.trim(), source: 'gmail' });
     } else if (action !== 'ignore') return { error: 'Unknown action', status: 400 };
     if (action === 'move' && !target) return { error: 'Application not found', status: 404 };
+    this.noteCorrection({ confirm: 'confirmed', move: 'moved', new: 'moved', ignore: 'notJob' }[action]);
 
     if (target !== from) from.events = from.events.filter(e => e !== event);
     if (target) {

@@ -35,7 +35,7 @@
       <ul>
         <li>nuj has read-only access to Gmail and only reads emails that look like job application updates.</li>
         <li>It keeps a summary of each application email (company, role, stage, subject, sender, date). It doesn't keep full email bodies.</li>
-        <li>If you add a Groq API key, part of each matching email is sent to Groq under your key to work out what it means. Nothing is sold, and there are no ads or analytics.</li>
+        <li>If you add a Groq API key, part of each matching email is sent to Groq under your key to work out what it means. Nothing is sold, and there are no ads or third-party analytics.</li>
         <li>Each person's data is kept separate. You can disconnect Gmail or delete your account from the app at any time.</li>
       </ul>
     </div>
@@ -75,6 +75,7 @@
 
     <h3>What you enter</h3>
     <p>Applications you add by hand, notes, links, deadlines and any edits you make are stored with the rest of your applications.</p>
+    <p>nuj also counts how often you fix its sorting, as totals only (for example "3 emails moved, 1 sender ignored"), so we can see whether sorting is getting better. If you ignore a sender, its domain (such as example.com) is kept so nuj can skip it.</p>
 
     <h3>Problem reports</h3>
     <p>If you send a report with "Report a problem", we store what you wrote, your email address, and technical details to help fix it: the page you were on, your browser, recent error messages, and how emails are being sorted. If you report a problem with one application and tick the box to include it, its company, role, status and timeline (stages, dates and email subjects) are attached too. Only the person who runs nuj reads reports.</p>
@@ -88,7 +89,7 @@
     <h2 id="share">Who it's shared with</h2>
     <p>We don't sell or rent your information. We share it only with the services that run the app, and only as much as each needs:</p>
     <ul>
-      <li><strong>Groq</strong> (AI processing), only if you've added a Groq API key. For each matching email, the sender, date, subject and up to the first 3,500 characters of the message text are sent to Groq's API using your key, which returns the company, role, job ID, stage, any deadline, a short summary and an explanation. Without a key, or if Groq is unavailable, the app uses built-in rules instead and nothing is sent.</li>
+      <li><strong>Groq</strong> (AI processing), only if you've added a Groq API key. For each matching email, the sender, date, subject and up to the first 3,500 characters of the message text are sent to Groq's API using your key, which returns the company, role, job ID, stage, any deadline, a short summary and an explanation. If it isn't clear whether an email is about a job at all, the sender, subject and a shorter excerpt are sent first to check, and an email that isn't about a job goes no further. If you have several applications at the same company and an email doesn't say which one it's about, the roles, job IDs, statuses, application dates and recent email subjects of those applications are sent with it so Groq can pick the right one. Without a key, or if Groq is unavailable, the app uses built-in rules instead and nothing is sent.</li>
       <li><strong>Render</strong> (hosting). The app runs on Render's servers.</li>
       <li><strong>Neon</strong> (database). Your applications, the email details listed above, your Google tokens and your encrypted Groq key are stored in a Postgres database hosted by Neon.</li>
       <li><strong>Google</strong>, to sign you in and to read Gmail as described above.</li>
