@@ -64,7 +64,7 @@ Work through the email before answering, and write that thinking in "reasoning" 
 3. Which job is it? Look for the title and any requisition/job ID anywhere in the email, including footers and links.
 
 Then fill in:
-- is_job_application_email: true if the email is about the recipient's own application (confirmation, assessment, interview, offer, rejection, withdrawal). false for job alerts, newsletters, marketing, event invites and recruiter outreach for jobs they didn't apply to.
+- is_job_application_email: true only if the email is about the recipient's own application for a job (employment, an internship or a co-op): confirmation, assessment, interview, offer, rejection, withdrawal. false for any other kind of application, however it's worded: apartments and rentals, utilities and bill-splitting services, bank accounts, credit cards and loans, insurance, school or university admissions, scholarships, visas and permits, memberships. Also false for job alerts, newsletters, marketing, event invites and recruiter outreach for jobs they didn't apply to. If the email never says it's about a job, it isn't one.
 - stage:
   - applied: application received/submitted, or a status update with no new step.
   - oa: anything the candidate completes on their own without a live person: online assessments, coding tests, take-homes, personality or game-based tests, and AI interviews or recorded one-way video interviews (HireVue, Modern Hire, Spark Hire and similar), even when the email calls them an "interview".
@@ -80,6 +80,75 @@ Then fill in:
 - confidence: high if the employer and the stage are both clear from the email; medium if you had to infer one of them; low if you are guessing which employer or job this is.`;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---- is this about a job at all? -------------------------------------------------
+// Only asked when the free checks can't tell (see jobcheck.js). A small, fast model and
+// a short excerpt, so it costs a fraction of the full read and saves that read entirely
+// for the rental and utility emails it turns away.
+export const GATE_MODEL = process.env.GROQ_GATE_MODEL || 'llama-3.1-8b-instant';
+const GATE_SYSTEM = `You decide whether an email is about the recipient's own application for a JOB (employment, internship, co-op) with an employer.
+Answer false for every other kind of application or account: apartments, rentals and housing; utilities and bill-splitting services; banks, credit cards, loans and insurance; schools, admissions and scholarships; visas and permits; memberships and subscriptions. Also false for job alerts and newsletters.
+Reply with JSON only: {"job": true or false, "why": "a few words"}`;
+
+// true / false, or undefined when Groq can't answer now (the full read then decides).
+export async function isJobEmailWithGroq(client, { from, subject, body }) {
+  try {
+    const res = await client.chat.completions.create({
+      model: GATE_MODEL,
+      temperature: 0,
+      max_completion_tokens: 60,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: GATE_SYSTEM },
+        { role: 'user', content: `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 700)}` },
+      ],
+    });
+    const out = JSON.parse(res.choices[0]?.message?.content || '{}');
+    return typeof out.job === 'boolean' ? out.job : undefined;
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) throw err; // the key itself is bad
+    if (err.status !== 429) console.warn(`[groq] job check failed: ${err.message}`);
+    return undefined;
+  }
+}
+
+// ---- which of your applications is it? ----------------------------------------------
+// When you have several applications at one company and the email names no role or ID,
+// show the model those applications and let it pick, instead of guessing the latest.
+const PICK_SCHEMA = {
+  type: 'object',
+  properties: { reasoning: { type: 'string' }, choice: { type: 'integer' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } },
+  required: ['reasoning', 'choice', 'confidence'],
+  additionalProperties: false,
+};
+
+// Returns the index into `candidates`, or -1 when it can't tell (or Groq can't answer now).
+export async function pickApplicationWithGroq(client, { from, subject, body }, candidates) {
+  const list = candidates.map((a, i) =>
+    `${i}. ${a.role || 'role unknown'}${a.jobId ? ` (job ID ${a.jobId})` : ''}, status ${a.status}, applied ${a.appliedAt.slice(0, 10)}; emails: ${a.subjects.join(' | ') || 'none'}`).join('\n');
+  try {
+    const res = await client.chat.completions.create({
+      model: MODEL,
+      temperature: 0,
+      reasoning_effort: 'low',
+      max_completion_tokens: 600,
+      response_format: { type: 'json_schema', json_schema: { name: 'pick_application', strict: true, schema: PICK_SCHEMA } },
+      messages: [
+        { role: 'system', content: 'A job seeker has several applications at the same company. Decide which one this email is about, using the role, job ID, dates and the subjects of earlier emails. Reply with the number of the application, or -1 if the email could be about more than one of them.' },
+        { role: 'user', content: `Applications:\n${list}\n\nEmail:\nFrom: ${from}\nSubject: ${subject}\n\n${body.slice(0, 1500)}` },
+      ],
+    });
+    const out = JSON.parse(res.choices[0]?.message?.content || '{}');
+    const i = Number.isInteger(out.choice) ? out.choice : -1;
+    return i >= 0 && i < candidates.length && out.confidence !== 'low' ? i : -1;
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) throw err;
+    if (err.status !== 429) console.warn(`[groq] picking an application failed: ${err.message}`);
+    return -1;
+  }
+}
+
+// ---- read the email ---------------------------------------------------------------
 
 // Returns {isJob, stage, company, role, jobId, deadline, summary, confidence, reasoning},
 // or undefined when Groq can't answer now.

@@ -1,5 +1,6 @@
 import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, AI_INTERVIEW } from './rules.js';
-import { classifyWithGroq, MODEL } from './groq.js';
+import { classifyWithGroq, isJobEmailWithGroq, MODEL } from './groq.js';
+import { jobSignal } from './jobcheck.js';
 
 export { classifyWithRules };
 
@@ -72,10 +73,24 @@ export function mergeWithRules(llm, rules, email) {
 // onKeyRejected runs if Groq refuses the key, so they can be told to replace it.
 // Returns {stage, company, role, jobId, deadline, summary?, reasoning?, review}, or null
 // when the email isn't about an application. `review` lists reasons to double-check it: {about: 'application' | 'stage', text}.
+//
+// In steps, cheapest first:
+//   1. free checks: is this about a job at all? (jobcheck.js) Clear non-jobs stop here.
+//   2. if that's unclear and there's a key, a small model answers just that question.
+//   3. the full read (Groq, cross-checked by the rules), or the rules alone.
+// Which application it belongs to is settled afterwards, in gmail.js.
 export async function classify(email, { groq = null, onKeyRejected } = {}) {
+  const signal = jobSignal(email);
+  if (signal.verdict === 'not_job') return null;
   let result;
+  let gateSaidJob = false;
   if (groq) {
     try {
+      if (signal.verdict === 'unsure') {
+        const isJob = await isJobEmailWithGroq(groq, email);
+        if (isJob === false) return null;
+        gateSaidJob = isJob === true;
+      }
       const llm = await classifyWithGroq(groq, email);
       if (llm) result = mergeWithRules(llm, classifyWithRules(email), email);
     } catch (err) {
@@ -88,6 +103,10 @@ export async function classify(email, { groq = null, onKeyRejected } = {}) {
     if (result) result.review = [];
   }
   if (result) {
+    // Nothing (no hiring software, no job words, no AI) vouched for it being a job.
+    if (signal.verdict === 'unsure' && !gateSaidJob && !result.reasoning) {
+      result.review.push({ about: 'application', text: `Not sure this is about a job: the email ${signal.why}. If it's a rental, utility or other non-job application, choose "Not about an application".` });
+    }
     result.company = resolveCompanyName(result.company);
     if (result.company === UNKNOWN) result.review.push({ about: 'application', text: "Couldn't tell which company this email is from." });
     if (result.stage === 'rejected' || result.stage === 'withdrawn') {
