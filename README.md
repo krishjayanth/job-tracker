@@ -73,17 +73,23 @@ flowchart LR
 A sync runs on a timer, from the **Sync** button, or when an external pinger calls it (which also keeps Render's
 free tier awake):
 
-1. **Narrow the inbox.** A Gmail search keeps only emails from hiring platforms or with application-related subjects.
-2. **Classify each email.** Groq first writes out its reasoning (who is hiring, what the email asks, which job), then
+1. **Narrow the inbox.** A Gmail search keeps only emails from hiring platforms or with application-related subjects,
+   minus any senders you've chosen to ignore.
+2. **Is it about a job at all?** Free checks run first: hiring software counts as a job, and housing, utility,
+   banking, school and similar wording with nothing about a job is dropped, so a landlord's "thank you for your
+   application" never becomes an application. When that's unclear and there's a Groq key, a small, fast model
+   (`llama-3.1-8b-instant`) answers just that question before the full read is spent on it.
+   ([`src/jobcheck.js`](src/jobcheck.js))
+3. **Classify each email.** Groq first writes out its reasoning (who is hiring, what the email asks, which job), then
    returns the stage, company, role, job ID, deadline, a one-line summary and its confidence as strict JSON. AI and
    recorded video interviews (HireVue and the like) count as assessments. Hand-tuned rules then check it, and they
    handle the email alone if the LLM is unavailable.
-3. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role. When the model
-   was unsure, the rules disagree, or the email could belong to several applications, it's flagged in "Needs your
+4. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role. If several
+   applications at one company still fit, Groq is shown that short list and picks one. When the model was unsure, the rules disagree, or the email could belong to several applications, it's flagged in "Needs your
    action" so you can confirm it or move it to the right application. Your answers are kept through a re-scan.
-4. **Derive status from the timeline.** Status is never stored directly. It's recomputed from the application's
+5. **Derive status from the timeline.** Status is never stored directly. It's recomputed from the application's
    events, so a late "thanks for applying" email can't undo an interview and a manual correction always wins.
-5. **Save and broadcast.** The change is persisted and pushed to every open browser over Server-Sent Events.
+6. **Save and broadcast.** The change is persisted and pushed to every open browser over Server-Sent Events.
 
 ## Engineering highlights
 
@@ -122,7 +128,7 @@ free tier awake):
 | Server | Node.js 22+ (ES modules), Express 5 |
 | Data | PostgreSQL on Neon (`jsonb`), or local JSON files |
 | Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`) |
-| Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties (light and dark) |
+| Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties |
 | Live updates | Server-Sent Events |
 | Export | ExcelJS |
 | Testing / CI | `node:test`, GitHub Actions (Node 22 and 24, plus a demo-mode smoke test) |
@@ -136,12 +142,15 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 59 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 80 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
 - matching emails to applications, and confirming or moving an email you've checked
 - merging the LLM's answer with the rules (AI/HireVue interviews as assessments, review flags, deadlines)
+- the job check and the sorting steps, with a stand-in Groq client: non-job "applications" never reach the model
+- a labeled set of 24 emails, which the rules must sort with no misses
+- ignoring senders, problem reports, and counting fixes to sorting
 - deadline tracking
 - re-scan edit preservation
 - session cookies, including tampered, unauthorized and pre-accounts ones
@@ -149,14 +158,27 @@ There are 59 tests, written with the built-in `node:test` runner and no test dep
 
 CI runs them on every push, then boots the app in demo mode and checks the API.
 
+### Measuring sorting
+
+```bash
+npm run eval            # the built-in rules
+npm run eval -- --groq  # Groq too (needs GROQ_API_KEY)
+```
+
+Scores [`test/fixtures/emails.json`](test/fixtures/emails.json) (job vs. not a job, stage, company) and lists every
+miss. When sorting gets an email wrong, add a version of it there so the fix stays fixed. The owner's Reports page
+also shows how often people fix sorting across all accounts.
+
 ## Project layout
 
 | Path | What's there |
 |---|---|
 | [`server.js`](server.js) | Express app: routes, auth gate, SSE, sync scheduling, graceful shutdown |
 | [`src/gmail.js`](src/gmail.js) | OAuth client; each person's Gmail sync and re-scan engine |
-| [`src/classify.js`](src/classify.js) | Merges the LLM's answer with the rules |
-| [`src/groq.js`](src/groq.js) | Groq client, JSON schema and prompt |
+| [`src/classify.js`](src/classify.js) | The sorting steps: job check, Groq or rules, merging the two |
+| [`src/jobcheck.js`](src/jobcheck.js) | Is an email about a job? Hiring-software senders, job and non-job wording |
+| [`src/groq.js`](src/groq.js) | Groq client: the job check, the full read, and picking between applications |
+| [`src/reports.js`](src/reports.js) | Problem reports people send, for the owner |
 | [`src/rules.js`](src/rules.js) | Rule-based classifier: stages, companies, roles, job IDs, deadlines |
 | [`src/stages.js`](src/stages.js) | Pipeline stages, status and chart-path logic |
 | [`src/store.js`](src/store.js) | Persistence, application matching, re-scan snapshots |
@@ -166,7 +188,8 @@ CI runs them on every push, then boots the app in demo mode and checks the API.
 | [`src/export.js`](src/export.js) | Excel export |
 | [`src/demo.js`](src/demo.js) | Sample data for demo mode |
 | [`public/`](public/) | Dashboard (HTML, CSS, JS) |
-| [`test/`](test/) | Test suites |
+| [`test/`](test/) | Test suites, and the labeled emails in `test/fixtures/` |
+| [`scripts/eval.js`](scripts/eval.js) | Scores sorting on the labeled emails |
 
 ## Deploy your own
 
