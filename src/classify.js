@@ -105,7 +105,7 @@ export async function classify(email, { groq = null, onKeyRejected } = {}) {
   if (result) {
     // Nothing (no hiring software, no job words, no AI) vouched for it being a job.
     if (signal.verdict === 'unsure' && !gateSaidJob && !result.reasoning) {
-      result.review.push({ about: 'application', text: `Not sure this is about a job: the email ${signal.why}. If it's a rental, utility or other non-job application, choose "Not about an application".` });
+      result.review.push({ about: 'application', text: `Not sure this is about a job: the email ${signal.why}. If it's a rental, utility or other non-job application, choose "Not a job".` });
     }
     result.company = resolveCompanyName(result.company);
     if (result.company === UNKNOWN) result.review.push({ about: 'application', text: "Couldn't tell which company this email is from." });

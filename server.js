@@ -237,7 +237,7 @@ app.patch('/api/applications/:id', (req, res) => {
 });
 
 // Remove a status change you made by hand, so the emails decide the status again.
-// Emails can't be removed this way ("Wrong application?" moves them instead).
+// Emails can't be removed this way ("Filed correctly?" moves or removes them instead).
 app.delete('/api/applications/:id/events/:eventId', (req, res) => {
   const a = req.account.store.applications.find(x => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: 'Not found' });

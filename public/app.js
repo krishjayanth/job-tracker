@@ -114,7 +114,7 @@ function render() {
   renderMonths();
   renderTabs();
   renderTable();
-  if (openId) refreshDrawerTimeline();
+  if (openId) refreshDrawer();
 }
 
 function renderMonths() {
@@ -167,21 +167,34 @@ function renderGmail() {
     }
   }
   $('#sync-btn').hidden = !g.connected;
-  $('#disconnect').hidden = !g.connected;
   $('#rescan-btn').disabled = !g.connected || g.progress?.mode === 'rescan';
   $('#account').hidden = !state.user;
   $('#account-email').textContent = state.user || '';
-  $('#side-user').hidden = !state.user;
+  $('#side-user-row').hidden = !state.user;
   $('#side-user').textContent = state.user || '';
   $('#reports-link').hidden = !state.reports;
   $('#reports-count').textContent = state.reports?.open || '';
   $('#delete-section').hidden = state.demo;
-  const blocked = state.blockedSenders || [];
-  $('#blocked-section').hidden = !blocked.length;
-  $('#blocked-list').innerHTML = blocked.map(d =>
-    `<li><span>${esc(d)}</span><button class="btn btn-sm btn-quiet" type="button" data-unblock="${esc(d)}">Read again</button></li>`).join('');
+  renderSettings();
   renderSetup();
   renderGroq();
+}
+
+// Settings: Gmail, AI sorting, ignored senders, help and account in one place.
+function renderSettings() {
+  const g = state.gmail;
+  $('#set-gmail-status').innerHTML = !g.configured ? "Google sign-in isn't set up on this server, so Gmail can't be connected."
+    : !g.connected ? 'Not connected. nuj only updates when you add applications by hand.'
+    : `Connected (read-only). ${g.lastSyncError ? `Last sync failed: ${esc(g.lastSyncError)}.` : `Last synced ${timeAgo(g.lastSync)}.`} Checks for new emails every ${g.syncMinutes || 5} minutes.`;
+  $('#set-gmail-actions').innerHTML = !g.configured ? ''
+    : !g.connected ? `<a class="btn btn-primary" href="/auth/google?gmail=1">${icon('mail')}Connect Gmail</a>`
+    : `<button class="btn" type="button" id="disconnect-btn">Disconnect</button>`;
+  const blocked = state.blockedSenders || [];
+  $('#blocked-empty').hidden = blocked.length > 0;
+  $('#blocked-list').innerHTML = blocked.map(d =>
+    `<li><span>${esc(d)}</span><button class="btn btn-sm btn-quiet" type="button" data-unblock="${esc(d)}">Read again</button></li>`).join('');
+  // A dot on Settings when something there needs you.
+  $('#settings-dot').hidden = !(g.lastSyncError || state.groq?.problem);
 }
 
 // First run: nothing is read until you choose a Groq key or the built-in rules.
@@ -253,7 +266,6 @@ $('#setup-key-form').addEventListener('submit', async e => {
 function renderGroq() {
   const k = state.groq;
   $('#groq-section').hidden = !k;
-  $('#groq-open').hidden = !k;
   if (!k) return;
   const ending = k.last4 ? ` ending in <strong>…${esc(k.last4)}</strong>` : '';
   // tone: on (AI is reading), off (built-in rules), err (needs you)
@@ -266,9 +278,9 @@ function renderGroq() {
   $('#groq-state').dataset.tone = tone;
   $('#groq-state-title').textContent = title;
   $('#groq-status').innerHTML = detail;
-  $('#groq-side-dot').className = `dot ${tone}`;
-  $('#groq-side-status').innerHTML = short;
-  $('#groq-menu-status').innerHTML = short;
+  $('#groq-menu-title').innerHTML = `<i class="dot ${tone}"></i>${esc(title)}`;
+  $('#groq-menu-status').innerHTML = detail;
+  $('#groq-menu-btn').lastChild.textContent = k.source === 'own' || k.problem ? 'Manage key' : 'Add a key';
   $('#groq-key').placeholder = k.source === 'own' ? 'Paste a new key to replace it' : 'gsk_…';
   $('#groq-form button[type="submit"]').textContent = k.source === 'own' && !k.problem ? 'Replace key' : 'Save key';
   $('#groq-remove').hidden = k.source !== 'own';
@@ -276,17 +288,17 @@ function renderGroq() {
   const banner = $('#banner');
   if (k.problem && !banner.innerHTML) {
     banner.innerHTML = `<div class="banner error">${icon('alert')}<div><strong>${k.problem === 'unreadable' ? "Your Groq key needs adding again." : 'Groq stopped accepting your API key.'}</strong>
-      Emails are sorted by the built-in rules for now. <a href="#" data-open-menu>Add a new key</a></div></div>`;
+      Emails are sorted by the built-in rules for now. <a href="#" data-open-groq>Add a new key</a></div></div>`;
   } else if (!k.source && state.gmail.connected && !banner.innerHTML && !dismissed('groq-hint')) {
     banner.innerHTML = `<div class="banner">${icon('alert')}<div><strong>Sort emails more accurately with Groq.</strong>
       nuj is using its built-in rules. With a free Groq API key, an AI reads each email to work out the company, job and stage.
-      <a href="#" data-open-menu>Add a key</a> · <a href="#" data-dismiss="groq-hint">Not now</a></div></div>`;
+      <a href="#" data-open-groq>Add a key</a> · <a href="#" data-dismiss="groq-hint">Not now</a></div></div>`;
   }
 }
 
 const dismissed = name => { try { return localStorage.getItem(`dismissed:${name}`) === '1'; } catch { return false; } };
 $('#banner').addEventListener('click', e => {
-  if (e.target.closest('[data-open-menu]')) {
+  if (e.target.closest('[data-open-groq]')) {
     e.preventDefault();
     openGroq();
   }
@@ -560,7 +572,7 @@ function renderActions() {
       const due = dueInfo(a.deadline);
       // Warm when it's due within a day.
       const tone = due && (due.level === 'urgent' || due.level === 'overdue') ? 'urgent' : '';
-      const why = due ? ACTION_STAGES[a.status] || 'Next step to complete' : 'Check which application an email belongs to';
+      const why = due ? ACTION_STAGES[a.status] || 'Next step to complete' : 'An email here needs a quick check: is it filed correctly?';
       return `
       <li class="action-row ${tone}" data-row="${a.id}"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
         ${avatar(a.company, 'sm')}
@@ -571,7 +583,7 @@ function renderActions() {
         <span class="action-side">
           ${due
             ? `${dueChip(a.deadline)}<button class="done-btn" type="button" data-done="${a.id}" title="Mark this deadline as done">${icon('check')}Done</button>`
-            : `<span class="check-chip">Check</span><button class="done-btn" type="button" data-looks-right="${a.id}" title="The emails are on the right application">${icon('check')}Looks right</button>`}
+            : `<span class="check-chip">Check filing</span><button class="done-btn" type="button" data-looks-right="${a.id}" title="Its emails are filed under the right application">${icon('check')}Yes, it's right</button>`}
         </span>
       </div></li>`;
     }).join('')
@@ -692,7 +704,7 @@ function renderTable() {
     <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}">
       <td>
         <div class="company">${avatar(a.company)}
-          <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may belong to another application">Check</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
+          <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may be filed under the wrong application">Check filing</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
         </div>
       </td>
       <td class="col-role">
@@ -742,56 +754,64 @@ function timelineHtml(a) {
     <li style="--c:${color(e.stage)}">
       <span class="tdot"></span>
       <div class="thead">
-        <span class="tstage">${STAGE_LABEL[e.stage]}${e.manual ? ' · set by you' : ''}${needsCheck(e) ? ' · <span class="tcheck">not sure</span>' : ''}</span>
+        <span class="tstage">${STAGE_LABEL[e.stage]}${e.manual ? ' · set by you' : ''}${needsCheck(e) ? ' · <span class="tcheck">check filing</span>' : ''}</span>
         <span class="tdate">${new Date(e.date).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
       </div>
       <div class="tsubject">${esc(decode(e.subject || STAGE_LABEL[e.stage]))}</div>
       ${e.summary ? `<div class="tsnippet">${esc(e.summary)}</div>` : e.snippet ? `<div class="tsnippet">${esc(decode(e.snippet))}</div>` : ''}
       ${!e.manual ? `<div class="tlinks">
         ${e.messageId ? `<a class="tlink" href="https://mail.google.com/mail/u/0/#all/${e.messageId}" target="_blank" rel="noopener">Open in Gmail ${icon('external')}</a>` : ''}
-        <button class="tlink" type="button" data-fix="${e.id}">Wrong application?</button>
+        <button class="tlink" type="button" data-fix="${e.id}">${needsCheck(e) ? 'Check filing' : 'Filed correctly?'}</button>
       </div>${filerHtml(a, e)}`
       : a.events.length > 1 ? `<div class="tlinks"><button class="tlink" type="button" data-remove-event="${e.id}" title="Remove this change; the emails decide the status again">${icon('trash')}Remove</button></div>` : ''}
     </li>`).join('');
 }
 
-// "Which application does this email belong to?" A choice of your other applications,
-// a new one, or none at all. Hidden until you ask to fix an email.
+// "Filed correctly?" One flow everywhere an email might be in the wrong place, with the
+// same three answers: Yes, it's right / Move it / Not a job. Hidden until you open it.
 function filerHtml(a, e) {
   const others = state.applications
     .filter(x => x.id !== a.id)
     .sort((x, y) => x.company.localeCompare(y.company) || (x.role || '').localeCompare(y.role || ''));
   return `
     <div class="filer" data-filer="${e.id}" hidden>
-      <div class="field"><label for="move-${e.id}">This email belongs to</label>
-        <select id="move-${e.id}" data-move-to>
-          <option value="">Choose an application…</option>
-          ${others.map(x => `<option value="${x.id}">${esc(x.company)}${x.role ? ` · ${esc(x.role)}` : ''}${x.jobId ? ` (${esc(x.jobId)})` : ''}</option>`).join('')}
-          <option value="new">A new application…</option>
-        </select>
+      <div class="filer-q">Is this email filed under the right application?</div>
+      <div class="filer-choices" role="group" aria-label="Filed correctly?">
+        <button class="btn btn-sm" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's right</button>
+        <button class="btn btn-sm" type="button" data-filer-show="move" aria-expanded="false">Move it</button>
+        <button class="btn btn-sm" type="button" data-filer-show="notjob" aria-expanded="false">Not a job</button>
       </div>
-      <div class="fields filer-new" hidden>
-        <div class="field"><label for="new-co-${e.id}">Company</label><input id="new-co-${e.id}" data-new="company" placeholder="e.g. Stripe"></div>
-        <div class="field"><label for="new-role-${e.id}">Role</label><input id="new-role-${e.id}" data-new="role" placeholder="Optional"></div>
+      <div class="filer-pane" data-pane="move" hidden>
+        <div class="field"><label for="move-${e.id}">Move it to</label>
+          <select id="move-${e.id}" data-move-to>
+            <option value="">Choose an application…</option>
+            ${others.map(x => `<option value="${x.id}">${esc(x.company)}${x.role ? ` · ${esc(x.role)}` : ''}${x.jobId ? ` (${esc(x.jobId)})` : ''}</option>`).join('')}
+            <option value="new">A new application…</option>
+          </select>
+        </div>
+        <div class="fields filer-new" hidden>
+          <div class="field"><label for="new-co-${e.id}">Company</label><input id="new-co-${e.id}" data-new="company" placeholder="e.g. Stripe"></div>
+          <div class="field"><label for="new-role-${e.id}">Role</label><input id="new-role-${e.id}" data-new="role" placeholder="Optional"></div>
+        </div>
+        <div class="filer-actions"><button class="btn btn-primary btn-sm" type="button" data-move="${e.id}" disabled>Move email</button></div>
       </div>
-      <div class="filer-actions">
-        <button class="btn btn-primary" type="button" data-move="${e.id}" disabled>Move email</button>
-        <button class="btn btn-quiet" type="button" data-ignore="${e.id}">Not about an application</button>
+      <div class="filer-pane" data-pane="notjob" hidden>
+        <p class="filer-note">The email is removed from ${esc(a.company)} and won't be added again.</p>
+        ${e.blockable ? `<label class="check-row"><input type="checkbox" data-also-block="${esc(e.blockable)}">
+          <span><strong>Also ignore everything from ${esc(e.blockable)}</strong>
+          <small>For senders that never send job emails, like a landlord or a utility. Removes their other emails too.</small></span></label>` : ''}
+        <div class="filer-actions"><button class="btn btn-primary btn-sm" type="button" data-ignore="${e.id}">Remove email</button></div>
       </div>
-      ${e.blockable ? `<div class="block-row">
-        <button class="btn btn-quiet btn-danger" type="button" data-block="${esc(e.blockable)}">Ignore everything from ${esc(e.blockable)}</button>
-        <span>Removes its emails here and skips it from now on. Use it for senders that never send job emails.</span>
-      </div>` : ''}
     </div>`;
 }
 
-// Emails the classifier wasn't sure about, with why, and a one-click answer.
+// Emails sorting wasn't sure about: why, and the same three answers.
 function reviewHtml(a) {
   const flagged = a.events.filter(needsCheck).reverse();
   if (!flagged.length) return '';
   return `
     <div class="review-card">
-      <div class="review-head">${icon('alert')}Is this the right application?</div>
+      <div class="review-head">${icon('alert')}Check filing</div>
       ${flagged.map(e => `
         <div class="review-item">
           <div class="tsubject">${esc(decode(e.subject))}</div>
@@ -799,8 +819,9 @@ function reviewHtml(a) {
           <ul class="review-reasons">${e.review.map(r => `<li>${esc(r.text)}</li>`).join('')}</ul>
           ${e.reasoning ? `<details class="review-why"><summary>How the email was read</summary><p>${esc(e.reasoning)}</p></details>` : ''}
           <div class="filer-actions">
-            <button class="btn" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's ${esc(a.company)}</button>
-            <button class="btn btn-quiet" type="button" data-fix="${e.id}">No, fix it</button>
+            <button class="btn btn-sm" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's right</button>
+            <button class="btn btn-sm btn-quiet" type="button" data-fix="${e.id}" data-show="move">Move it</button>
+            <button class="btn btn-sm btn-quiet" type="button" data-fix="${e.id}" data-show="notjob">Not a job</button>
           </div>
         </div>`).join('')}
     </div>`;
@@ -815,114 +836,173 @@ async function assignEmail(eventId, body) {
   if (next) openDrawer(next); else closeDrawer();
 }
 
-function refreshDrawerTimeline() {
+// Live updates refresh what the panel shows about the application, but never the
+// fields you might be typing in, or a "Filed correctly?" answer you're halfway through.
+function refreshDrawer() {
   const a = state.applications.find(x => x.id === openId);
-  const list = $('#drawer .timeline');
-  // Don't snap shut a "Wrong application?" picker you're using.
-  if (a && list && !list.querySelector('.filer:not([hidden])')) list.innerHTML = timelineHtml(a);
+  if (!a || $('#drawer .filer:not([hidden])')) return;
+  $('#drawer .drawer-head').innerHTML = drawerHeadHtml(a);
+  $('#drawer .review-slot').innerHTML = reviewHtml(a);
+  $('#drawer .timeline').innerHTML = timelineHtml(a);
 }
 
-function openDrawer(app) {
-  const isNew = !app;
-  const a = app || { company: '', role: '', jobId: '', url: '', notes: '', status: 'applied', events: [] };
-  openId = isNew ? null : a.id;
-  lastFocus = document.activeElement;
+function drawerHeadHtml(a) {
+  return `
+    <div class="drawer-title">
+      ${avatar(a.company, 'lg')}
+      <div class="t">
+        <h2 id="drawer-title">${esc(a.company)}</h2>
+        <div class="s">${esc(a.role) || 'No role found'}</div>
+      </div>
+      <button class="icon-btn" data-close type="button" aria-label="Close">${icon('x')}</button>
+    </div>
+    <div class="drawer-meta">
+      ${statusSelect(a)}
+      ${dueChip(a.deadline)}
+      <span>Applied ${shortDate(a.appliedAt)}</span>
+      ${a.jobId ? `<span class="num">ID ${esc(a.jobId)}</span>` : ''}
+      ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${icon('link')}Job posting</a>` : ''}
+    </div>`;
+}
 
+function detailFieldsHtml(a, isNew) {
+  const status = `<div class="field"><label for="f-status">Status</label>
+    <select id="f-status" name="status">${STATUS_ORDER.map(s => `<option value="${s}" ${s === a.status ? 'selected' : ''}>${STAGE_LABEL[s]}</option>`).join('')}</select></div>`;
+  return `
+    <div class="fields">
+      <div class="field"><label for="f-company">Company</label><input id="f-company" name="company" required value="${esc(a.company)}" placeholder="e.g. Stripe" autocomplete="off"></div>
+      ${isNew ? status : `<div class="field"><label for="f-jobid">Job ID</label><input id="f-jobid" name="jobId" value="${esc(a.jobId)}" placeholder="e.g. R-574294" autocomplete="off"></div>`}
+      <div class="field wide"><label for="f-role">Role</label><input id="f-role" name="role" value="${esc(a.role)}" placeholder="e.g. Software Engineer Intern" autocomplete="off"></div>
+      ${isNew ? `<div class="field"><label for="f-jobid">Job ID</label><input id="f-jobid" name="jobId" value="" placeholder="e.g. R-574294" autocomplete="off"></div>` : ''}
+      <div class="field${isNew ? '' : ' wide'}"><label for="f-url">Job posting link</label><input id="f-url" name="url" type="url" value="${esc(a.url)}" placeholder="https://" autocomplete="off"></div>
+      ${isNew ? '' : `<div class="field wide"><label for="f-deadline">Deadline</label>
+        <div class="deadline-field">
+          <input id="f-deadline" name="deadline" type="date" value="${a.deadline ? isoDate(a.deadline) : ''}">
+          ${a.deadline ? `<button class="btn" type="button" id="deadline-done">${icon('check')}Mark done</button>` : ''}
+        </div></div>`}
+      <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
+    </div>`;
+}
+
+const savedNote = (text, tone = '') => {
+  const el = $('#saved-note');
+  if (el) el.innerHTML = text ? `<span class="saved-note ${tone}">${tone === 'ok' ? icon('check') : ''}${esc(text)}</span>` : '';
+};
+
+// Adding an application: one form and an Add button, since there's nothing to save into yet.
+function openNewDrawer() {
+  openId = null;
+  lastFocus = document.activeElement;
+  const a = { company: '', role: '', jobId: '', url: '', notes: '', status: 'applied' };
   $('#drawer').innerHTML = `
     <div class="drawer-head">
       <div class="drawer-title">
-        ${isNew ? '' : avatar(a.company, 'lg')}
-        <div class="t">
-          <h2 id="drawer-title">${isNew ? 'Add application' : esc(a.company)}</h2>
-          ${isNew ? '<div class="s">Track a job you applied to outside Gmail</div>' : `<div class="s">${esc(a.role) || 'No role found'}</div>`}
-        </div>
+        <div class="t"><h2 id="drawer-title">Add application</h2><div class="s">Track a job you applied to outside Gmail</div></div>
         <button class="icon-btn" data-close type="button" aria-label="Close">${icon('x')}</button>
       </div>
-      ${isNew ? '' : `<div class="drawer-meta">
-        ${pill(a.status)}
-        ${a.jobId ? `<span class="num">ID ${esc(a.jobId)}</span>` : ''}
-        <span>Applied ${shortDate(a.appliedAt)}</span>
-        ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${icon('link')}Job posting</a>` : ''}
-        <button class="meta-link" type="button" data-report="${a.id}">${icon('flag')}Report a problem</button>
-      </div>`}
     </div>
+    <form id="app-form" class="drawer-body" novalidate>${detailFieldsHtml(a, true)}</form>
+    <div class="drawer-foot">
+      <span id="saved-note"></span>
+      <div class="right">
+        <button class="btn" data-close type="button">Cancel</button>
+        <button class="btn btn-primary" form="app-form" type="submit" id="save-btn">Add application</button>
+      </div>
+    </div>`;
+  $('#app-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const company = $('#f-company');
+    if (!company.value.trim()) {
+      company.setCustomValidity('Company is required');
+      company.reportValidity();
+      company.setCustomValidity('');
+      return company.focus();
+    }
+    const btn = $('#save-btn');
+    btn.disabled = true;
+    try {
+      const created = await api('POST', '/api/applications', Object.fromEntries(new FormData(e.target)));
+      closeDrawer();
+      await load();
+      toast(`Added ${created.company}`);
+    } catch (err) {
+      btn.disabled = false;
+      savedNote(err.message, 'err');
+    }
+  });
+  showDrawer($('#f-company'));
+}
+
+function openDrawer(app) {
+  if (!app) return openNewDrawer();
+  const a = app;
+  openId = a.id;
+  lastFocus = document.activeElement;
+
+  // What happened first (any email to check, then the timeline); the details you can
+  // edit come last, and save on their own as you change them.
+  $('#drawer').innerHTML = `
+    <div class="drawer-head">${drawerHeadHtml(a)}</div>
     <div class="drawer-body">
-      ${isNew ? '' : reviewHtml(a)}
-      <form id="app-form" novalidate>
-        <div class="section-title">Details</div>
-        <div class="fields">
-          <div class="field"><label for="f-company">Company</label><input id="f-company" name="company" required value="${esc(a.company)}" placeholder="e.g. Stripe"></div>
-          <div class="field"><label for="f-status">Status</label>
-            <select id="f-status" name="status">${STATUS_ORDER.map(s => `<option value="${s}" ${s === a.status ? 'selected' : ''}>${STAGE_LABEL[s]}</option>`).join('')}</select>
-          </div>
-          <div class="field wide"><label for="f-role">Role</label><input id="f-role" name="role" value="${esc(a.role)}" placeholder="e.g. Software Engineer Intern"></div>
-          <div class="field"><label for="f-jobid">Job ID</label><input id="f-jobid" name="jobId" value="${esc(a.jobId)}" placeholder="e.g. R-574294"></div>
-          <div class="field"><label for="f-url">Job posting link</label><input id="f-url" name="url" type="url" value="${esc(a.url)}" placeholder="https://"></div>
-          ${isNew ? '' : `<div class="field wide"><label for="f-deadline">Deadline</label>
-            <div class="deadline-field">
-              <input id="f-deadline" name="deadline" type="date" value="${a.deadline ? isoDate(a.deadline) : ''}">
-              ${a.deadline ? `<button class="btn" type="button" id="deadline-done">${icon('check')}Mark done</button>` : ''}
-            </div></div>`}
-          <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
-        </div>
-      </form>
-      ${isNew ? '' : `<div>
+      <div class="review-slot">${reviewHtml(a)}</div>
+      <section>
         <div class="section-row">
           <div class="section-title">Timeline</div>
           ${a.events.some(e => !e.manual && e.messageId) ? `<button class="btn btn-sm" id="rescan-app" type="button" title="Read this application's emails again, in case one was sorted wrong">${icon('refresh')}<span>Re-scan emails</span></button>` : ''}
         </div>
         <p id="rescan-note" class="rescan-note" role="status" hidden></p>
         <ul class="timeline">${timelineHtml(a)}</ul>
-      </div>`}
+      </section>
+      <section>
+        <div class="section-row">
+          <div class="section-title">Details</div>
+          <span id="saved-note" role="status"></span>
+        </div>
+        <form id="app-form" novalidate>${detailFieldsHtml(a, false)}</form>
+      </section>
     </div>
     <div class="drawer-foot">
-      ${isNew ? '<span></span>' : `<button class="btn btn-danger" id="delete-btn" type="button">${icon('trash')}Delete</button>`}
-      <div class="right">
-        <span id="saved-note"></span>
-        <button class="btn" data-close type="button">${isNew ? 'Cancel' : 'Close'}</button>
-        <button class="btn btn-primary" id="save-btn" type="button" ${isNew ? '' : 'disabled'}>${isNew ? 'Add application' : 'Save changes'}</button>
-      </div>
+      <button class="btn btn-quiet btn-danger" id="delete-btn" type="button">${icon('trash')}Delete application</button>
+      <button class="meta-link" type="button" data-report="${a.id}">${icon('flag')}Report a problem</button>
     </div>`;
 
+  // Each field saves when you leave it; notes also save as you pause typing.
   const form = $('#app-form');
-  const saveBtn = $('#save-btn');
-  const initial = JSON.stringify(Object.fromEntries(new FormData(form)));
-  form.addEventListener('input', () => {
-    if (!isNew) saveBtn.disabled = JSON.stringify(Object.fromEntries(new FormData(form))) === initial;
-    $('#saved-note').innerHTML = '';
-  });
-  form.addEventListener('submit', e => { e.preventDefault(); saveBtn.click(); });
-
-  saveBtn.onclick = async () => {
-    const companyInput = $('#f-company');
-    if (!companyInput.value.trim()) { companyInput.focus(); companyInput.setCustomValidity('Company is required'); companyInput.reportValidity(); companyInput.setCustomValidity(''); return; }
-    const data = Object.fromEntries(new FormData(form));
-    // Only send a deadline you actually changed (keeps an email's exact time otherwise).
-    if (!isNew && data.deadline === (a.deadline ? isoDate(a.deadline) : '')) delete data.deadline;
-    saveBtn.disabled = true;
+  const saved = Object.fromEntries(new FormData(form));
+  let notesTimer;
+  const saveField = async input => {
+    const { name, value } = input;
+    if (value === saved[name]) return;
+    if (name === 'company' && !value.trim()) {
+      input.value = saved.company;
+      return savedNote("Company can't be empty", 'err');
+    }
+    if (name === 'url' && value && !input.checkValidity()) return savedNote('Links need to start with https://', 'err');
+    saved[name] = value;
+    savedNote('Saving…');
     try {
-      if (isNew) {
-        await api('POST', '/api/applications', data);
-        closeDrawer();
-      } else {
-        const updated = await api('PATCH', `/api/applications/${a.id}`, data);
-        await load();
-        openDrawer(state.applications.find(x => x.id === updated.id));
-        $('#saved-note').innerHTML = `<span class="saved-note">${icon('check')}Saved</span>`;
-        return;
-      }
+      await api('PATCH', `/api/applications/${a.id}`, { [name]: value });
       await load();
+      // A new deadline shows or hides "Mark done".
+      if (name === 'deadline') openDrawer(state.applications.find(x => x.id === a.id));
+      savedNote('Saved', 'ok');
     } catch (err) {
-      saveBtn.disabled = false;
-      $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
+      savedNote(err.message, 'err');
     }
   };
+  form.addEventListener('change', e => { if (e.target.name) saveField(e.target); });
+  form.addEventListener('input', e => {
+    if (e.target.name !== 'notes') return;
+    clearTimeout(notesTimer);
+    notesTimer = setTimeout(() => saveField(e.target), 900);
+  });
+  form.addEventListener('submit', e => e.preventDefault());
 
   $('#deadline-done')?.addEventListener('click', async () => {
     await api('PATCH', `/api/applications/${a.id}`, { deadlineDone: true });
     await load();
     openDrawer(state.applications.find(x => x.id === a.id));
-    $('#saved-note').innerHTML = `<span class="saved-note">${icon('check')}Deadline done</span>`;
+    savedNote('Deadline done', 'ok');
   });
 
   // Read this application's emails again with the current classifier (e.g. after adding a Groq key).
@@ -940,9 +1020,9 @@ function openDrawer(app) {
       openDrawer(state.applications.find(x => x.id === a.id));
       note(r.changed
         ? `Re-read ${r.emails} ${r.emails === 1 ? 'email' : 'emails'} · ${r.changed} sorted differently now.`
-        : `Re-read ${r.emails} ${r.emails === 1 ? 'email' : 'emails'} · nothing changed.${r.notJob ? ` ${r.notJob} no longer look like application emails; use “Wrong application?” to move them.` : ''}`, 'ok');
+        : `Re-read ${r.emails} ${r.emails === 1 ? 'email' : 'emails'} · nothing changed.${r.notJob ? ` ${r.notJob} no longer look like application emails; use “Filed correctly?” to remove them.` : ''}`, 'ok');
       if (r.changed && a.events.some(e => e.manual)) {
-        $('#rescan-note').textContent += ' A status you set by hand still wins; change it above if needed.';
+        $('#rescan-note').textContent += ' A status you set by hand still wins; change it at the top if needed.';
       }
     } catch (err) {
       btn.disabled = false;
@@ -952,26 +1032,28 @@ function openDrawer(app) {
     }
   });
 
-  if (!isNew) {
-    const del = $('#delete-btn');
-    del.onclick = async () => {
-      if (!del.classList.contains('confirming')) {
-        del.classList.add('confirming');
-        del.innerHTML = `${icon('trash')}Click again to delete`;
-        setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); del.innerHTML = `${icon('trash')}Delete`; } }, 4000);
-        return;
-      }
-      await api('DELETE', `/api/applications/${a.id}`);
-      closeDrawer();
-      load();
-    };
-  }
+  const del = $('#delete-btn');
+  del.onclick = async () => {
+    if (!del.classList.contains('confirming')) {
+      del.classList.add('confirming');
+      del.innerHTML = `${icon('trash')}Click again to delete`;
+      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); del.innerHTML = `${icon('trash')}Delete application`; } }, 4000);
+      return;
+    }
+    await api('DELETE', `/api/applications/${a.id}`);
+    closeDrawer();
+    load();
+  };
 
+  showDrawer($('#drawer [data-close]'));
+}
+
+function showDrawer(focusEl) {
   $('#scrim').hidden = false;
   const drawer = $('#drawer');
   drawer.classList.add('open');
   drawer.setAttribute('aria-hidden', 'false');
-  (isNew ? $('#f-company') : drawer.querySelector('[data-close]')).focus();
+  focusEl?.focus();
 }
 
 function closeDrawer() {
@@ -992,35 +1074,16 @@ $('#drawer').addEventListener('click', async e => {
   if (e.target.closest('[data-close]')) return closeDrawer();
   const fix = e.target.closest('[data-fix]');
   if (fix) {
-    // The review card's "No, fix it" opens the same picker as the timeline's link.
+    // The timeline's "Filed correctly?" and the check card's "Move it" / "Not a job" open
+    // the same picker; the card's buttons go straight to their answer.
     const filer = $(`#drawer [data-filer="${fix.dataset.fix}"]`);
-    filer.hidden = !filer.hidden;
-    if (!filer.hidden) { filer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); filer.querySelector('select').focus(); }
+    filer.hidden = fix.dataset.show ? false : !filer.hidden;
+    if (fix.dataset.show) showFilerPane(filer, fix.dataset.show);
+    if (!filer.hidden) filer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return;
   }
-  const block = e.target.closest('[data-block]');
-  if (block) {
-    // Two clicks: it removes every email from that sender, across applications.
-    if (!block.classList.contains('confirming')) {
-      block.classList.add('confirming');
-      block.textContent = `Click again to ignore ${block.dataset.block}`;
-      setTimeout(() => { if (block.isConnected) { block.classList.remove('confirming'); block.textContent = `Ignore everything from ${block.dataset.block}`; } }, 4000);
-      return;
-    }
-    block.disabled = true;
-    try {
-      const { domain, removed } = await api('POST', '/api/blocked-senders', { domain: block.dataset.block });
-      const id = openId;
-      await load();
-      const a = state.applications.find(x => x.id === id);
-      if (a) openDrawer(a); else closeDrawer();
-      toast(`Ignoring ${domain} · removed ${removed} ${removed === 1 ? 'email' : 'emails'}`);
-    } catch (err) {
-      block.disabled = false;
-      $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
-    }
-    return;
-  }
+  const pane = e.target.closest('[data-filer-show]');
+  if (pane) return showFilerPane(pane.closest('.filer'), pane.dataset.filerShow);
   const remove = e.target.closest('[data-remove-event]');
   if (remove) {
     const id = openId;
@@ -1048,20 +1111,54 @@ $('#drawer').addEventListener('click', async e => {
   if (!button) return;
   button.disabled = true;
   try {
-    if (button.dataset.confirm) return await assignEmail(button.dataset.confirm, { action: 'confirm' });
-    if (button.dataset.ignore) return await assignEmail(button.dataset.ignore, { action: 'ignore' });
+    if (button.dataset.confirm) {
+      await assignEmail(button.dataset.confirm, { action: 'confirm' });
+      return toast('Thanks. That email is filed correctly');
+    }
+    if (button.dataset.ignore) {
+      // "Not a job", optionally for everything from that sender.
+      const block = button.closest('.filer').querySelector('[data-also-block]:checked');
+      if (block) {
+        const id = openId;
+        const { domain, removed } = await api('POST', '/api/blocked-senders', { domain: block.dataset.alsoBlock });
+        await load();
+        const a = state.applications.find(x => x.id === id);
+        if (a) openDrawer(a); else closeDrawer();
+        return toast(`Ignoring ${domain} · removed ${removed} ${removed === 1 ? 'email' : 'emails'}`);
+      }
+      await assignEmail(button.dataset.ignore, { action: 'ignore' });
+      return toast('Removed: not a job email');
+    }
     const filer = button.closest('.filer');
     const to = filer.querySelector('[data-move-to]').value;
-    if (to !== 'new') return await assignEmail(button.dataset.move, { action: 'move', to });
+    if (to !== 'new') {
+      await assignEmail(button.dataset.move, { action: 'move', to });
+      return toast(`Moved to ${state.applications.find(x => x.id === to)?.company || 'the other application'}`);
+    }
     const company = filer.querySelector('[data-new="company"]');
     if (!company.value.trim()) { button.disabled = false; return company.focus(); }
     await assignEmail(button.dataset.move, { action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value });
+    toast(`Moved to a new application at ${company.value.trim()}`);
   } catch (err) {
     button.disabled = false;
-    $('#saved-note').innerHTML = `<span class="saved-note" style="color:var(--danger)">${esc(err.message)}</span>`;
+    savedNote(err.message, 'err');
+    toast(err.message);
   }
 });
-$('#drawer').addEventListener('change', e => {
+
+// Inside "Filed correctly?": show the Move or Not-a-job step.
+function showFilerPane(filer, which) {
+  filer.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== which; });
+  filer.querySelectorAll('[data-filer-show]').forEach(b => b.setAttribute('aria-expanded', b.dataset.filerShow === which));
+  filer.querySelector(which === 'move' ? '[data-move-to]' : '[data-ignore]')?.focus();
+}
+$('#drawer').addEventListener('change', async e => {
+  // Status at the top of the panel saves at once, the same as in the table.
+  const status = e.target.closest('select[data-status-for]');
+  if (status) {
+    await setStatus(status.dataset.statusFor, status.value);
+    return toast(`Status set to ${STAGE_LABEL[status.value]}`);
+  }
   const pick = e.target.closest('[data-move-to]');
   if (!pick) return;
   const filer = pick.closest('.filer');
@@ -1094,7 +1191,7 @@ $('#action-list').addEventListener('click', async e => {
     foldRow(a.id);
     try {
       for (const ev of a.events.filter(needsCheck)) await api('POST', `/api/emails/${ev.id}/assign`, { action: 'confirm' });
-      toast(`${a.company}: emails confirmed`);
+      toast(`${a.company}: filed correctly`);
     } catch (err) {
       toast(err.message);
     }
@@ -1108,53 +1205,55 @@ $('#action-list').addEventListener('keydown', e => {
   if (item && e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openById(item.dataset.open); }
 });
 
-// "More" menu: anchor the popover under its button.
-const menu = $('#more-menu');
-menu.addEventListener('beforetoggle', e => {
-  if (e.newState !== 'open') return;
-  const r = $('#more-btn').getBoundingClientRect();
-  menu.style.top = `${r.bottom + 6}px`;
-  menu.style.left = `${Math.max(8, r.right - 300)}px`;
-});
+// ---------------------------------------------------------------- settings page
 $('#blocked-list').addEventListener('click', async e => {
   const b = e.target.closest('[data-unblock]');
   if (!b) return;
   b.disabled = true;
   await api('DELETE', `/api/blocked-senders/${encodeURIComponent(b.dataset.unblock)}`);
+  toast(`nuj will read ${b.dataset.unblock} again`);
   load();
 });
 $('#rescan-btn').onclick = async () => {
   $('#rescan-btn').disabled = true;
   try {
     await api('POST', '/api/rescan');
-    menu.hidePopover();
+    toast('Re-scanning your emails. Progress shows at the top of the page');
   } catch (err) {
-    alert(err.message);
+    toast(err.message);
   }
   load();
 };
 
-$('#disconnect-btn').onclick = async () => {
-  if (!confirm('Disconnect Gmail? The tracker stops updating until you connect again.')) return;
+// Disconnecting is rendered with the Gmail row, so listen on the page. Two clicks,
+// like the other things here that are hard to undo.
+$('#view-settings').addEventListener('click', async e => {
+  const btn = e.target.closest('#disconnect-btn');
+  if (!btn) return;
+  if (!btn.classList.contains('confirming')) {
+    btn.classList.add('confirming', 'btn-danger');
+    btn.textContent = 'Click again to disconnect';
+    setTimeout(() => { if (btn.isConnected) { btn.classList.remove('confirming', 'btn-danger'); btn.textContent = 'Disconnect'; } }, 4000);
+    return;
+  }
+  btn.disabled = true;
   try {
     await api('POST', '/api/disconnect');
-    menu.hidePopover();
+    toast('Gmail disconnected. Your applications stay');
   } catch (err) {
-    alert(err.message);
+    toast(err.message);
   }
   load();
-};
+});
 
 // AI email sorting sheet (your Groq key)
 const groqDialog = $('#groq-dialog');
 function openGroq() {
-  if (menu.matches(':popover-open')) menu.hidePopover();
   closeNav();
   groqMsg('');
   groqDialog.showModal();
   $('#groq-key').focus();
 }
-$('#groq-open').onclick = openGroq;
 $('#groq-menu-btn').onclick = openGroq;
 groqDialog.addEventListener('click', e => {
   if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) groqDialog.close();
@@ -1248,7 +1347,7 @@ rowsEl.addEventListener('keydown', e => {
 });
 rowsEl.addEventListener('change', e => {
   const sel = e.target.closest('select[data-status-for]');
-  if (sel) setStatus(sel.dataset.statusFor, sel.value);
+  if (sel) setStatus(sel.dataset.statusFor, sel.value).then(() => toast(`Status set to ${STAGE_LABEL[sel.value]}`));
 });
 
 $('#stage-tabs').addEventListener('click', e => {
@@ -1404,19 +1503,21 @@ let view = 'dashboard';
 function route() {
   const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
   const soon = SOON[id];
-  const reports = id === 'reports';
+  const page = id === 'reports' || id === 'settings' ? id : null; // pages of their own
   const prev = view;
-  view = soon ? id : reports ? 'reports' : 'dashboard';
+  if (view !== (soon ? id : page || 'dashboard') && $('#drawer').classList.contains('open')) closeDrawer(); // a new page, not the panel on top of it
+  view = soon ? id : page || 'dashboard';
   $('#view-dashboard').hidden = view !== 'dashboard';
   $('#view-soon').hidden = !soon;
-  $('#view-reports').hidden = !reports;
+  $('#view-reports').hidden = page !== 'reports';
+  $('#view-settings').hidden = page !== 'settings';
   if (soon) renderSoon(id);
-  if (reports) loadReports();
-  const current = soon || reports ? id : id === 'applications' ? 'applications' : 'dashboard';
+  if (page === 'reports') loadReports();
+  const current = soon || page ? id : id === 'applications' ? 'applications' : 'dashboard';
   document.querySelectorAll('.side-link').forEach(l => {
     if (l.dataset.view === current) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
   });
-  $('#crumb').textContent = soon ? soon.label : reports ? 'Reports' : current === 'applications' ? 'Applications' : 'Dashboard';
+  $('#crumb').textContent = soon ? soon.label : { reports: 'Reports', settings: 'Settings', applications: 'Applications' }[current] || 'Dashboard';
   closeNav();
   if (view === 'dashboard' && prev !== 'dashboard') renderSankey(); // its width was 0 while hidden
   if (id === 'applications') requestAnimationFrame(() => $('#apps-title').scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -1429,7 +1530,6 @@ window.addEventListener('hashchange', route);
 const reportDialog = $('#report-dialog');
 let reportAppId = null;
 function openReport(appId) {
-  if (menu.matches(':popover-open')) menu.hidePopover();
   closeNav();
   const a = appId && state.applications.find(x => x.id === appId);
   reportAppId = a ? a.id : null;

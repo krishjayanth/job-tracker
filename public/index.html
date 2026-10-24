@@ -45,6 +45,7 @@
       <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
       <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
     </defs>
   </svg>
@@ -58,16 +59,13 @@
       <a class="side-link" href="#/" data-view="dashboard"><svg class="icon"><use href="#i-dashboard"/></svg>Dashboard</a>
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
+      <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
       <div class="side-label">Coming soon</div>
       <div id="soon-links"></div>
     </nav>
     <div class="side-bottom">
       <button id="report-open" class="side-link side-report" type="button" data-report><svg class="icon"><use href="#i-flag"/></svg>Report a problem</button>
-      <button id="groq-open" class="side-card" type="button" hidden>
-        <span class="side-card-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
-        <span class="side-card-text"><strong>AI email sorting</strong><small><i id="groq-side-dot" class="dot"></i><span id="groq-side-status"></span></small></span>
-      </button>
-      <div id="side-user" class="side-user" hidden></div>
+      <div id="side-user-row" class="side-user" hidden><span id="side-user"></span><a href="/logout">Sign out</a></div>
     </div>
   </aside>
   <div id="nav-scrim" class="nav-scrim" hidden></div>
@@ -88,47 +86,6 @@
       <button id="sync-btn" class="btn btn-quiet" type="button" title="Check Gmail now">
         <svg class="icon"><use href="#i-refresh"/></svg><span>Sync</span>
       </button>
-      <button id="more-btn" class="icon-btn" type="button" popovertarget="more-menu" aria-label="Settings and sync options" title="Settings and sync options">
-        <svg class="icon"><use href="#i-more"/></svg>
-      </button>
-      <div id="more-menu" class="menu" popover>
-        <div class="menu-title">Re-scan all emails</div>
-        <p>Re-reads every application email with the current classifier. Your status changes, renames, notes and
-          deadlines are kept, and deleted applications stay deleted. A backup is saved first.
-          On Groq's free tier, emails beyond the daily limit are sorted by the built-in rules.</p>
-        <button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan now</button>
-        <div id="groq-section" class="menu-note" hidden>
-          <button id="groq-menu-btn" class="menu-row" type="button">
-            <svg class="icon"><use href="#i-sparkles"/></svg>
-            <span><strong>AI email sorting</strong><small id="groq-menu-status"></small></span>
-            <svg class="icon chev"><use href="#i-chevron"/></svg>
-          </button>
-        </div>
-        <div class="menu-note">
-          <button class="menu-row" type="button" data-report>
-            <svg class="icon"><use href="#i-flag"/></svg>
-            <span><strong>Report a problem</strong><small>Something broke or was sorted wrong</small></span>
-            <svg class="icon chev"><use href="#i-chevron"/></svg>
-          </button>
-        </div>
-        <div id="blocked-section" class="menu-note" hidden>
-          <div class="menu-title">Ignored senders</div>
-          <p>nuj skips email from these. Emails removed when you ignored a sender stay removed.</p>
-          <ul id="blocked-list" class="blocked-list"></ul>
-        </div>
-        <div id="disconnect" class="menu-note" hidden>
-          <p>Stop reading your inbox and cancel nuj's Gmail access. Your applications stay.</p>
-          <button id="disconnect-btn" class="btn" type="button" style="margin-top:10px">Disconnect Gmail</button>
-        </div>
-        <div id="account" class="menu-note" hidden>
-          <p>Signed in as <strong id="account-email"></strong></p>
-          <a class="btn" href="/logout" style="margin-top:10px;text-decoration:none">Sign out</a>
-        </div>
-        <div id="delete-section" class="menu-note" hidden>
-          <p>Delete your applications, Groq key, problem reports and Gmail access from nuj for good.</p>
-          <button id="delete-account-btn" class="btn btn-danger" type="button" style="margin-top:10px">Delete my account</button>
-        </div>
-      </div>
       <button id="add-btn" class="btn btn-primary" type="button">
         <svg class="icon"><use href="#i-plus"/></svg><span>Add application</span>
       </button>
@@ -236,6 +193,60 @@
     <section class="panel">
       <div class="stage-tabs" id="report-tabs" role="tablist" aria-label="Filter reports"></div>
       <ul id="report-list" class="report-list"></ul>
+    </section>
+  </main>
+
+  <main class="page settings-page" id="view-settings" hidden>
+    <section class="summary">
+      <div class="summary-head"><h1>Settings</h1></div>
+    </section>
+
+    <section class="panel settings-group" aria-labelledby="set-gmail-title">
+      <h2 id="set-gmail-title">Gmail</h2>
+      <div class="settings-row">
+        <div><strong>Connection</strong><p id="set-gmail-status"></p></div>
+        <div class="settings-actions" id="set-gmail-actions"></div>
+      </div>
+      <div class="settings-row">
+        <div><strong>Re-scan all emails</strong>
+          <p>Reads every application email again with your current sorting. Your status changes, renames, notes and deadlines are kept, deleted applications stay deleted, and a backup is saved first.</p></div>
+        <div class="settings-actions"><button id="rescan-btn" class="btn" type="button"><svg class="icon"><use href="#i-refresh"/></svg>Re-scan</button></div>
+      </div>
+    </section>
+
+    <section class="panel settings-group" id="groq-section" aria-labelledby="set-ai-title" hidden>
+      <h2 id="set-ai-title">AI email sorting</h2>
+      <div class="settings-row">
+        <div><strong id="groq-menu-title"></strong><p id="groq-menu-status"></p></div>
+        <div class="settings-actions"><button id="groq-menu-btn" class="btn" type="button"><svg class="icon"><use href="#i-key"/></svg>Manage key</button></div>
+      </div>
+    </section>
+
+    <section class="panel settings-group" aria-labelledby="set-blocked-title">
+      <h2 id="set-blocked-title">Ignored senders</h2>
+      <p class="settings-intro">nuj skips email from these. To add one, open an email's "Filed correctly?" and choose Not a job. Emails removed when you ignored a sender stay removed.</p>
+      <ul id="blocked-list" class="blocked-list"></ul>
+      <p id="blocked-empty" class="settings-empty">You haven't ignored any senders.</p>
+    </section>
+
+    <section class="panel settings-group" aria-labelledby="set-help-title">
+      <h2 id="set-help-title">Help</h2>
+      <div class="settings-row">
+        <div><strong>Report a problem</strong><p>Something broke, or an email was sorted wrong and you can't fix it yourself.</p></div>
+        <div class="settings-actions"><button class="btn" type="button" data-report><svg class="icon"><use href="#i-flag"/></svg>Report a problem</button></div>
+      </div>
+    </section>
+
+    <section class="panel settings-group" id="account" aria-labelledby="set-account-title" hidden>
+      <h2 id="set-account-title">Account</h2>
+      <div class="settings-row">
+        <div><strong>Signed in as</strong><p id="account-email"></p></div>
+        <div class="settings-actions"><a class="btn" href="/logout">Sign out</a></div>
+      </div>
+      <div class="settings-row danger-zone" id="delete-section" hidden>
+        <div><strong>Delete my account</strong><p>Deletes your applications, Groq key, problem reports and Gmail access from nuj for good.</p></div>
+        <div class="settings-actions"><button id="delete-account-btn" class="btn btn-danger" type="button">Delete my account</button></div>
+      </div>
     </section>
   </main>
 

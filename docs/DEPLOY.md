@@ -12,7 +12,7 @@ To just look around, you don't need any of this: `npm install && npm run demo` r
 The app creates its one table (`app_state`) on first start.
 
 ## 2. Email classifier: Groq
-Each person adds their own free Groq API key in the app (⋯ menu › Groq API key), so everyone gets their own
+Each person adds their own free Groq API key in the app (Settings › AI email sorting, or when they first connect Gmail), so everyone gets their own
 free-tier allowance. Without one, their emails are sorted by the built-in rules. The key is checked with Groq
 when it's saved, stored encrypted with `SESSION_SECRET`, and never sent back to the browser. (If you change
 `SESSION_SECRET`, saved keys can't be read and people are asked to add them again.)
@@ -58,7 +58,7 @@ Open https://nuj.onrender.com and click **Sign in with Google**. The first time,
 Everyone in `ALLOWED_EMAIL` gets their own tracker, Gmail connection and Groq key; nobody can see anyone else's.
 To invite someone, add their Gmail address to `ALLOWED_EMAIL` on Render (comma-separated; keep yours first) and
 send them the link. Removing someone stops them signing in and stops their syncing; their data stays until they
-delete their account from the ⋯ menu.
+delete their account in Settings.
 
 Google limits apps that read Gmail and haven't been through its verification:
 - In **Testing**, only the test users you list (up to 100) can sign in, and Gmail access expires every 7 days.
