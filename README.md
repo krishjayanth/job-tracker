@@ -128,7 +128,7 @@ free tier awake):
 | Server | Node.js 22+ (ES modules), Express 5 |
 | Data | PostgreSQL on Neon (`jsonb`), or local JSON files |
 | Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`) |
-| Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties |
+| Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties (light and dark, following the system) |
 | Live updates | Server-Sent Events |
 | Export | ExcelJS |
 | Testing / CI | `node:test`, GitHub Actions (Node 22 and 24, plus a demo-mode smoke test) |
