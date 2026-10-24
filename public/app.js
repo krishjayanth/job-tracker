@@ -430,7 +430,27 @@ function openFlowDialog() {
 }
 
 // The small chart is a preview (click to enlarge); the large one is interactive.
+// Where every stage and flow is on screen right now, even mid-glide. A redraw starts from
+// here, so an update arriving straight after another carries on instead of snapping.
+function liveLayout(el) {
+  const svg = el.querySelector('svg');
+  if (!svg || !el.layout) return el.layout;
+  const nodes = new Map();
+  const links = new Map();
+  for (const g of svg.querySelectorAll('.node')) {
+    const rect = g.querySelector('rect');
+    const y = Number(rect.getAttribute('y'));
+    nodes.set(g.__data__.id, { y0: y, y1: y + Number(rect.getAttribute('height')), x0: g.__data__.x0 });
+  }
+  for (const path of svg.querySelectorAll('.link')) {
+    const d = path.__data__;
+    links.set(`${d.source.id}>${d.target.id}`, { d: path.getAttribute('d'), w: Number(path.getAttribute('stroke-width')) });
+  }
+  return { width: el.layout.width, nodes, links };
+}
+
 function drawSankey(el, apps, { large }) {
+  const prev = liveLayout(el);
   el.innerHTML = '';
   if (!apps.length) {
     el.innerHTML = `<div class="action-empty">Your application flow appears here once you have applications.</div>`;
@@ -470,9 +490,13 @@ function drawSankey(el, apps, { large }) {
     .attr('role', 'img').attr('aria-label', 'Flow of applications between stages');
   const defs = svg.append('defs');
 
+  // A hairline gap between neighbouring flows keeps them reading as separate strands.
+  const strokeWidth = d => Math.max(1.2, d.width - (large ? 2 : 1.5));
+  const linkPath = d3.sankeyLinkHorizontal();
+  const linkKey = d => `${d.source.id}>${d.target.id}`;
   const link = svg.append('g').selectAll('path').data(graph.links).join('path')
     .attr('class', 'link')
-    .attr('d', d3.sankeyLinkHorizontal())
+    .attr('d', linkPath)
     // Flows are a neutral wash (CSS); a flow shows its stages' colours when picked out.
     .each((d, i) => {
       const id = `grad-${large ? 'l' : 's'}-${i}`;
@@ -482,8 +506,7 @@ function drawSankey(el, apps, { large }) {
       g.append('stop').attr('offset', '100%').attr('stop-color', color(d.target.id));
       d.paint = `url(#${id})`;
     })
-    // A hairline gap between neighbouring flows keeps them reading as separate strands.
-    .attr('stroke-width', d => Math.max(1.2, d.width - (large ? 2 : 1.5)));
+    .attr('stroke-width', strokeWidth);
 
   const total = apps.length;
   const node = svg.append('g').selectAll('g').data(graph.nodes).join('g').attr('class', 'node');
@@ -560,10 +583,44 @@ function drawSankey(el, apps, { large }) {
   node.on('pointerleave', blur);
   link.on('pointerleave', blur);
 
-  // Draw the flows in once, the first time this chart appears. Live refreshes don't replay it.
-  if (el.dataset.drawn || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // Remember the layout this draw settles on (its width decides whether to glide next time).
+  el.layout = {
+    width,
+    nodes: new Map(graph.nodes.map(d => [d.id, { y0: d.y0, y1: d.y1, x0: d.x0 }])),
+    links: new Map(graph.links.map(d => [linkKey(d), { d: linkPath(d), w: strokeWidth(d) }])),
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  // A live update: every stage and flow glides from where it was to where it is now, and
+  // anything new fades in, so you see what changed instead of the chart being swapped.
+  // A resize redraws as is: gliding while you drag a window edge only lags.
+  if (el.dataset.drawn) {
+    if (!prev || prev.width !== width) return;
+    const glide = sel => sel.transition().duration(480).ease(d3.easeCubicOut);
+    node.each(function (d) {
+      const was = prev.nodes.get(d.id);
+      const g = d3.select(this);
+      if (!was) return void glide(g.style('opacity', 0)).style('opacity', 1);
+      if (was.y0 === d.y0 && was.y1 === d.y1) return;
+      glide(g.select('rect').attr('y', was.y0).attr('height', Math.max(3, was.y1 - was.y0)))
+        .attr('y', d.y0).attr('height', Math.max(3, d.y1 - d.y0));
+      const shift = (was.y0 + was.y1) / 2 - (d.y0 + d.y1) / 2;
+      glide(g.select('text').attr('transform', `translate(0,${shift})`)).attr('transform', 'translate(0,0)');
+    });
+    link.each(function (d) {
+      const was = prev.links.get(linkKey(d));
+      const path = d3.select(this);
+      if (!was) return void glide(path.style('opacity', 0)).style('opacity', 1);
+      glide(path.attr('d', was.d).attr('stroke-width', was.w))
+        .attr('d', linkPath(d)).attr('stroke-width', strokeWidth(d));
+    });
+    return;
+  }
+
+  // Draw the flows in once, the first time this chart appears.
   el.dataset.drawn = '1';
   const ease = 'cubic-bezier(.16, 1, .3, 1)';
+  if (prev) return; // drawn before, just without the flourish (reduced motion was on)
   link.each(function (d) {
     const len = this.getTotalLength();
     this.style.strokeDasharray = `${len} ${len}`;
@@ -665,15 +722,47 @@ function renderTabs() {
   scoped.forEach(a => counts[tabOf(a)]++);
   const total = scoped.length;
   const tabs = [['all', 'All', total, 'accent'], ...TAB_ORDER.map(s => [s, STAGE_LABEL[s], counts[s], s])];
-  $('#stage-tabs').innerHTML = tabs.map(([id, label, n, c]) => `
+  // The underline is one element that stays put across renders, so it can slide.
+  const strip = $('#stage-tabs');
+  strip.querySelectorAll('.tab').forEach(t => t.remove());
+  strip.insertAdjacentHTML('afterbegin', tabs.map(([id, label, n]) => `
     <button class="tab ${n === 0 && id !== 'all' ? 'zero' : ''}" role="tab" aria-selected="${filter === id}" data-filter="${id}" type="button">
       ${label}<span class="n">${n}</span>
-    </button>`).join('');
+    </button>`).join(''));
+  moveTabIndicator();
   const bar = $('#stage-bar');
   bar.classList.toggle('filtered', filter !== 'all');
   bar.innerHTML = TAB_ORDER.filter(s => counts[s]).map(s =>
     `<span class="${filter === s ? 'on' : ''}" style="--c:${color(s)};flex-grow:${counts[s]}" title="${STAGE_LABEL[s]}: ${counts[s]}"></span>`).join('');
 }
+
+// Slide the underline to the selected tab, from wherever it is now (a click mid-slide
+// redirects it). It jumps instead on first placement and resizes, and during a View
+// Transition, which moves it itself.
+function moveTabIndicator({ instant = false } = {}) {
+  const line = $('#tab-indicator');
+  const tab = $('#stage-tabs .tab[aria-selected="true"]');
+  if (!tab) return;
+  const jump = instant || !line.dataset.placed || document.documentElement.classList.contains('vt');
+  if (jump) line.classList.add('instant');
+  line.style.transform = `translateX(${tab.offsetLeft}px) scaleX(${tab.offsetWidth})`;
+  line.dataset.placed = '1';
+  if (jump) { void line.offsetWidth; line.classList.remove('instant'); }
+}
+new ResizeObserver(() => moveTabIndicator({ instant: true })).observe($('#stage-tabs'));
+document.fonts?.ready.then(() => moveTabIndicator({ instant: true }));
+
+// Filtering the table: rows that stay slide to their new places, new ones fade in, the
+// rest of the page holds still (View Transitions). Instant where unsupported or when
+// reduced motion is on.
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function withTransition(update) {
+  if (!document.startViewTransition || reduceMotion.matches) return update();
+  const root = document.documentElement;
+  root.classList.add('vt');
+  document.startViewTransition(update).finished.finally(() => root.classList.remove('vt'));
+}
+const MAX_ROWS_TO_MOVE = 150; // past this, rows cross-fade as a block rather than one by one
 
 function sortValue(a, key) {
   if (key === 'status') return STATUS_ORDER.indexOf(a.status);
@@ -757,7 +846,7 @@ function renderTable() {
     const last = latestEvent(a);
     const fresh = prev && prev.get(a.id) !== a.lastActivity;
     return `
-    <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}">
+    <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}"${rows.length <= MAX_ROWS_TO_MOVE ? ` style="view-transition-name:r-${a.id}"` : ''}>
       <td>
         <div class="company">
           <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may be filed under the wrong application">Check filing</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
@@ -1430,18 +1519,23 @@ rowsEl.addEventListener('change', e => {
 $('#stage-tabs').addEventListener('click', e => {
   const tab = e.target.closest('[data-filter]');
   if (!tab) return;
-  filter = tab.dataset.filter;
-  renderTabs();
-  renderTable();
+  withTransition(() => {
+    filter = tab.dataset.filter;
+    renderTabs();
+    renderTable();
+  });
 });
 document.querySelector('thead').addEventListener('click', e => {
   const b = e.target.closest('.sort');
   if (!b) return;
   const key = b.dataset.sort;
-  sort = sort.key === key
-    ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
-    : { key, dir: key === 'company' || key === 'status' ? 'asc' : 'desc' };
-  renderTable();
+  // Re-sorting is where rows moving to their new places helps most.
+  withTransition(() => {
+    sort = sort.key === key
+      ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: key === 'company' || key === 'status' ? 'asc' : 'desc' };
+    renderTable();
+  });
 });
 $('#empty').addEventListener('click', e => {
   if (e.target.closest('[data-add]')) openDrawer(null);
@@ -1456,14 +1550,14 @@ function clearFilters(which) {
 }
 $('#filter-chips').addEventListener('click', e => {
   const b = e.target.closest('[data-unfilter]');
-  if (b) clearFilters(b.dataset.unfilter);
+  if (b) withTransition(() => clearFilters(b.dataset.unfilter));
 });
-$('#month').addEventListener('change', e => {
+$('#month').addEventListener('change', e => withTransition(() => {
   month = e.target.value;
   renderMonths();
   renderTabs();
   renderTable();
-});
+}));
 
 // Excel export of exactly what the table shows.
 $('#export-btn').onclick = async () => {
