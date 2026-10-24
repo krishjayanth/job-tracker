@@ -221,6 +221,7 @@ input, textarea { caret-color: var(--accent); }
   box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .8);
   transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
   transition: transform .32s var(--ease), opacity .2s ease;
+  overflow: hidden; /* keeps the Undo countdown inside the rounded corners */
 }
 .toast.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
 .toast .icon { width: 15px; height: 15px; color: #059669; }
@@ -230,6 +231,13 @@ input, textarea { caret-color: var(--accent); }
 }
 .toast button:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
 .toast:not(:has(button)) { padding-right: 14px; }
+/* How long Undo has left: runs down from full to empty, then the message drops away. */
+.toast-timer {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: currentColor; opacity: .45; transform-origin: left;
+  animation: toast-timer linear forwards;
+}
+@keyframes toast-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .deadline-field { display: flex; gap: 8px; }
 .deadline-field input { flex: 1; }
 
@@ -957,4 +965,6 @@ table.apps { width: 100%; border-collapse: collapse; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  /* The Undo countdown is information, not decoration: it keeps its real length (UNDO_SHOW_MS). */
+  .toast .toast-timer { animation-duration: 5s !important; }
 }

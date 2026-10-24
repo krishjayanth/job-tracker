@@ -648,7 +648,10 @@ function toast(text, undo) {
     el.setAttribute('role', 'status');
     document.body.append(el);
   }
-  el.innerHTML = `${icon('check')}<span>${esc(text)}</span>${undo ? '<button type="button" data-undo>Undo</button>' : ''}`;
+  // With Undo, a bar along the bottom runs down over UNDO_SHOW_MS: when it's empty, Undo is gone.
+  el.innerHTML = `${icon('check')}<span>${esc(text)}</span>${undo
+    ? `<button type="button" data-undo>Undo</button><i class="toast-timer" style="animation-duration:${UNDO_SHOW_MS}ms" aria-hidden="true"></i>`
+    : ''}`;
   el.querySelector('[data-undo]')?.addEventListener('click', async () => {
     el.classList.remove('show');
     await undo();
@@ -656,8 +659,9 @@ function toast(text, undo) {
   }, { once: true });
   requestAnimationFrame(() => el.classList.add('show'));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), undo ? 8000 : 4500); // time to reach Undo
+  toastTimer = setTimeout(() => el.classList.remove('show'), undo ? UNDO_SHOW_MS : 4500);
 }
+const UNDO_SHOW_MS = 5000;
 
 // Everything except the stage tab: month, search and chart stage. Tab counts use it,
 // so a tab's number is how many you'd see by clicking it.
@@ -1745,7 +1749,7 @@ $('#report-list').addEventListener('click', async e => {
       await api('DELETE', `/api/reports/${id}`).catch(() => {});
       pendingDeletes.delete(id);
       loadReports();
-    }, 8500);
+    }, UNDO_SHOW_MS + 300); // just after the Undo goes
     toast('Report deleted', async () => {
       clearTimeout(timer);
       pendingDeletes.delete(id);
