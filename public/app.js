@@ -174,6 +174,7 @@ function renderGmail() {
   renderSettings();
   renderProgress();
   renderSetup();
+  renderWhatsNew();
   renderGroq();
   drawBanners();
 }
@@ -228,6 +229,27 @@ function renderSettings() {
   // A dot on Settings when something there needs you.
   $('#settings-dot').hidden = !(g.lastSyncError || state.groq?.problem);
 }
+
+// After an update: what changed, once. Closing it in any way marks it as seen.
+let whatsNewShown = false;
+function renderWhatsNew() {
+  const w = state.whatsNew;
+  const dialog = $('#whats-new');
+  if (!w || whatsNewShown || state.needsSetup || document.querySelector('dialog[open]')) return;
+  whatsNewShown = true;
+  $('#whats-new-title').textContent = w.title;
+  $('#whats-new-rescan').hidden = !w.rescan;
+  $('#whats-new-rescan').textContent = w.rescan || '';
+  $('#whats-new-list').innerHTML = w.items.map(i => `<li><strong>${esc(i.title)}</strong><span>${esc(i.text)}</span></li>`).join('');
+  dialog.showModal();
+}
+$('#whats-new').addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) e.currentTarget.close();
+});
+$('#whats-new').addEventListener('close', () => {
+  state.whatsNew = null;
+  api('POST', '/api/whats-new/seen').catch(() => {});
+});
 
 // First run: nothing is read until you choose a Groq key or the built-in rules.
 let setupAsked = false;

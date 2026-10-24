@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { initStorage, flushAll, refresh, newId } from './src/store.js';
+import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
+import { rescanEveryoneOnce } from './src/rescan-all.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
 import { buildWorkbook } from './src/export.js';
@@ -161,11 +163,40 @@ app.get('/api/state', async (req, res) => {
     groq: DEMO ? null : user.groqInfo(),
     // Gmail is connected but nothing has been read yet: ask how to sort first.
     needsSetup: !DEMO && user.mailbox.connected() && user.needsSetup(),
+    whatsNew: whatsNewFor(user),
     user: authEnabled ? user.email : null,
     reports,
     demo: DEMO,
     ghostDays: GHOST_DAYS,
   });
+});
+
+// The latest release notes, for someone who used nuj before this update and hasn't seen
+// them. Someone new has nothing to compare against, so they're marked as seen instead.
+function whatsNewFor(user) {
+  const db = user.store.db;
+  if (DEMO || db.seenRelease === LATEST_RELEASE.id) return null;
+  if (!db.applications.length && !db.lastSync) {
+    db.seenRelease = LATEST_RELEASE.id;
+    user.store.save();
+    return null;
+  }
+  // Tell people whose emails are re-read with the new sorting (see rescanEveryoneOnce).
+  const rescanned = db.rescanned === RESCAN_ID;
+  const rereading = rescanned || (!user.owner && user.mailbox.connected());
+  return {
+    ...LATEST_RELEASE,
+    rescan: rereading
+      ? (rescanned ? 'Your application emails have been read again with the new sorting.' : "Your application emails are being read again with the new sorting; you'll see the progress on your dashboard.")
+        + ' Your notes, deadlines, status changes and fixes are kept.'
+      : null,
+  };
+}
+
+app.post('/api/whats-new/seen', (req, res) => {
+  req.account.store.db.seenRelease = LATEST_RELEASE.id;
+  req.account.store.save();
+  res.json({ ok: true });
 });
 
 function demoGmailState(db) {
@@ -493,6 +524,16 @@ function runSyncAll() {
   return syncingAll;
 }
 
+// Once after an update to sorting, everyone else's emails are read again (src/rescan-all.js).
+async function rescanAll() {
+  try {
+    const people = (await allUsers()).filter(u => u.id !== LOCAL_ID && isAllowed(u.email));
+    await rescanEveryoneOnce(people.map(live), { onUser: user => broadcast(user.id) });
+  } catch (err) {
+    console.error(`[rescan-all] ${err.message}`);
+  }
+}
+
 // --- start up / shut down ---------------------------------------------------
 if (DEMO && authEnabled) throw new Error('Demo mode runs without sign-in; unset ALLOWED_EMAIL to use it');
 checkAuthConfig();
@@ -505,6 +546,8 @@ app.listen(PORT, HOST, () => {
   console.log(`Storage: ${process.env.DATABASE_URL ? 'Postgres' : 'local files in data/'} · Groq: ${SERVER_KEY ? 'server key for the owner, others add their own' : 'each person adds their own key'} · sign-in: ${authEnabled ? 'Google' : 'off (local)'}`);
   runSyncAll();
   setInterval(runSyncAll, SYNC_MINUTES * 60_000);
+  // After the start-up sync has had its turn.
+  if (authEnabled) setTimeout(rescanAll, 60_000);
 });
 
 // Render stops the old instance on every deploy; write pending changes first.

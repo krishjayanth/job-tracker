@@ -811,6 +811,18 @@ table.apps { width: 100%; border-collapse: collapse; }
 .fine-note { margin-top: 6px !important; font-size: 12px !important; }
 .setup .sheet-foot { margin-top: 4px; }
 
+/* ------------------------------------------------------------------ what's new */
+.whats-new .sheet-body { gap: 4px; }
+.whats-new-note {
+  margin: 0 0 8px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); color: var(--text-2); font-size: 13px; line-height: 1.5;
+}
+.whats-new-list { list-style: none; margin: 0; padding: 0; }
+.whats-new-list li { display: grid; gap: 3px; padding: 12px 0; border-top: 1px solid var(--line); }
+.whats-new-list li:first-child { border-top: 0; padding-top: 4px; }
+.whats-new-list strong { font-weight: 600; font-size: 14px; letter-spacing: -.005em; }
+.whats-new-list span { color: var(--muted); font-size: 13px; line-height: 1.5; text-wrap: pretty; }
+
 /* ------------------------------------------------------------------ problem reports */
 .side-report { width: 100%; border: 0; background: none; cursor: pointer; font: inherit; }
 .side-badge {

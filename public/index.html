@@ -348,6 +348,27 @@
     </div>
   </dialog>
 
+  <dialog id="whats-new" class="sheet whats-new" aria-labelledby="whats-new-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="whats-new-title">What's new in nuj</h2>
+        <p>nuj has been updated since you were last here.</p>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <p id="whats-new-rescan" class="whats-new-note" hidden></p>
+      <ul id="whats-new-list" class="whats-new-list"></ul>
+    </div>
+    <div class="sheet-foot">
+      <span class="fine">Something not right? Use Report a problem in Settings.</span>
+      <button class="btn btn-primary" type="button" data-close-dialog>Got it</button>
+    </div>
+  </dialog>
+
   <dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
     <div class="sheet-head">
       <span class="sheet-icon"><svg class="icon"><use href="#i-flag"/></svg></span>
