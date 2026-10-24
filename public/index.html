@@ -79,7 +79,6 @@
       <a class="brand" href="#/" aria-label="nuj dashboard">
         <span class="logo-mark" role="img" aria-label="nuj"></span>
       </a>
-      <span id="crumb" class="crumb">Dashboard</span>
     </div>
     <div class="topbar-actions">
       <div id="gmail-status" class="gmail-status" role="status"></div>
@@ -102,7 +101,7 @@
         <span id="since" class="since"></span>
       </div>
       <p id="summary-line" class="summary-line"></p>
-      <dl id="kpis" class="kpis" hidden></dl>
+      <ol id="kpis" class="pipeline" aria-label="Your pipeline" hidden></ol>
     </section>
 
     <div class="overview">
@@ -129,6 +128,7 @@
     </div>
 
     <section class="panel apps-panel" aria-labelledby="apps-title">
+      <div class="apps-sticky" id="apps-sticky">
       <div class="panel-head apps-head">
         <div class="head-text">
           <h2 id="apps-title">Applications</h2>
@@ -155,6 +155,7 @@
       <div class="stage-tabs" id="stage-tabs" role="tablist" aria-label="Filter by status"></div>
       <div class="stage-bar" id="stage-bar" aria-hidden="true"></div>
       <div class="filter-chips" id="filter-chips" hidden></div>
+      </div>
 
       <div class="table-wrap">
         <table class="apps">

@@ -58,14 +58,6 @@ const isoDate = iso => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-// Avatars stay in greys so colour only ever means a stage; the shade still tells companies apart.
-function avatarColor(name) {
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(0 0% ${14 + (h % 5) * 3}%)`;
-}
-const initials = name => name.replace(/[^\p{L}\p{N}\s&]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-const avatar = (name, size = '') => `<span class="avatar ${size}" style="background:${avatarColor(name)}" aria-hidden="true">${esc(initials(name))}</span>`;
 const pill = s => `<span class="pill" style="--c:${color(s)}">${STAGE_LABEL[s]}</span>`;
 const latestEvent = a => a.events.at(-1);
 
@@ -396,34 +388,28 @@ function renderSummary() {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
   const thisMonth = iso => Boolean(iso) && iso >= monthStart;
   const heardBack = ['oa', 'interview', 'offer', 'rejected', 'withdrawn'];
-  const interviewed = ['interview', 'offer'];
 
   const heard = apps.filter(a => a.status !== 'applied' || a.events.some(e => e.stage !== 'applied')).length;
   const active = apps.filter(a => !['offer', 'rejected', 'withdrawn'].includes(a.status)).length;
   const reachedInterview = apps.filter(a => a.path.includes('interview') || a.status === 'offer').length;
   const offers = apps.filter(a => a.status === 'offer').length;
-  const waiting = apps.filter(needsAction).length;
+  $('#since').textContent += ` · ${active} still open`;
 
-  const delta = (n, text, none = 'None this month') => n
-    ? `<span class="delta up">${icon('up')}${text}</span>`
-    : `<span class="delta">${none}</span>`;
-  const items = [
-    ['Applications', apps.length, '', (n => delta(n, `${n} this month`))(apps.filter(a => thisMonth(a.appliedAt)).length)],
-    ['Heard back', Math.round((heard / apps.length) * 100), '%',
-      (n => delta(n, `${n} ${n === 1 ? 'reply' : 'replies'} this month`, 'No replies this month'))(
-        apps.filter(a => thisMonth(firstReached(a, heardBack))).length)],
-    ['Still open', active, '', `<span class="delta">${waiting ? `${waiting} need${waiting === 1 ? 's' : ''} your action` : 'Nothing waiting on you'}</span>`],
-    ['Reached interview', reachedInterview, '',
-      (n => delta(n, `${n} this month`))(apps.filter(a => thisMonth(firstReached(a, interviewed))).length)],
+  // Each step: how many got there, and what share of all applications that is.
+  const share = n => `${Math.round((n / apps.length) * 100)}%`;
+  const newThisMonth = n => n ? `+${n} this month` : 'None this month';
+  const steps = [
+    ['Applied', apps.length, 'var(--applied)', newThisMonth(apps.filter(a => thisMonth(a.appliedAt)).length)],
+    ['Heard back', heard, null, `${share(heard)} replied · ${newThisMonth(apps.filter(a => thisMonth(firstReached(a, heardBack))).length)}`],
+    ['Interview', reachedInterview, 'var(--interview)', `${share(reachedInterview)} of applications`],
+    ['Offer', offers, 'var(--offer)', offers ? `${share(offers)} of applications` : 'None yet'],
   ];
-  if (offers) {
-    items.push(['Offers', offers, '', (n => delta(n, `${n} this month`, ''))(apps.filter(a => thisMonth(firstReached(a, ['offer']))).length)]);
-  }
-  kpis.innerHTML = items.map(([label, value, unit, sub]) => `
-    <div class="kpi">
-      <dt>${label}</dt>
-      <dd><span class="value">${value}${unit ? `<small>${unit}</small>` : ''}</span>${sub}</dd>
-    </div>`).join('');
+  kpis.innerHTML = steps.map(([label, value, c, sub]) => `
+    <li>
+      <span class="p-label"><i class="${c ? '' : 'hollow'}" style="${c ? `--c:${c}` : ''}"></i>${label}</span>
+      <span class="p-value">${value}</span>
+      <span class="p-sub">${sub}</span>
+    </li>`).join('');
 }
 
 function renderSankey() {
@@ -487,13 +473,14 @@ function drawSankey(el, apps, { large }) {
   const link = svg.append('g').selectAll('path').data(graph.links).join('path')
     .attr('class', 'link')
     .attr('d', d3.sankeyLinkHorizontal())
-    .attr('stroke', (d, i) => {
+    // Flows are a neutral wash (CSS); a flow shows its stages' colours when picked out.
+    .each((d, i) => {
       const id = `grad-${large ? 'l' : 's'}-${i}`;
       const g = defs.append('linearGradient').attr('id', id).attr('gradientUnits', 'userSpaceOnUse')
         .attr('x1', d.source.x1).attr('x2', d.target.x0);
       g.append('stop').attr('offset', '0%').attr('stop-color', color(d.source.id));
       g.append('stop').attr('offset', '100%').attr('stop-color', color(d.target.id));
-      return `url(#${id})`;
+      d.paint = `url(#${id})`;
     })
     // A hairline gap between neighbouring flows keeps them reading as separate strands.
     .attr('stroke-width', d => Math.max(1.2, d.width - (large ? 2 : 1.5)));
@@ -538,10 +525,18 @@ function drawSankey(el, apps, { large }) {
     <div class="tn"><strong>${l.value}</strong> ${l.value === 1 ? 'application' : 'applications'}</div>
     <div class="tl">${pct(l.value, l.source.value)} of ${STAGE_LABEL[l.source.id]} · ${pct(l.value, total)} of all</div>`;
 
-  const focus = (onLinks, onNodes, html, event) => {
-    svg.classed('focusing', true);
-    link.classed('on', l => onLinks.includes(l));
+  const highlight = (onLinks, onNodes) => {
+    svg.classed('focusing', onLinks.length > 0 || onNodes.length > 0);
+    link.classed('on', l => onLinks.includes(l)).style('stroke', l => onLinks.includes(l) ? l.paint : null);
     node.classed('on', n => onNodes.includes(n));
+  };
+  const nodeFocus = d => [[...d.sourceLinks, ...d.targetLinks],
+    [d, ...d.sourceLinks.map(l => l.target), ...d.targetLinks.map(l => l.source)]];
+  const picked = graph.nodes.find(n => n.id === flow);
+  const rest = () => picked ? highlight(...nodeFocus(picked)) : highlight([], []);
+  rest();
+  const focus = (onLinks, onNodes, html, event) => {
+    highlight(onLinks, onNodes);
     tip.innerHTML = html;
     moveTip(event);
     tip.classList.add('show');
@@ -555,13 +550,10 @@ function drawSankey(el, apps, { large }) {
     tip.style.top = `${y}px`;
   };
   const blur = () => {
-    svg.classed('focusing', false);
-    link.classed('on', false);
-    node.classed('on', false);
+    rest();
     tip.classList.remove('show');
   };
-  node.on('pointerenter', (e, d) => focus([...d.sourceLinks, ...d.targetLinks],
-    [d, ...d.sourceLinks.map(l => l.target), ...d.targetLinks.map(l => l.source)], nodeTip(d), e));
+  node.on('pointerenter', (e, d) => focus(...nodeFocus(d), nodeTip(d), e));
   link.on('pointerenter', (e, l) => focus([l], [l.source, l.target], linkTip(l), e));
   node.on('pointermove', moveTip);
   link.on('pointermove', moveTip);
@@ -591,6 +583,7 @@ function filterByNode(id) {
   flow = id === 'applied' ? null : id;
   filter = 'all';
   month = 'all'; // the chart covers every month
+  renderSankey();
   if ($('#flow-dialog').open) $('#flow-dialog').close();
   renderMonths();
   renderTabs();
@@ -624,7 +617,6 @@ function renderActions() {
       const why = due ? ACTION_STAGES[a.status] || 'Next step to complete' : 'An email here needs a quick check: is it filed correctly?';
       return `
       <li class="action-row ${tone}" data-row="${a.id}"><div class="action-item" data-open="${a.id}" role="button" tabindex="0">
-        ${avatar(a.company, 'sm')}
         <span class="what">
           <span class="co">${esc(a.company)}</span>
           <span class="why" style="display:block">${why}${a.role ? ` · ${esc(a.role)}` : ''}</span>
@@ -675,7 +667,7 @@ function renderTabs() {
   const tabs = [['all', 'All', total, 'accent'], ...TAB_ORDER.map(s => [s, STAGE_LABEL[s], counts[s], s])];
   $('#stage-tabs').innerHTML = tabs.map(([id, label, n, c]) => `
     <button class="tab ${n === 0 && id !== 'all' ? 'zero' : ''}" role="tab" aria-selected="${filter === id}" data-filter="${id}" type="button">
-      ${id === 'all' ? '' : `<span class="dot" style="--c:${color(c)}"></span>`}${label}<span class="n">${n}</span>
+      ${label}<span class="n">${n}</span>
     </button>`).join('');
   const bar = $('#stage-bar');
   bar.classList.toggle('filtered', filter !== 'all');
@@ -767,7 +759,7 @@ function renderTable() {
     return `
     <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}">
       <td>
-        <div class="company">${avatar(a.company)}
+        <div class="company">
           <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may be filed under the wrong application">Check filing</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
         </div>
       </td>
@@ -925,7 +917,6 @@ function refreshDrawer() {
 function drawerHeadHtml(a) {
   return `
     <div class="drawer-title">
-      ${avatar(a.company, 'lg')}
       <div class="t">
         <h2 id="drawer-title">${esc(a.company)}</h2>
         <div class="s">${esc(a.role) || 'No role found'}</div>
@@ -1125,7 +1116,14 @@ function showDrawer(focusEl) {
   const drawer = $('#drawer');
   drawer.classList.add('open');
   drawer.setAttribute('aria-hidden', 'false');
+  setBehindDrawer(true);
   focusEl?.focus();
+}
+
+// While the panel is open, the page behind it can't be tabbed to or clicked.
+function setBehindDrawer(inert) {
+  $('.shell').inert = inert;
+  $('#sidebar').inert = inert;
 }
 
 function closeDrawer() {
@@ -1134,8 +1132,15 @@ function closeDrawer() {
   const drawer = $('#drawer');
   drawer.classList.remove('open');
   drawer.setAttribute('aria-hidden', 'true');
+  setBehindDrawer(false);
   lastFocus?.focus?.();
 }
+
+// The table's column names stick just under its sticky head, whose height changes with
+// the filters shown, so keep that height in a CSS variable.
+new ResizeObserver(([entry]) => {
+  document.documentElement.style.setProperty('--apps-sticky-h', `${Math.round(entry.target.offsetHeight)}px`);
+}).observe($('#apps-sticky'));
 
 // ---------------------------------------------------------------- events
 const openById = id => openDrawer(state.applications.find(a => a.id === id));
@@ -1444,7 +1449,7 @@ $('#empty').addEventListener('click', e => {
 });
 function clearFilters(which) {
   if (which === 'filter' || which === 'all') filter = 'all';
-  if (which === 'flow' || which === 'all') flow = null;
+  if ((which === 'flow' || which === 'all') && flow) { flow = null; renderSankey(); }
   if (which === 'month' || which === 'all') month = 'all';
   if (which === 'query' || which === 'all') { query = ''; $('#search').value = ''; $('#search-clear').hidden = true; }
   renderMonths(); renderTabs(); renderTable();
@@ -1589,7 +1594,6 @@ function route() {
   document.querySelectorAll('.side-link').forEach(l => {
     if (l.dataset.view === current) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
   });
-  $('#crumb').textContent = soon ? soon.label : { reports: 'Reports', settings: 'Settings', applications: 'Applications' }[current] || 'Dashboard';
   closeNav();
   if (view === 'dashboard' && prev !== 'dashboard') renderSankey(); // its width was 0 while hidden
   if (id === 'applications') requestAnimationFrame(() => $('#apps-title').scrollIntoView({ behavior: 'smooth', block: 'start' }));
