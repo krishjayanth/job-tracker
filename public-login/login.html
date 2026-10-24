@@ -30,13 +30,16 @@
     .legal a { color: var(--muted); text-decoration: none; }
     .legal a:hover { color: var(--text); }
     .g { width: 18px; height: 18px; background: #fff; border-radius: 50%; padding: 2px; }
+    .invite { font-size: 14px; }
+    .invite a { color: var(--text); }
   </style>
 </head>
 <body>
   <main class="card">
     <h1><span class="logo-mark" role="img" aria-label="nuj"></span></h1>
-    <p>Sign in with the Google account this tracker belongs to.</p>
+    <p>Sign in with the Google account you were invited with.</p>
     <p class="error" id="error" hidden></p>
+    <p class="invite" id="invite" hidden>No invite yet? <a href="/welcome#join">Request one</a> and we'll email you when it's ready.</p>
     <a class="btn" href="/auth/google">
       <svg class="g" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.8 6C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.8-6A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6C6.6 42.6 14.6 48 24 48z"/></svg>
       Sign in with Google
@@ -45,8 +48,9 @@
   </main>
   <script>
     const err = new URLSearchParams(location.search).get('error');
-    const messages = { denied: 'That Google account isn’t allowed to use this tracker.', failed: 'Sign-in didn’t work. Please try again.' };
+    const messages = { denied: 'That Google account hasn’t been invited yet.', failed: 'Sign-in didn’t work. Please try again.' };
     if (err) { const el = document.getElementById('error'); el.textContent = messages[err] || messages.failed; el.hidden = false; }
+    document.getElementById('invite').hidden = err === 'failed';
   </script>
 </body>
 </html>

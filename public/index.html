@@ -179,8 +179,18 @@
     <section class="summary">
       <div class="summary-head">
         <h1>Reports</h1>
-        <span class="since">Problems people sent from nuj. Only you can see this page.</span>
+        <span class="since">Invite requests, problems people sent, and how sorting is doing. Only you can see this page.</span>
       </div>
+    </section>
+    <section class="panel" aria-labelledby="requests-title">
+      <div class="panel-head">
+        <div class="head-text">
+          <h2 id="requests-title">Invite requests</h2>
+          <span class="hint">From the form on the landing page. To let someone in, add their email to ALLOWED_EMAIL in Render, then mark them invited.</span>
+        </div>
+      </div>
+      <div class="stage-tabs plain-tabs" id="request-tabs" role="tablist" aria-label="Filter invite requests"></div>
+      <ul id="request-list" class="report-list"></ul>
     </section>
     <section class="panel" aria-labelledby="quality-title">
       <div class="panel-head">

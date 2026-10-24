@@ -459,6 +459,8 @@ kbd {
   view-transition-name: tab-indicator;
 }
 .tab-indicator.instant { transition: none; }
+/* Tab rows elsewhere (Reports) have no sliding underline; the selected tab carries its own. */
+.stage-tabs:not(#stage-tabs) .tab[aria-selected="true"] { box-shadow: inset 0 -2px 0 var(--text); }
 .stage-tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: inline-flex; align-items: center; gap: 7px;
@@ -856,13 +858,28 @@ table.apps { width: 100%; border-collapse: collapse; }
 .check-row strong { display: block; font-weight: 500; font-size: 13px; }
 .check-row small { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
-.quality { margin-bottom: 4px; }
+/* Sorting numbers: the same ruled columns as the pipeline. */
+.quality { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 0 4px; border-top: 1px solid var(--border); }
+.quality .kpi { display: grid; align-content: start; gap: 4px; padding: 14px 20px 2px; border-left: 1px solid var(--border); min-width: 0; }
+.quality .kpi:first-child { padding-left: 0; border-left: 0; }
+.quality dt { font-size: 13px; font-weight: 500; color: var(--text-2); }
+.quality dd { margin: 0; display: grid; gap: 4px; }
+.quality .value { font-size: 30px; font-weight: 600; letter-spacing: -.035em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.quality .value small { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.quality .delta { font-size: 12.5px; color: var(--muted); }
+@media (max-width: 760px) {
+  .quality { grid-template-columns: 1fr 1fr; }
+  .quality .kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .quality .kpi:nth-child(n + 3) { border-top: 1px solid var(--border); }
+}
 .quality-detail { margin: 14px 0 0; color: var(--muted); font-size: 12.5px; }
 .report-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
 .report { padding: 14px 16px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
 .report.resolved { opacity: .6; }
 .report-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .report-from { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.request-email { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; user-select: all; }
+.request-stage { color: var(--text); font-weight: 500; }
 .report-when { margin-left: auto; color: var(--muted); font-size: 12.5px; }
 .report-message { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: var(--text-2); }
 .report-details { margin-top: 10px; font-size: 12.5px; }

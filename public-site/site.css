@@ -344,6 +344,54 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 /* ------------------------------------------------------------------ cta */
 .cta-card { position: relative; padding: clamp(4.5rem, 10vw, 8rem) 1.5rem; text-align: center; border-radius: 24px; overflow: hidden; isolation: isolate; background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
 .cta-card p { margin: 1.25rem auto 0; max-width: 32rem; color: var(--muted); font-size: 1.0625rem; }
+.cta-card p a { color: var(--text); }
+
+/* -------------------------------------------------------- request an invite */
+.join { padding: clamp(3.5rem, 8vw, 6rem) clamp(1.25rem, 5vw, 4rem); }
+.join-form { display: grid; gap: 1.25rem; max-width: 36rem; margin: 2.75rem auto 0; text-align: left; }
+.join-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.jf { display: grid; gap: .45rem; }
+.jf > span, .jf-stage legend { font-size: .875rem; font-weight: 500; color: var(--text-2); }
+.jf em { font-style: normal; color: var(--muted); font-weight: 400; }
+.jf input, .jf textarea {
+  width: 100%; padding: .75rem .9rem; border: 0; border-radius: 10px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: .9375rem; line-height: 1.4;
+  box-shadow: inset 0 0 0 1px var(--border-2);
+  transition: box-shadow 150ms ease;
+}
+.jf textarea { resize: vertical; min-height: 5.5rem; }
+.jf input::placeholder, .jf textarea::placeholder { color: var(--muted); }
+.jf input:hover, .jf textarea:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 35%, transparent); }
+.jf input:focus-visible, .jf textarea:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--text), 0 0 0 3px color-mix(in srgb, var(--text) 18%, transparent); }
+.jf input[aria-invalid="true"] { box-shadow: inset 0 0 0 1px #f87171; }
+.jf-stage { margin: 0; padding: 0; border: 0; min-width: 0; }
+.jf-stage legend { padding: 0; margin-bottom: .55rem; }
+.stage-choice { display: flex; flex-wrap: wrap; gap: .5rem; }
+.stage-choice label { position: relative; }
+.stage-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.stage-choice span {
+  display: inline-flex; align-items: center; height: 2.5rem; padding: 0 1rem; border-radius: 999px;
+  font-size: .875rem; color: var(--text-2); cursor: pointer; box-shadow: inset 0 0 0 1px var(--border-2);
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 160ms var(--ease);
+}
+.stage-choice span:hover { color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 35%, transparent); }
+.stage-choice label:active span { transform: scale(.97); transition-duration: 60ms; }
+.stage-choice input:checked + span { background: var(--text); color: var(--bg); box-shadow: none; }
+.stage-choice input:focus-visible + span { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--text); }
+.trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.join-foot { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: .25rem; }
+.join-foot .btn[disabled] { opacity: .6; cursor: default; }
+.join-msg { margin: 0 !important; font-size: .875rem !important; color: var(--muted); }
+.join-msg.err { color: #f87171; }
+.join-fine { margin: 0 !important; font-size: .8125rem !important; color: var(--muted); }
+.join-fine a { color: var(--text-2); }
+.join-done { max-width: 30rem; margin: 2.75rem auto 0; outline: none; animation: open 500ms var(--ease); }
+.join-done h3 { margin: 0; font-size: 1.375rem; font-weight: 600; letter-spacing: -.02em; }
+.join-done p { margin-top: .75rem; }
+.join-done strong { color: var(--text); font-weight: 500; }
+@media (max-width: 36rem) {
+  .join-row { grid-template-columns: 1fr; }
+}
 
 /* --------------------------------------------------------------- reveal */
 /* Content arrives as it scrolls into view. Without JS everything is simply shown. */

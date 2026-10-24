@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { initStorage, flushAll, refresh, newId } from './src/store.js';
 import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
 import { rescanEveryoneOnce } from './src/rescan-all.js';
+import { addRequest, listRequests, pendingCount, setRequestStatus, tooMany } from './src/access.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
 import { buildWorkbook } from './src/export.js';
@@ -34,6 +35,20 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // Landing page (/welcome), privacy policy (/privacy) and terms (/terms). Public so
 // visitors and Google's OAuth review can read them without signing in.
 app.use(express.static('public-site', { extensions: ['html'], index: false }));
+
+// "Request an invite" on the landing page. Public, so: a hidden field bots fill in, a
+// few tries per visitor an hour, and plain-word errors. The visitor's IP is only used
+// for that limit, in memory; it isn't stored.
+app.post('/api/access-requests', async (req, res) => {
+  const { name, email, stage, note, website } = req.body || {};
+  if (website) return res.json({ ok: true }); // the trap field: quietly ignore
+  if (tooMany(req.ip)) return res.status(429).json({ error: "That's a lot of requests. Try again in an hour" });
+  const { request, error, repeat } = await addRequest({ name, email, stage, note });
+  if (error) return res.status(400).json({ error });
+  console.log(`[access] ${repeat ? 'updated' : 'new'} invite request`);
+  tellOwner();
+  res.json({ ok: true, repeat: Boolean(repeat), email: request.email });
+});
 
 app.get('/login', (req, res) => {
   if (!authEnabled) return res.redirect('/');
@@ -140,7 +155,7 @@ const tellOwner = () => { for (const res of ownerClients) res.write('data: repor
 // --- state ----------------------------------------------------------------
 app.get('/api/state', async (req, res) => {
   const user = req.account;
-  const reports = canSeeReports(user) ? { open: await openCount() } : null;
+  const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount() } : null;
   const db = user.store.db;
   res.json({
     applications: db.applications.map(a => ({
@@ -438,6 +453,13 @@ app.post('/api/reports', async (req, res) => {
 
 const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the owner can see reports' });
 app.get('/api/reports', ownerOnly, async (req, res) => res.json({ reports: await listReports() }));
+app.get('/api/access-requests', ownerOnly, async (req, res) => res.json({ requests: await listRequests() }));
+app.patch('/api/access-requests/:id', ownerOnly, async (req, res) => {
+  const r = await setRequestStatus(req.params.id, req.body?.status);
+  if (!r) return res.status(404).json({ error: 'Not found' });
+  tellOwner();
+  res.json(r);
+});
 
 // How sorting is doing across everyone: emails filed, and how often people fix them.
 // Totals only; nothing about anyone's applications or emails.

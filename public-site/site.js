@@ -139,3 +139,42 @@ async function runDemo(demo) {
     await sleep(600);
   }
 }
+
+// "Request an invite": check as you go, send, then thank them in place of the form.
+const joinForm = document.getElementById('join-form');
+if (joinForm) {
+  const msg = document.getElementById('join-msg');
+  const say = (text, isError = false) => { msg.textContent = text; msg.classList.toggle('err', isError); };
+  const email = joinForm.elements.email;
+  const name = joinForm.elements.name;
+  const emailOk = () => /^[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}$/i.test(email.value.trim());
+  // Only flag the address once they've left the field, not while they're typing it.
+  email.addEventListener('blur', () => { if (email.value) email.setAttribute('aria-invalid', String(!emailOk())); });
+  email.addEventListener('input', () => { if (email.getAttribute('aria-invalid') === 'true' && emailOk()) email.removeAttribute('aria-invalid'); });
+
+  joinForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!name.value.trim()) { say('Add your name.', true); return name.focus(); }
+    if (!emailOk()) { email.setAttribute('aria-invalid', 'true'); say("That email address doesn't look right.", true); return email.focus(); }
+    const button = joinForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    say('Sending…');
+    try {
+      const res = await fetch('/api/access-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(joinForm))),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "That didn't go through. Try again in a moment");
+      document.getElementById('join-email').textContent = data.email;
+      joinForm.hidden = true;
+      const done = document.getElementById('join-done');
+      done.hidden = false;
+      done.focus();
+    } catch (err) {
+      say(`${err.message}.`.replace(/\.\.$/, '.'), true);
+      button.disabled = false;
+    }
+  });
+}

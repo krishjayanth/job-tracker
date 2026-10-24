@@ -169,7 +169,8 @@ function renderGmail() {
   $('#side-user-row').hidden = !state.user;
   $('#side-user').textContent = state.user || '';
   $('#reports-link').hidden = !state.reports;
-  $('#reports-count').textContent = state.reports?.open || '';
+  // The badge counts everything waiting for you there: open reports and invite requests.
+  $('#reports-count').textContent = (state.reports?.open || 0) + (state.reports?.requests || 0) || '';
   $('#delete-section').hidden = state.demo;
   renderSettings();
   renderProgress();
@@ -1786,14 +1787,67 @@ const pendingDeletes = new Set(); // deleted here, waiting out the Undo
 async function loadReports() {
   let stats;
   try {
-    [{ reports: allReports }, stats] = await Promise.all([api('GET', '/api/reports'), api('GET', '/api/reports/stats')]);
+    [{ reports: allReports }, stats, { requests }] = await Promise.all([
+      api('GET', '/api/reports'), api('GET', '/api/reports/stats'), api('GET', '/api/access-requests')]);
   } catch {
     location.hash = '#/'; // not the owner
     return;
   }
   renderReports();
   renderQuality(stats);
+  renderRequests();
 }
+
+// Invite requests from the landing page.
+const STAGE_NAMES = { starting: 'Just starting', applying: 'Applying', interviewing: 'Interviewing', other: 'Something else' };
+let requests = [];
+let requestFilter = 'pending';
+function renderRequests() {
+  const counts = { pending: 0, invited: 0, dismissed: 0 };
+  requests.forEach(r => counts[r.status]++);
+  $('#request-tabs').innerHTML = [['pending', 'Waiting'], ['invited', 'Invited'], ['dismissed', 'Dismissed']]
+    .map(([id, label]) => `<button class="tab" role="tab" type="button" aria-selected="${requestFilter === id}" data-request-filter="${id}">${label}<span class="n">${counts[id]}</span></button>`).join('');
+  const shown = requests.filter(r => r.status === requestFilter);
+  $('#request-list').innerHTML = shown.length ? shown.map(r => `
+    <li class="report">
+      <div class="report-head">
+        <span class="report-from">${esc(r.name)}</span>
+        <span class="request-email">${esc(r.email)}</span>
+        <span class="report-when" title="${esc(new Date(r.createdAt).toLocaleString())}">${timeAgo(r.updatedAt || r.createdAt)}</span>
+      </div>
+      <p class="report-message"><span class="request-stage">${STAGE_NAMES[r.stage] || 'Something else'}</span>${r.note ? ` · ${esc(r.note)}` : ''}</p>
+      <div class="report-actions">
+        <button class="btn btn-sm" type="button" data-copy-email="${esc(r.email)}">${icon('mail')}Copy email</button>
+        ${r.status !== 'invited' ? `<button class="btn btn-sm" type="button" data-request-status="${r.id}" data-to="invited">${icon('check')}Mark invited</button>` : ''}
+        ${r.status !== 'dismissed' ? `<button class="btn btn-sm btn-quiet" type="button" data-request-status="${r.id}" data-to="dismissed">Dismiss</button>` : ''}
+        ${r.status !== 'pending' ? `<button class="btn btn-sm btn-quiet" type="button" data-request-status="${r.id}" data-to="pending">Back to waiting</button>` : ''}
+      </div>
+    </li>`).join('')
+    : `<li class="action-empty"><strong>${requestFilter === 'pending' ? 'No one waiting' : 'Nothing here'}</strong>Requests from the landing page's invite form show up here.</li>`;
+}
+$('#request-tabs').addEventListener('click', e => {
+  const t = e.target.closest('[data-request-filter]');
+  if (t) { requestFilter = t.dataset.requestFilter; renderRequests(); }
+});
+$('#request-list').addEventListener('click', async e => {
+  const copy = e.target.closest('[data-copy-email]');
+  if (copy) {
+    try { await navigator.clipboard.writeText(copy.dataset.copyEmail); toast(`Copied ${copy.dataset.copyEmail}`); }
+    catch { toast("Couldn't copy. Select the address instead"); }
+    return;
+  }
+  const b = e.target.closest('[data-request-status]');
+  if (!b) return;
+  b.disabled = true;
+  const was = requests.find(r => r.id === b.dataset.requestStatus)?.status;
+  await api('PATCH', `/api/access-requests/${b.dataset.requestStatus}`, { status: b.dataset.to });
+  await loadReports();
+  // Moving a request between lists can be put back the same way.
+  toast(b.dataset.to === 'invited' ? 'Marked invited' : b.dataset.to === 'dismissed' ? 'Dismissed' : 'Back to waiting', async () => {
+    await api('PATCH', `/api/access-requests/${b.dataset.requestStatus}`, { status: was });
+    await loadReports();
+  });
+});
 
 // Fixes people make to sorting. "Confirmed" means it was right, so it isn't a fix.
 const FIX_KINDS = { moved: 'moved to another application', notJob: 'marked not an application', statusChanged: 'status changed',
