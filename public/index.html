@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>nuj</title>
   <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon.png">
   <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
@@ -93,6 +93,7 @@
   </header>
 
   <main class="page" id="view-dashboard">
+    <section id="sync-progress" class="sync-progress" aria-live="polite" hidden></section>
     <div id="banner"></div>
 
     <section class="summary" aria-labelledby="summary-title">
@@ -115,7 +116,7 @@
             <svg class="icon"><use href="#i-expand"/></svg>
           </button>
         </div>
-        <div id="sankey" class="sankey zoomable"></div>
+        <div id="sankey" class="sankey"></div>
       </section>
 
       <section class="panel action-panel" aria-labelledby="action-title">

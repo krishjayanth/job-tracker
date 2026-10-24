@@ -3,6 +3,10 @@ const STAGE_LABEL = {
   rejected: 'Rejected', withdrawn: 'Withdrawn', no_response: 'No response', in_progress: 'Waiting',
 };
 const STATUS_ORDER = ['applied', 'oa', 'interview', 'offer', 'rejected', 'withdrawn'];
+// The stage tabs: where each application stands now. "No response" is an application
+// still at Applied that hasn't heard back, the same as the chart's "No response".
+const TAB_ORDER = ['applied', 'oa', 'interview', 'offer', 'no_response', 'rejected', 'withdrawn'];
+const tabOf = a => a.status === 'applied' && a.path?.at(-1) === 'no_response' ? 'no_response' : a.status;
 const NODE_ORDER = ['applied', 'oa', 'interview', 'offer', 'in_progress', 'no_response', 'withdrawn', 'rejected'];
 // Stages where the next move is usually yours.
 const ACTION_STAGES = { oa: 'Assessment to complete', interview: 'Interview in progress', offer: 'Offer to respond to' };
@@ -11,6 +15,7 @@ const color = s => getComputedStyle(document.documentElement).getPropertyValue(`
 
 let state = { applications: [], gmail: {} };
 let filter = 'all';
+let flow = null; // a chart stage you clicked: only applications that went through it
 let month = 'all'; // 'YYYY-MM' of the date applied
 let query = '';
 let visibleRows = []; // what the table currently shows, for export
@@ -134,18 +139,17 @@ function renderMonths() {
 function renderGmail() {
   const g = state.gmail;
   const el = $('#gmail-status');
-  const banner = $('#banner');
-  banner.innerHTML = '';
+  banners = [];
   if (!g.configured) {
     el.innerHTML = `<span class="dot off"></span> Gmail not set up`;
-    banner.innerHTML = `<div class="banner">${icon('mail')}<div><strong>Connect Gmail to update automatically.</strong>
+    addBanner(BANNER.setup, `<div class="banner">${icon('mail')}<div><strong>Connect Gmail to update automatically.</strong>
       Google sign-in isn't configured yet: set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>
-      (or add <code>credentials.json</code> when running locally). docs/DEPLOY.md has the steps. You can still add applications by hand.</div></div>`;
+      (or add <code>credentials.json</code> when running locally). docs/DEPLOY.md has the steps. You can still add applications by hand.</div></div>`);
   } else if (!g.connected) {
     el.innerHTML = `<span class="dot off"></span> <a href="/auth/google?gmail=1">Connect Gmail</a>`;
     if (g.lastSyncError) {
-      banner.innerHTML = `<div class="banner error">${icon('alert')}<div><strong>${esc(g.lastSyncError)}.</strong>
-        <a href="/auth/google?gmail=1">Reconnect Gmail</a> to keep syncing.</div></div>`;
+      addBanner(BANNER.error, `<div class="banner error">${icon('alert')}<div><strong>${esc(g.lastSyncError)}.</strong>
+        <a href="/auth/google?gmail=1">Reconnect Gmail</a> to keep syncing.</div></div>`);
     }
   } else {
     const err = g.lastSyncError;
@@ -159,11 +163,11 @@ function renderGmail() {
     $('#rescan-btn').disabled = p?.mode === 'rescan';
     if (err) {
       const enableUrl = err.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/gmail\.googleapis\.com\/\S+?(?=\s|$)/)?.[0];
-      banner.innerHTML = `<div class="banner error">${icon('alert')}<div>${enableUrl
+      addBanner(BANNER.error, `<div class="banner error">${icon('alert')}<div>${enableUrl
         ? `<strong>The Gmail API isn't turned on for your Google Cloud project.</strong>
            <a href="${esc(enableUrl)}" target="_blank" rel="noopener">Turn it on</a>, wait a minute, then click Sync.`
         : `<strong>Gmail sync failed:</strong> ${esc(err.replace(/\.+$/, ''))}.
-           If your sign-in expired, <a href="/auth/google?gmail=1">reconnect Gmail</a>.`}</div></div>`;
+           If your sign-in expired, <a href="/auth/google?gmail=1">reconnect Gmail</a>.`}</div></div>`);
     }
   }
   $('#sync-btn').hidden = !g.connected;
@@ -176,8 +180,44 @@ function renderGmail() {
   $('#reports-count').textContent = state.reports?.open || '';
   $('#delete-section').hidden = state.demo;
   renderSettings();
+  renderProgress();
   renderSetup();
   renderGroq();
+  drawBanners();
+}
+
+// Banners stack, most important first: things that are broken, then what to do next,
+// then tips. Tips only show when nothing more important is up, so they never bury an error.
+const BANNER = { error: 0, setup: 1, tip: 2 };
+let banners = [];
+const addBanner = (priority, html) => banners.push({ priority, html });
+function drawBanners() {
+  const list = banners.sort((a, b) => a.priority - b.priority);
+  const shown = list.some(b => b.priority < BANNER.tip) ? list.filter(b => b.priority < BANNER.tip) : list;
+  $('#banner').innerHTML = shown.slice(0, 3).map(b => b.html).join('');
+}
+
+// The first sync and full re-scans can take minutes, so they get a card on the page
+// with how far along they are; everyday syncs stay a line in the top bar.
+function renderProgress() {
+  const g = state.gmail;
+  const p = g.progress;
+  const el = $('#sync-progress');
+  const big = p && (p.mode === 'rescan' || !g.lastSync);
+  el.hidden = !big;
+  if (!big) return;
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  const found = state.applications.length;
+  el.innerHTML = `
+    <div class="sync-progress-head">
+      <strong>${p.mode === 'rescan' ? 'Re-scanning your emails' : 'Reading your inbox for the first time'}</strong>
+      <span class="num">${p.total ? `${p.done} of ${p.total} emails` : 'Finding application emails…'}</span>
+    </div>
+    <div class="progress-track" role="progressbar" aria-label="Emails read" aria-valuemin="0" aria-valuemax="${p.total || 0}" aria-valuenow="${p.done}">
+      <span style="width:${p.total ? pct : 4}%"></span>
+    </div>
+    <p>${found ? `${found} ${found === 1 ? 'application' : 'applications'} found so far. They appear below as they're found.` : "Applications appear below as they're found."}
+      You can leave this page; it carries on.</p>`;
 }
 
 // Settings: Gmail, AI sorting, ignored senders, help and account in one place.
@@ -205,8 +245,8 @@ function renderSetup() {
     if (dialog.open) dialog.close();
     return;
   }
-  $('#banner').innerHTML = `<div class="banner">${icon('mail')}<div><strong>nuj hasn't read any email yet.</strong>
-    Choose how it should sort your application emails to start tracking. <a href="#" data-open-setup>Choose now</a></div></div>`;
+  addBanner(BANNER.setup, `<div class="banner">${icon('mail')}<div><strong>nuj hasn't read any email yet.</strong>
+    Choose how it should sort your application emails to start tracking. <a href="#" data-open-setup>Choose now</a></div></div>`);
   const server = state.groq?.source === 'server' && !state.groq.problem;
   $('#setup-server').hidden = !server;
   $('#setup-key-form').hidden = server;
@@ -285,14 +325,13 @@ function renderGroq() {
   $('#groq-form button[type="submit"]').textContent = k.source === 'own' && !k.problem ? 'Replace key' : 'Save key';
   $('#groq-remove').hidden = k.source !== 'own';
 
-  const banner = $('#banner');
-  if (k.problem && !banner.innerHTML) {
-    banner.innerHTML = `<div class="banner error">${icon('alert')}<div><strong>${k.problem === 'unreadable' ? "Your Groq key needs adding again." : 'Groq stopped accepting your API key.'}</strong>
-      Emails are sorted by the built-in rules for now. <a href="#" data-open-groq>Add a new key</a></div></div>`;
-  } else if (!k.source && state.gmail.connected && !banner.innerHTML && !dismissed('groq-hint')) {
-    banner.innerHTML = `<div class="banner">${icon('alert')}<div><strong>Sort emails more accurately with Groq.</strong>
+  if (k.problem) {
+    addBanner(BANNER.error, `<div class="banner error">${icon('alert')}<div><strong>${k.problem === 'unreadable' ? "Your Groq key needs adding again." : 'Groq stopped accepting your API key.'}</strong>
+      Emails are sorted by the built-in rules for now. <a href="#" data-open-groq>Add a new key</a></div></div>`);
+  } else if (!k.source && state.gmail.connected && !state.needsSetup && !dismissed('groq-hint')) {
+    addBanner(BANNER.tip, `<div class="banner">${icon('alert')}<div><strong>Sort emails more accurately with Groq.</strong>
       nuj is using its built-in rules. With a free Groq API key, an AI reads each email to work out the company, job and stage.
-      <a href="#" data-open-groq>Add a key</a> · <a href="#" data-dismiss="groq-hint">Not now</a></div></div>`;
+      <a href="#" data-open-groq>Add a key</a> · <a href="#" data-dismiss="groq-hint">Not now</a></div></div>`);
   }
 }
 
@@ -306,17 +345,21 @@ $('#banner').addEventListener('click', e => {
   if (dismiss) {
     e.preventDefault();
     try { localStorage.setItem(`dismissed:${dismiss.dataset.dismiss}`, '1'); } catch {}
-    $('#banner').innerHTML = '';
+    dismiss.closest('.banner')?.remove();
   }
 });
 
-// How to show a deadline: null once it's more than 3 days past (stale).
+// How to show a deadline. A passed deadline stays until you mark it done (or a later
+// email moves things on): "Overdue" for two weeks, then "Missed", sorted after the rest.
 function dueInfo(deadline) {
   if (!deadline) return null;
   const ms = Date.parse(deadline) - Date.now();
   const days = Math.ceil(ms / 86_400_000);
-  if (ms < -3 * 86_400_000) return null;
-  if (ms < 0) return { level: 'overdue', text: 'Overdue' };
+  if (ms < 0) {
+    const late = Math.floor(-ms / 86_400_000);
+    if (late >= 14) return { level: 'missed', text: `Missed · ${shortDate(deadline)}` };
+    return { level: 'overdue', text: late ? `Overdue by ${late} ${late === 1 ? 'day' : 'days'}` : 'Overdue' };
+  }
   const end = new Date(deadline);
   const today = new Date();
   const sameDay = end.toDateString() === today.toDateString();
@@ -386,7 +429,7 @@ function renderSummary() {
 function renderSankey() {
   if (view !== 'dashboard') return; // drawn when you come back; a hidden chart has no width
   const apps = state.applications;
-  $('#flow-caption').textContent = apps.length ? `No reply after ${state.ghostDays} days counts as “No response”` : '';
+  $('#flow-caption').textContent = apps.length ? `Click a stage to filter · no reply after ${state.ghostDays} days counts as “No response”` : '';
   drawSankey($('#sankey'), apps, { large: false });
   if ($('#flow-dialog').open) drawSankey($('#sankey-large'), apps, { large: true });
 }
@@ -457,13 +500,12 @@ function drawSankey(el, apps, { large }) {
 
   const total = apps.length;
   const node = svg.append('g').selectAll('g').data(graph.nodes).join('g').attr('class', 'node');
-  if (large) {
-    node.attr('tabindex', 0)
-      .attr('role', 'button')
-      .attr('aria-label', d => `${STAGE_LABEL[d.id]}: ${d.value}. Show in table`)
-      .on('click', (e, d) => filterByNode(d.id))
-      .on('keydown', (e, d) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); filterByNode(d.id); } });
-  }
+  // Click a stage, on either chart, to see those applications in the table.
+  node.attr('tabindex', 0)
+    .attr('role', 'button')
+    .attr('aria-label', d => `${STAGE_LABEL[d.id]}: ${d.value}. Show in table`)
+    .on('click', (e, d) => filterByNode(d.id))
+    .on('keydown', (e, d) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); filterByNode(d.id); } });
   node.append('rect')
     .attr('x', d => d.x0).attr('y', d => d.y0)
     .attr('width', d => d.x1 - d.x0).attr('height', d => Math.max(3, d.y1 - d.y0))
@@ -542,8 +584,12 @@ function drawSankey(el, apps, { large }) {
   });
 }
 
+// What a chart stage means as a filter: everything passed through Applied, so that one
+// clears it; the middle stages are "reached"; the end stages are where they ended up.
+const FLOW_LABEL = { oa: 'Reached assessment', interview: 'Reached interview', offer: 'Got an offer', in_progress: 'Waiting', no_response: 'No response', rejected: 'Rejected', withdrawn: 'Withdrawn' };
 function filterByNode(id) {
-  filter = STATUS_ORDER.includes(id) ? id : (id === 'no_response' || id === 'in_progress') ? 'applied' : 'all';
+  flow = id === 'applied' ? null : id;
+  filter = 'all';
   month = 'all'; // the chart covers every month
   if ($('#flow-dialog').open) $('#flow-dialog').close();
   renderMonths();
@@ -561,6 +607,9 @@ function renderActions() {
   const items = state.applications
     .filter(needsAction)
     .sort((a, b) => {
+      // Missed deadlines go last: still there to clear, but not ahead of what's coming up.
+      const missed = x => dueInfo(x.deadline)?.level === 'missed';
+      if (missed(a) !== missed(b)) return missed(a) ? 1 : -1;
       const da = dueInfo(a.deadline) ? a.deadline : null, db = dueInfo(b.deadline) ? b.deadline : null;
       if (da && db) return da.localeCompare(db);
       if (da || db) return da ? -1 : 1;
@@ -610,19 +659,23 @@ function toast(text, undo) {
   toastTimer = setTimeout(() => el.classList.remove('show'), undo ? 8000 : 4500); // time to reach Undo
 }
 
+// Everything except the stage tab: month, search and chart stage. Tab counts use it,
+// so a tab's number is how many you'd see by clicking it.
+const inView = a => inMonth(a) && matchesQuery(a) && (!flow || a.path.includes(flow));
+
 function renderTabs() {
-  const counts = Object.fromEntries(STATUS_ORDER.map(s => [s, 0]));
-  const scoped = state.applications.filter(inMonth);
-  scoped.forEach(a => counts[a.status]++);
+  const counts = Object.fromEntries(TAB_ORDER.map(s => [s, 0]));
+  const scoped = state.applications.filter(inView);
+  scoped.forEach(a => counts[tabOf(a)]++);
   const total = scoped.length;
-  const tabs = [['all', 'All', total, 'accent'], ...STATUS_ORDER.map(s => [s, STAGE_LABEL[s], counts[s], s])];
+  const tabs = [['all', 'All', total, 'accent'], ...TAB_ORDER.map(s => [s, STAGE_LABEL[s], counts[s], s])];
   $('#stage-tabs').innerHTML = tabs.map(([id, label, n, c]) => `
     <button class="tab ${n === 0 && id !== 'all' ? 'zero' : ''}" role="tab" aria-selected="${filter === id}" data-filter="${id}" type="button">
       ${id === 'all' ? '' : `<span class="dot" style="--c:${color(c)}"></span>`}${label}<span class="n">${n}</span>
     </button>`).join('');
   const bar = $('#stage-bar');
   bar.classList.toggle('filtered', filter !== 'all');
-  bar.innerHTML = STATUS_ORDER.filter(s => counts[s]).map(s =>
+  bar.innerHTML = TAB_ORDER.filter(s => counts[s]).map(s =>
     `<span class="${filter === s ? 'on' : ''}" style="--c:${color(s)};flex-grow:${counts[s]}" title="${STAGE_LABEL[s]}: ${counts[s]}"></span>`).join('');
 }
 
@@ -635,6 +688,12 @@ function sortValue(a, key) {
 // Search: every word has to appear somewhere in the application (company, role, ID, notes or an email subject).
 const searchText = a => [a.company, a.role, a.jobId, a.notes, ...a.events.map(e => decode(e.subject))].join('\n').toLowerCase();
 const queryWords = () => query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+const matchesQuery = a => {
+  const words = queryWords();
+  if (!words.length) return true;
+  const text = searchText(a);
+  return words.every(w => text.includes(w));
+};
 // Escape, then mark where the search words appear.
 function hl(text) {
   const t = String(text ?? '');
@@ -664,6 +723,7 @@ function notesMatch(a, words) {
 function renderFilterChips(shown, total) {
   const chips = [];
   if (query.trim()) chips.push(['query', `“${esc(query.trim())}”`]);
+  if (flow) chips.push(['flow', `<i class="dot" style="--c:${color(flow)}"></i>${FLOW_LABEL[flow] || STAGE_LABEL[flow]}`]);
   if (filter !== 'all') chips.push(['filter', `<i class="dot" style="--c:${color(filter)}"></i>${STAGE_LABEL[filter]}`]);
   if (month !== 'all') chips.push(['month', monthLabel(month)]);
   $('#results-line').textContent = !total ? '' : chips.length ? `${shown} of ${total}` : `${total}`;
@@ -677,15 +737,15 @@ function setQuery(value) {
   query = value;
   $('#search').value = value;
   $('#search-clear').hidden = !value;
+  renderTabs(); // their counts follow the search
   renderTable();
 }
 
 function renderTable() {
   const words = queryWords();
   const rows = state.applications
-    .filter(inMonth)
-    .filter(a => filter === 'all' || a.status === filter)
-    .filter(a => { const text = searchText(a); return words.every(w => text.includes(w)); })
+    .filter(inView)
+    .filter(a => filter === 'all' || tabOf(a) === filter)
     .sort((a, b) => {
       const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
       const cmp = x < y ? -1 : x > y ? 1 : 0;
@@ -1380,6 +1440,7 @@ $('#empty').addEventListener('click', e => {
 });
 function clearFilters(which) {
   if (which === 'filter' || which === 'all') filter = 'all';
+  if (which === 'flow' || which === 'all') flow = null;
   if (which === 'month' || which === 'all') month = 'all';
   if (which === 'query' || which === 'all') { query = ''; $('#search').value = ''; $('#search-clear').hidden = true; }
   renderMonths(); renderTabs(); renderTable();
@@ -1424,7 +1485,6 @@ $('#export-btn').onclick = async () => {
 };
 
 // Large chart dialog
-$('#sankey').addEventListener('click', openFlowDialog);
 $('#expand-flow').addEventListener('click', openFlowDialog);
 $('#flow-dialog').addEventListener('click', e => {
   // Clicks on the backdrop land on the <dialog> element itself.
@@ -1729,6 +1789,8 @@ $('#sync-btn').onclick = async () => {
 
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderSankey, 150); });
+// Colours come from CSS variables when things are drawn, so redraw when the system theme flips.
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', render);
 
 // Live updates: the server pings whenever a sync or edit changes the data.
 new EventSource('/api/events').onmessage = e => {
