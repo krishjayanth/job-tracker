@@ -181,3 +181,58 @@ test('fixes to sorting are counted by kind', () => {
   s.reassignEmail(a.events[1].id, { action: 'move', to: b.id });
   assert.deepEqual(s.db.corrections, { confirmed: 1, moved: 1 });
 });
+
+test('undo puts back a deleted application, and its emails can sync again', () => {
+  const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-05', 'oa']] });
+  a.notes = 'Referral from Pat';
+  const messageId = a.events[0].messageId;
+  const token = s.checkpoint([a.id]);
+  s.deleteApplication(a.id);
+  assert.equal(s.db.ignored[messageId], true);
+  assert.equal(s.undo(token), true);
+  const back = s.applications.find(x => x.id === a.id);
+  assert.equal(back.notes, 'Referral from Pat');
+  assert.equal(back.status, 'oa');
+  assert.equal(s.db.ignored[messageId], undefined);
+  assert.equal(s.undo(token), false); // once only
+});
+
+test('undo moves an email back, and removes an application the move created', () => {
+  const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-05', 'oa']] });
+  const b = gmailApp({ company: 'Fabrikam' });
+  const moved = a.events[1];
+  const t1 = s.checkpoint([a.id, b.id]);
+  s.reassignEmail(moved.id, { action: 'move', to: b.id });
+  s.undo(t1);
+  assert.ok(s.applications.find(x => x.id === a.id).events.some(e => e.id === moved.id));
+  assert.ok(!s.applications.find(x => x.id === b.id).events.some(e => e.id === moved.id));
+  assert.equal(s.db.assignments[moved.messageId], undefined);
+
+  const t2 = s.checkpoint([a.id]);
+  const { app: created } = s.reassignEmail(moved.id, { action: 'new', company: 'Northwind' });
+  s.undoAlsoRemoves(t2, created.id);
+  s.undo(t2);
+  assert.equal(s.applications.some(x => x.company === 'Northwind'), false);
+  assert.equal(s.applications.find(x => x.id === a.id).events.length, 2);
+});
+
+test('undo stops ignoring a sender and brings its emails back, keeping newer ones', () => {
+  const bills = s.createApplication({ company: 'Simplebills', source: 'gmail' });
+  bills.events.push(email('2026-09-01', 'applied', { from: 'SimpleBills <hello@simplebills.com>' }));
+  refresh(bills);
+  const token = s.checkpoint([bills.id], { blockedSender: 'simplebills.com' });
+  s.blockSender('simplebills.com');
+  assert.equal(s.applications.length, 0);
+  s.undo(token);
+  assert.equal(s.applications.length, 1);
+  assert.equal(s.isBlocked('a@simplebills.com'), false);
+  assert.deepEqual(s.db.corrections, {});
+
+  // A sync that adds to an application during the undo window isn't lost.
+  const c = gmailApp({ company: 'Contoso' });
+  const t = s.checkpoint([c.id]);
+  c.events.push(email('2026-09-09', 'interview'));
+  refresh(c);
+  s.undo(t);
+  assert.equal(s.applications.find(x => x.id === c.id).events.length, 2);
+});

@@ -12,6 +12,7 @@ import { senderDomain } from './jobcheck.js';
 // Demo mode keeps everything in memory only, starting from sample data.
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const SAVE_DELAY_MS = 800;
+const UNDO_MS = 10 * 60_000; // how long an action can be undone
 
 export const emptyDb = () => ({ applications: [], processed: {}, ignored: {}, assignments: {}, lastSync: null, lastSyncError: null });
 let pool = null;
@@ -150,6 +151,7 @@ export class Store {
     this.db = db;
     this.db.ignored ??= {};
     this.db.assignments ??= {};
+    this.undoable = new Map(); // token -> how things looked before an action (see checkpoint)
     this.persist = persist;
     this.saveTimer = null;
     this.writing = Promise.resolve();
@@ -232,6 +234,63 @@ export class Store {
     };
     this.db.applications.push(app);
     return app;
+  }
+
+  // ---- undo ----------------------------------------------------------------------
+  // Before an action that removes or moves things, remember how the applications it
+  // touches looked. undo(token) puts them back exactly: their emails, what you'd
+  // said about those emails, and the counts. Kept in memory for UNDO_MS.
+  checkpoint(appIds, { blockedSender } = {}) {
+    this.pruneUndo();
+    const apps = appIds.map(id => this.db.applications.find(a => a.id === id)).filter(Boolean).map(a => structuredClone(a));
+    const messageIds = apps.flatMap(a => a.events.map(e => e.messageId).filter(Boolean));
+    const token = newId();
+    this.undoable.set(token, {
+      at: Date.now(), apps, blockedSender, remove: [],
+      ignored: Object.fromEntries(messageIds.map(m => [m, this.db.ignored[m]])),
+      assignments: Object.fromEntries(messageIds.map(m => [m, structuredClone(this.db.assignments[m])])),
+      corrections: structuredClone(this.db.corrections || {}),
+    });
+    return token;
+  }
+
+  // An application the action created (e.g. "move to a new application"): undo removes it.
+  undoAlsoRemoves(token, appId) {
+    this.undoable.get(token)?.remove.push(appId);
+  }
+
+  undo(token) {
+    const cp = this.undoable.get(token);
+    if (!cp) return false;
+    this.undoable.delete(token);
+    const db = this.db;
+    const putBack = new Set(cp.apps.map(a => a.id));
+    // Emails that moved elsewhere come back with their application, so take them out
+    // of wherever they went first.
+    const eventIds = new Set(cp.apps.flatMap(a => a.events.map(e => e.id)));
+    // Anything a sync added to these applications since then stays.
+    for (const old of cp.apps) {
+      const now = db.applications.find(a => a.id === old.id);
+      const added = now?.events.filter(e => !eventIds.has(e.id)) || [];
+      if (added.length) { old.events.push(...added); refresh(old); }
+    }
+    db.applications = db.applications.filter(a => !putBack.has(a.id) && !cp.remove.includes(a.id));
+    for (const a of db.applications) {
+      if (!a.events.some(e => eventIds.has(e.id))) continue;
+      a.events = a.events.filter(e => !eventIds.has(e.id));
+      refresh(a);
+    }
+    db.applications = db.applications.filter(a => a.events.length);
+    db.applications.push(...cp.apps);
+    for (const [m, was] of Object.entries(cp.ignored)) if (was) db.ignored[m] = was; else delete db.ignored[m];
+    for (const [m, was] of Object.entries(cp.assignments)) if (was) db.assignments[m] = was; else delete db.assignments[m];
+    if (cp.blockedSender) delete db.blockedSenders?.[cp.blockedSender];
+    db.corrections = cp.corrections;
+    return true;
+  }
+
+  pruneUndo() {
+    for (const [token, cp] of this.undoable) if (Date.now() - cp.at > UNDO_MS) this.undoable.delete(token);
   }
 
   // Each time you fix how an email was sorted, counted by kind, so the owner can see

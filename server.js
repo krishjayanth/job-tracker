@@ -267,19 +267,35 @@ app.post('/api/applications/:id/events', (req, res) => {
 
 // Confirm or correct which application an email belongs to (see Store#reassignEmail).
 app.post('/api/emails/:eventId/assign', (req, res) => {
-  const { app: a, error, status } = req.account.store.reassignEmail(req.params.eventId, req.body || {});
+  const store = req.account.store;
+  const body = req.body || {};
+  // Moving or removing an email can be undone; confirming it needs no undo.
+  const from = store.applications.find(a => a.events.some(e => e.id === req.params.eventId));
+  const undo = body.action !== 'confirm' && from ? store.checkpoint([from.id, body.to].filter(Boolean)) : null;
+  const { app: a, error, status } = store.reassignEmail(req.params.eventId, body);
   if (error) return res.status(status).json({ error });
+  if (undo && body.action === 'new' && a) store.undoAlsoRemoves(undo, a.id);
   changed(req.account);
-  res.json({ app: a });
+  res.json({ app: a, undo });
+});
+
+// Put things back as they were before a delete, move or ignore (the Undo in the page's message).
+app.post('/api/undo/:token', (req, res) => {
+  if (!req.account.store.undo(req.params.token)) return res.status(410).json({ error: 'Too late to undo that' });
+  changed(req.account);
+  res.json({ ok: true });
 });
 
 // Never read a sender again ("Ignore everything from simplebills.com"), and undo that.
 app.post('/api/blocked-senders', (req, res) => {
   const domain = String(req.body?.domain || '').trim().toLowerCase();
   if (!canBlockDomain(domain)) return res.status(400).json({ error: "That sender can't be blocked: it's a shared email service or hiring software" });
-  const removed = req.account.store.blockSender(domain);
+  const store = req.account.store;
+  const touched = store.applications.filter(a => a.events.some(e => e.from && senderDomain(e.from) === domain)).map(a => a.id);
+  const undo = store.checkpoint(touched, { blockedSender: domain });
+  const removed = store.blockSender(domain);
   changed(req.account);
-  res.json({ domain, removed });
+  res.json({ domain, removed, undo });
 });
 app.delete('/api/blocked-senders/:domain', (req, res) => {
   req.account.store.unblockSender(String(req.params.domain).toLowerCase());
@@ -304,10 +320,11 @@ app.post('/api/export', async (req, res) => {
 
 app.delete('/api/applications/:id', (req, res) => {
   const store = req.account.store;
+  const undo = store.checkpoint([req.params.id]);
   if (store.applications.find(x => x.id === req.params.id)?.source === 'gmail') store.noteCorrection('deleted');
   store.deleteApplication(req.params.id);
   changed(req.account);
-  res.json({ ok: true });
+  res.json({ ok: true, undo });
 });
 
 // --- Gmail ----------------------------------------------------------------

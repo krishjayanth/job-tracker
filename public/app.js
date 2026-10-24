@@ -607,7 +607,7 @@ function toast(text, undo) {
   }, { once: true });
   requestAnimationFrame(() => el.classList.add('show'));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 6000);
+  toastTimer = setTimeout(() => el.classList.remove('show'), undo ? 8000 : 4500); // time to reach Undo
 }
 
 function renderTabs() {
@@ -829,11 +829,23 @@ function reviewHtml(a) {
 
 async function assignEmail(eventId, body) {
   const fromId = openId;
-  const { app: to } = await api('POST', `/api/emails/${eventId}/assign`, body);
+  const { app: to, undo } = await api('POST', `/api/emails/${eventId}/assign`, body);
   await load();
   // Stay on this application if it's still here; otherwise follow the email.
   const next = state.applications.find(x => x.id === fromId) || state.applications.find(x => x.id === to?.id);
   if (next) openDrawer(next); else closeDrawer();
+  return { undo, fromId };
+}
+
+// A message with Undo for something the server can put back (see /api/undo). Undoing
+// reopens the application it happened to, so you see it's back.
+function undoToast(text, token, reopenId) {
+  toast(text, token && (async () => {
+    await api('POST', `/api/undo/${token}`);
+    await load();
+    const a = reopenId && state.applications.find(x => x.id === reopenId);
+    if (a) openDrawer(a);
+  }));
 }
 
 // Live updates refresh what the panel shows about the application, but never the
@@ -1032,17 +1044,13 @@ function openDrawer(app) {
     }
   });
 
-  const del = $('#delete-btn');
-  del.onclick = async () => {
-    if (!del.classList.contains('confirming')) {
-      del.classList.add('confirming');
-      del.innerHTML = `${icon('trash')}Click again to delete`;
-      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); del.innerHTML = `${icon('trash')}Delete application`; } }, 4000);
-      return;
-    }
-    await api('DELETE', `/api/applications/${a.id}`);
+  // Deleting happens at once; the message offers Undo.
+  $('#delete-btn').onclick = async () => {
+    $('#delete-btn').disabled = true;
+    const { undo } = await api('DELETE', `/api/applications/${a.id}`);
     closeDrawer();
-    load();
+    await load();
+    undoToast(`Deleted ${a.company}`, undo, a.id);
   };
 
   showDrawer($('#drawer [data-close]'));
@@ -1120,25 +1128,25 @@ $('#drawer').addEventListener('click', async e => {
       const block = button.closest('.filer').querySelector('[data-also-block]:checked');
       if (block) {
         const id = openId;
-        const { domain, removed } = await api('POST', '/api/blocked-senders', { domain: block.dataset.alsoBlock });
+        const { domain, removed, undo } = await api('POST', '/api/blocked-senders', { domain: block.dataset.alsoBlock });
         await load();
         const a = state.applications.find(x => x.id === id);
         if (a) openDrawer(a); else closeDrawer();
-        return toast(`Ignoring ${domain} · removed ${removed} ${removed === 1 ? 'email' : 'emails'}`);
+        return undoToast(`Ignoring ${domain} · removed ${removed} ${removed === 1 ? 'email' : 'emails'}`, undo, id);
       }
-      await assignEmail(button.dataset.ignore, { action: 'ignore' });
-      return toast('Removed: not a job email');
+      const { undo, fromId } = await assignEmail(button.dataset.ignore, { action: 'ignore' });
+      return undoToast('Removed: not a job email', undo, fromId);
     }
     const filer = button.closest('.filer');
     const to = filer.querySelector('[data-move-to]').value;
     if (to !== 'new') {
-      await assignEmail(button.dataset.move, { action: 'move', to });
-      return toast(`Moved to ${state.applications.find(x => x.id === to)?.company || 'the other application'}`);
+      const { undo, fromId } = await assignEmail(button.dataset.move, { action: 'move', to });
+      return undoToast(`Moved to ${state.applications.find(x => x.id === to)?.company || 'the other application'}`, undo, fromId);
     }
     const company = filer.querySelector('[data-new="company"]');
     if (!company.value.trim()) { button.disabled = false; return company.focus(); }
-    await assignEmail(button.dataset.move, { action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value });
-    toast(`Moved to a new application at ${company.value.trim()}`);
+    const { undo, fromId } = await assignEmail(button.dataset.move, { action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value });
+    undoToast(`Moved to a new application at ${company.value.trim()}`, undo, fromId);
   } catch (err) {
     button.disabled = false;
     savedNote(err.message, 'err');
@@ -1588,12 +1596,13 @@ $('#report-form').addEventListener('submit', async e => {
 // The owner's list of reports.
 const REPORT_KIND = { sorting: 'Sorted wrong', bug: 'Something broke', other: 'Idea or other' };
 const REPORT_TONE = { sorting: 'interview', bug: 'rejected', other: 'applied' };
-let reports = [];
+let allReports = [];
 let reportFilter = 'open';
+const pendingDeletes = new Set(); // deleted here, waiting out the Undo
 async function loadReports() {
   let stats;
   try {
-    [{ reports }, stats] = await Promise.all([api('GET', '/api/reports'), api('GET', '/api/reports/stats')]);
+    [{ reports: allReports }, stats] = await Promise.all([api('GET', '/api/reports'), api('GET', '/api/reports/stats')]);
   } catch {
     location.hash = '#/'; // not the owner
     return;
@@ -1619,6 +1628,7 @@ function renderQuality({ accounts, withAi, emails, corrections: c }) {
 }
 function renderReports() {
   const counts = { open: 0, resolved: 0 };
+  const reports = allReports.filter(r => !pendingDeletes.has(r.id));
   reports.forEach(r => counts[r.status]++);
   $('#report-tabs').innerHTML = [['open', 'Open', counts.open], ['resolved', 'Resolved', counts.resolved], ['all', 'All', reports.length]]
     .map(([id, label, n]) => `<button class="tab" role="tab" type="button" aria-selected="${reportFilter === id}" data-report-filter="${id}">${label}<span class="n">${n}</span></button>`).join('');
@@ -1663,17 +1673,24 @@ $('#report-list').addEventListener('click', async e => {
     await api('PATCH', `/api/reports/${status.dataset.reportStatus}`, { status: status.dataset.to });
     return loadReports();
   }
+  // Deleting a report hides it at once and only deletes it for good once the Undo
+  // in the message has had its chance.
   const del = e.target.closest('[data-report-delete]');
   if (del) {
-    if (!del.classList.contains('confirming')) {
-      del.classList.add('confirming');
-      del.innerHTML = `${icon('trash')}Click again to delete`;
-      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); del.innerHTML = `${icon('trash')}Delete`; } }, 4000);
-      return;
-    }
-    del.disabled = true;
-    await api('DELETE', `/api/reports/${del.dataset.reportDelete}`);
-    loadReports();
+    const id = del.dataset.reportDelete;
+    pendingDeletes.add(id);
+    renderReports();
+    const timer = setTimeout(async () => {
+      if (!pendingDeletes.has(id)) return;
+      await api('DELETE', `/api/reports/${id}`).catch(() => {});
+      pendingDeletes.delete(id);
+      loadReports();
+    }, 8500);
+    toast('Report deleted', async () => {
+      clearTimeout(timer);
+      pendingDeletes.delete(id);
+      renderReports();
+    });
   }
 });
 // Clicking the link you're on still takes you there (e.g. back up to the applications).
