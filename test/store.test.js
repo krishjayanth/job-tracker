@@ -236,3 +236,83 @@ test('undo stops ignoring a sender and brings its emails back, keeping newer one
   s.undo(t);
   assert.equal(s.applications.find(x => x.id === c.id).events.length, 2);
 });
+
+// ---- two applications at one company, told apart by when the emails were sent
+
+const at = day => `${day}T12:00:00.000Z`;
+
+test('a new "thanks for applying" after a rejection starts a new application', () => {
+  const old = gmailApp({ company: 'Contoso', role: 'Software Engineer Intern', events: [['2026-01-10', 'applied'], ['2026-02-01', 'rejected']] });
+  assert.equal(s.matchApplication({ company: 'Contoso', role: 'Software Engineer Intern', date: at('2026-08-01'), stage: 'applied' }).app, null);
+  // Without a role, too, and a withdrawn application counts as closed.
+  assert.equal(s.matchApplication({ company: 'Contoso', date: at('2026-08-01'), stage: 'applied' }).app, null);
+  old.events.at(-1).stage = 'withdrawn';
+  refresh(old);
+  assert.equal(s.findApplication({ company: 'Contoso', date: at('2026-02-03'), stage: 'applied' }), null);
+  // Sent the same day it closed: more likely a late copy of the first confirmation.
+  assert.equal(s.findApplication({ company: 'Contoso', date: '2026-02-01T18:00:00.000Z', stage: 'applied' }), old);
+});
+
+test('follow-ups stay with their application however late they come', () => {
+  const a = gmailApp({ company: 'Fabrikam', role: 'Backend Engineer', events: [['2026-01-10', 'applied'], ['2026-02-01', 'rejected']] });
+  for (const stage of ['oa', 'interview', 'offer', 'rejected']) {
+    assert.equal(s.findApplication({ company: 'Fabrikam', role: 'Backend Engineer', date: at('2026-09-01'), stage }), a);
+  }
+  // An open application, quiet for a while: another "applied" email is part of it.
+  const open = gmailApp({ company: 'Northwind', events: [['2026-03-01', 'applied'], ['2026-03-20', 'interview']] });
+  assert.equal(s.findApplication({ company: 'Northwind', date: at('2026-06-01'), stage: 'applied' }), open);
+  // The same thread or job ID is always the same application.
+  assert.equal(s.findApplication({ threadId: a.events[0].threadId, company: 'Fabrikam', date: at('2026-09-01'), stage: 'applied' }), a);
+  const withId = gmailApp({ company: 'Litware', jobId: 'R-1', events: [['2026-01-10', 'applied'], ['2026-02-01', 'rejected']] });
+  assert.equal(s.findApplication({ company: 'Litware', jobId: 'R-1', date: at('2026-09-01'), stage: 'applied' }), withId);
+});
+
+test('after months of silence a new "thanks for applying" starts a new application', () => {
+  const a = gmailApp({ company: 'Proseware', events: [['2026-01-10', 'applied']] });
+  assert.equal(s.findApplication({ company: 'Proseware', date: at('2026-05-01'), stage: 'applied' }), a);
+  assert.equal(s.findApplication({ company: 'Proseware', date: at('2026-06-01'), stage: 'applied' }), null);
+});
+
+test('applied twice for one role: later emails go to the application still open', () => {
+  gmailApp({ company: 'Contoso', role: 'Software Engineer Intern', events: [['2026-01-10', 'applied'], ['2026-02-01', 'rejected']] });
+  const again = gmailApp({ company: 'Contoso', role: 'Software Engineer Intern', events: [['2026-08-01', 'applied']] });
+  const m = s.matchApplication({ company: 'Contoso', role: 'Software Engineer Intern', date: at('2026-08-10'), stage: 'oa' });
+  assert.equal(m.app, again);
+  assert.equal(m.guess, false);
+});
+
+// What a sync does with each email, oldest first (see Mailbox#drain in src/gmail.js).
+function syncEmail(e, { company, role = '' }) {
+  const app = s.assignedApplication(e.messageId) ||
+    s.matchApplication({ threadId: e.threadId, company, role, date: e.date, stage: e.stage }).app ||
+    s.createApplication({ company, role, source: 'gmail' });
+  app.events.push(structuredClone(e));
+  refresh(app);
+}
+
+test('splitting emails off into a new application, which a re-scan keeps apart', () => {
+  // One thread-less confirmation each time, so only the name links them: merged.
+  const merged = gmailApp({ company: 'Woodgrove Bank', role: 'Analyst', events: [
+    ['2026-01-10', 'applied', { threadId: 't1' }], ['2026-01-20', 'oa', { threadId: 't1' }],
+    ['2026-03-01', 'applied', { threadId: 't2', jobId: 'R-9' }], ['2026-03-10', 'interview', { threadId: 't2' }],
+  ] });
+  const [, , second, interview] = merged.events;
+  const { app } = s.reassignEmail(second.id, { action: 'new', company: 'Woodgrove Bank', role: 'Analyst', also: [interview.id, 'not-here'] });
+  assert.equal(s.applications.length, 2);
+  assert.deepEqual(app.events.map(e => e.stage), ['applied', 'interview']);
+  assert.equal(app.status, 'interview');
+  assert.equal(app.appliedAt, at('2026-03-01'));
+  assert.equal(app.jobId, 'R-9'); // from the emails split off
+  assert.deepEqual(merged.events.map(e => e.stage), ['applied', 'oa']);
+  assert.equal(merged.status, 'oa');
+  assert.deepEqual(s.db.corrections, { moved: 2 });
+
+  // A full re-scan rebuilds everything from the emails, oldest first.
+  const emails = s.applications.flatMap(a => a.events).sort((a, b) => a.date.localeCompare(b.date));
+  s.db.applications.length = 0;
+  for (const e of emails) syncEmail(e, { company: 'Woodgrove Bank', role: 'Analyst' });
+  assert.equal(s.applications.length, 2);
+  const [first, split] = s.applications;
+  assert.deepEqual(first.events.map(e => e.stage), ['applied', 'oa']);
+  assert.deepEqual(split.events.map(e => e.stage), ['applied', 'interview']);
+});

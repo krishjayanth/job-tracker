@@ -84,9 +84,13 @@ free tier awake):
    returns the stage, company, role, job ID, deadline, a one-line summary and its confidence as strict JSON. AI and
    recorded video interviews (HireVue and the like) count as assessments. Hand-tuned rules then check it, and they
    handle the email alone if the LLM is unavailable.
-4. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role. If several
+4. **Match it to an application** by Gmail thread, then company plus job ID, then company plus role. The date the
+   email was sent tells a second application at the same company apart: a new "thanks for applying" starts a new
+   application if the old one was rejected or withdrawn before it, or had been silent for over 120 days; follow-ups
+   (assessments, interviews, offers) always join. If several
    applications at one company still fit, Groq is shown that short list and picks one. When the model was unsure, the rules disagree, or the email could belong to several applications, it's flagged in "Needs your
-   action" so you can confirm it or move it to the right application. Your answers are kept through a re-scan.
+   action" so you can confirm it, move it to the right application, or split it (with any of its other emails) into
+   a new one. Your answers are kept through a re-scan.
 5. **Derive status from the timeline.** Status is never stored directly. It's recomputed from the application's
    events, so a late "thanks for applying" email can't undo an interview and a manual correction always wins.
 6. **Save and broadcast.** The change is persisted and pushed to every open browser over Server-Sent Events.

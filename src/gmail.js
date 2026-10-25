@@ -366,7 +366,7 @@ export class Mailbox {
         let app = store.assignedApplication(msg.id);
         const assigned = Boolean(app);
         if (!app) {
-          const match = store.matchApplication({ threadId: msg.threadId, company, role, jobId });
+          const match = store.matchApplication({ threadId: msg.threadId, company, role, jobId, date: email.date, stage: result.stage });
           // A reply in a thread you already have settles which application it is.
           if (match.thread) review = review.filter(r => r.about !== 'application');
           // Several applications at this company and nothing in the email to tell them apart:

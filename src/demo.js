@@ -53,6 +53,8 @@ const SEARCH = [
   ['Fernbrook Labs', 'Platform Engineer Intern', '', [[70, 'applied'], [58, 'interview'], [30, 'offer']]],
   // Withdrew
   ['Silverline Robotics', 'Robotics Software Intern', '', [[65, 'applied'], [55, 'oa', 7], [40, 'withdrawn']]],
+  // Applied twice, months apart, filed as one application: split it from the drawer
+  ['Graphic Design Institute', 'Software Engineer Intern', '', [[160, 'applied'], [140, 'rejected'], [10, 'applied'], [4, 'interview']]],
 ];
 
 const SUBJECTS = {

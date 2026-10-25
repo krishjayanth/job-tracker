@@ -137,6 +137,31 @@ function activeDeadline(app) {
   return deadline && deadline !== app.deadlineDone ? deadline : null;
 }
 
+// ---- two applications at the same company ----------------------------------------
+// An email joins an application by thread, job ID, or company + role. Applying to the
+// same place again later looks the same by name, so the date the email was sent
+// decides: a "thanks for applying" email (stage applied) starts a new application when
+// the one it would join had, before that email,
+//   - been closed (rejected or withdrawn) at least CLOSED_GAP_DAYS earlier, or
+//   - heard nothing for more than SILENT_GAP_DAYS (an offer included).
+// Any other email (assessment, interview, offer, rejection) joins as before however late
+// it comes, so follow-ups stay with their application. Same thread or same job ID always
+// joins: those aren't decided here.
+export const CLOSED_GAP_DAYS = 1;
+export const SILENT_GAP_DAYS = 120;
+const CLOSED = new Set(['rejected', 'withdrawn']);
+const isClosed = a => CLOSED.has(a.status);
+const daysBetween = (from, to) => (Date.parse(to) - Date.parse(from)) / 86_400_000;
+
+export function startsNewApplication(app, { date, stage }) {
+  if (stage !== 'applied' || !date) return false;
+  const before = app.events.filter(e => e.date <= date);
+  if (!before.length) return false;
+  const last = before.reduce((m, e) => (e.date > m ? e.date : m), before[0].date);
+  if (CLOSED.has(computeStatus(before))) return daysBetween(last, date) >= CLOSED_GAP_DAYS;
+  return daysBetween(last, date) > SILENT_GAP_DAYS;
+}
+
 // ---- re-scan support: keep what you changed by hand ---------------------------
 
 const userEdited = a =>
@@ -349,7 +374,9 @@ export class Store {
 
   // Like findApplication, plus how sure the match is: `guess` is true when the email
   // was put with one of several applications at that company without a role or ID to go on.
-  matchApplication({ threadId, company, role, jobId }) {
+  // Given the email's `date` and `stage`, a fresh "thanks for applying" sent after an
+  // application ended doesn't join it (see startsNewApplication).
+  matchApplication({ threadId, company, role, jobId, date, stage }) {
     const none = { app: null, guess: false };
     if (threadId) {
       const byThread = this.db.applications.find(a => a.events.some(e => e.threadId === threadId));
@@ -361,22 +388,24 @@ export class Store {
     let sameCompany = this.db.applications.filter(a =>
       [a.company, ...(a.aliases || [])].some(name => normalizeCompany(name) === key));
     if (sameCompany.length === 0) return none;
-    const several = sameCompany.length > 1;
     // A job ID is the strongest signal: same ID is the same job; a different ID is a different job.
     if (jobId) {
       const byId = sameCompany.find(a => a.jobId === jobId);
       if (byId) return { app: byId, guess: false };
       sameCompany = sameCompany.filter(a => !a.jobId);
-      if (sameCompany.length === 0) return none;
     }
+    if (date) sameCompany = sameCompany.filter(a => !startsNewApplication(a, { date, stage }));
+    if (sameCompany.length === 0) return none;
+    const several = sameCompany.length > 1;
     if (role) {
       // Same job worded slightly differently across emails ("Software Engineer Intern"
       // vs "Software Engineer Intern | Enterprise Technology") counts as a match.
+      // Applied for it more than once: the one still open, else the latest.
       const r = normalizeCompany(role);
-      const exact = sameCompany.find(a => {
+      const exact = sameCompany.filter(a => {
         const ar = normalizeCompany(a.role);
         return ar && (ar.includes(r) || r.includes(ar));
-      });
+      }).sort((a, b) => isClosed(a) - isClosed(b) || b.appliedAt.localeCompare(a.appliedAt))[0];
       if (exact) return { app: exact, guess: false };
       // A different, known role at the same company is a separate application.
       const unknownRole = sameCompany.filter(a => !a.role);
@@ -390,45 +419,56 @@ export class Store {
 
   // Where you've said an email belongs. Kept by Gmail message id so a re-scan puts it
   // back: by application id, else by another email of that application, else by name.
+  // Emails you split off into a new application (`separate`) never go back by name: that
+  // would put them straight back on the application they were split from.
   assignedApplication(messageId) {
     const to = this.db.assignments[messageId];
     if (!to) return null;
     return this.db.applications.find(a => a.id === to.appId) ||
       this.db.applications.find(a => a.events.some(e => to.anchors?.includes(e.messageId))) ||
-      this.findApplication({ company: to.company, role: to.role, jobId: to.jobId }) ||
+      (!to.separate && this.findApplication({ company: to.company, role: to.role, jobId: to.jobId })) ||
       this.createApplication({ company: to.company, role: to.role, jobId: to.jobId, source: 'gmail' });
   }
 
   // Your answer to "is this email filed under the right application?":
   //   confirm          it is; stop asking
   //   move, to         it belongs to another application
-  //   new, company…    it belongs to an application that isn't in the tracker yet
+  //   new, company…    it's a separate application: split it off into a new one, taking
+  //                    `also` (ids of more emails from this application) with it
   //   ignore           it isn't about an application at all
   // Returns {app} (where the email is now, or null), or {error, status}.
-  reassignEmail(eventId, { action, to, company, role = '', jobId = '' }) {
+  reassignEmail(eventId, { action, to, company, role = '', jobId = '', also = [] }) {
     const db = this.db;
     const from = db.applications.find(a => a.events.some(e => e.id === eventId));
     if (!from) return { error: 'Email not found', status: 404 };
     const event = from.events.find(e => e.id === eventId);
+    const moving = [event];
+    if (action === 'new' && Array.isArray(also)) {
+      moving.push(...from.events.filter(e => e !== event && !e.manual && also.includes(e.id)));
+    }
 
     let target = null;
     if (action === 'confirm') target = from;
     else if (action === 'move') target = db.applications.find(a => a.id === to);
     else if (action === 'new') {
       if (!company?.trim()) return { error: 'Company is required', status: 400 };
-      target = this.createApplication({ company: company.trim(), role: role.trim(), jobId: jobId.trim(), source: 'gmail' });
+      // The job ID comes from the emails split off, when one of them has it.
+      const id = jobId.trim() || moving.find(e => e.jobId)?.jobId || '';
+      target = this.createApplication({ company: company.trim(), role: role.trim(), jobId: id, source: 'gmail' });
     } else if (action !== 'ignore') return { error: 'Unknown action', status: 400 };
     if (action === 'move' && !target) return { error: 'Application not found', status: 404 };
-    this.noteCorrection({ confirm: 'confirmed', move: 'moved', new: 'moved', ignore: 'notJob' }[action]);
+    this.noteCorrection({ confirm: 'confirmed', move: 'moved', new: 'moved', ignore: 'notJob' }[action], moving.length);
 
-    if (target !== from) from.events = from.events.filter(e => e !== event);
+    if (target !== from) from.events = from.events.filter(e => !moving.includes(e));
     if (target) {
-      if (target !== from) target.events.push(event);
-      event.reviewed = true;
-      if (event.messageId) {
-        db.assignments[event.messageId] = {
+      if (target !== from) target.events.push(...moving);
+      for (const e of moving) {
+        e.reviewed = true;
+        if (!e.messageId) continue;
+        db.assignments[e.messageId] = {
           appId: target.id, company: target.company, role: target.role, jobId: target.jobId,
-          anchors: target.events.filter(e => e.messageId && e !== event).map(e => e.messageId).slice(0, 5),
+          anchors: target.events.filter(x => x.messageId && x !== e).map(x => x.messageId).slice(0, 5),
+          ...(action === 'new' && { separate: true }),
         };
       }
       refresh(target);

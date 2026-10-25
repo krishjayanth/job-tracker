@@ -936,17 +936,21 @@ function timelineHtml(a) {
 }
 
 // "Filed correctly?" One flow everywhere an email might be in the wrong place, with the
-// same three answers: Yes, it's right / Move it / Not a job. Hidden until you open it.
+// same answers: Yes, it's right / Move it / New application / Not a job. Hidden until you open it.
 function filerHtml(a, e) {
   const others = state.applications
     .filter(x => x.id !== a.id)
     .sort((x, y) => x.company.localeCompare(y.company) || (x.role || '').localeCompare(y.role || ''));
+  // Splitting off: the other emails here can go along. Later ones start ticked, since a
+  // second application usually begins with its own "thanks for applying".
+  const siblings = a.events.filter(x => x !== e && !x.manual).sort((x, y) => y.date.localeCompare(x.date));
   return `
     <div class="filer" data-filer="${e.id}" hidden>
       <div class="filer-q">Is this email filed under the right application?</div>
       <div class="filer-choices" role="group" aria-label="Filed correctly?">
         <button class="btn btn-sm" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's right</button>
         <button class="btn btn-sm" type="button" data-filer-show="move" aria-expanded="false">Move it</button>
+        <button class="btn btn-sm" type="button" data-filer-show="split" aria-expanded="false">New application</button>
         <button class="btn btn-sm" type="button" data-filer-show="notjob" aria-expanded="false">Not a job</button>
       </div>
       <div class="filer-pane" data-pane="move" hidden>
@@ -957,11 +961,21 @@ function filerHtml(a, e) {
             <option value="new">A new application…</option>
           </select>
         </div>
-        <div class="fields filer-new" hidden>
-          <div class="field"><label for="new-co-${e.id}">Company</label><input id="new-co-${e.id}" data-new="company" placeholder="e.g. Stripe"></div>
-          <div class="field"><label for="new-role-${e.id}">Role</label><input id="new-role-${e.id}" data-new="role" placeholder="Optional"></div>
-        </div>
         <div class="filer-actions"><button class="btn btn-primary btn-sm" type="button" data-move="${e.id}" disabled>Move email</button></div>
+      </div>
+      <div class="filer-pane" data-pane="split" hidden>
+        <p class="filer-note">Applied more than once, or a different job? Split this email off into an application of its own. Its stage comes from the emails it takes.</p>
+        <div class="fields">
+          <div class="field"><label for="new-co-${e.id}">Company</label><input id="new-co-${e.id}" data-new="company" value="${esc(a.company)}" placeholder="e.g. Stripe"></div>
+          <div class="field"><label for="new-role-${e.id}">Role</label><input id="new-role-${e.id}" data-new="role" value="${esc(a.role || '')}" placeholder="Optional"></div>
+        </div>
+        ${siblings.length ? `<fieldset class="split-also">
+          <legend>Also move</legend>
+          ${siblings.map(x => `<label class="check-row"><input type="checkbox" data-also="${x.id}"${x.date > e.date ? ' checked' : ''}>
+            <span><strong>${esc(decode(x.subject || STAGE_LABEL[x.stage]))}</strong>
+            <small>${STAGE_LABEL[x.stage]} · ${shortDate(x.date)}</small></span></label>`).join('')}
+        </fieldset>` : ''}
+        <div class="filer-actions"><button class="btn btn-primary btn-sm" type="button" data-split="${e.id}">Split into new application</button></div>
       </div>
       <div class="filer-pane" data-pane="notjob" hidden>
         <p class="filer-note">The email is removed from ${esc(a.company)} and won't be added again.</p>
@@ -989,6 +1003,7 @@ function reviewHtml(a) {
           <div class="filer-actions">
             <button class="btn btn-sm" type="button" data-confirm="${e.id}">${icon('check')}Yes, it's right</button>
             <button class="btn btn-sm btn-quiet" type="button" data-fix="${e.id}" data-show="move">Move it</button>
+            <button class="btn btn-sm btn-quiet" type="button" data-fix="${e.id}" data-show="split">New application</button>
             <button class="btn btn-sm btn-quiet" type="button" data-fix="${e.id}" data-show="notjob">Not a job</button>
           </div>
         </div>`).join('')}
@@ -1296,7 +1311,7 @@ $('#drawer').addEventListener('click', async e => {
     }
     return;
   }
-  const button = e.target.closest('[data-confirm], [data-move], [data-ignore]');
+  const button = e.target.closest('[data-confirm], [data-move], [data-split], [data-ignore]');
   if (!button) return;
   button.disabled = true;
   try {
@@ -1319,15 +1334,23 @@ $('#drawer').addEventListener('click', async e => {
       return undoToast('Removed: not a job email', undo, fromId);
     }
     const filer = button.closest('.filer');
-    const to = filer.querySelector('[data-move-to]').value;
-    if (to !== 'new') {
+    if (button.dataset.move) {
+      const to = filer.querySelector('[data-move-to]').value;
       const { undo, fromId } = await assignEmail(button.dataset.move, { action: 'move', to });
       return undoToast(`Moved to ${state.applications.find(x => x.id === to)?.company || 'the other application'}`, undo, fromId);
     }
+    // Split off, then show the new application: that's where the emails went.
     const company = filer.querySelector('[data-new="company"]');
     if (!company.value.trim()) { button.disabled = false; return company.focus(); }
-    const { undo, fromId } = await assignEmail(button.dataset.move, { action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value });
-    undoToast(`Moved to a new application at ${company.value.trim()}`, undo, fromId);
+    const also = [...filer.querySelectorAll('[data-also]:checked')].map(x => x.dataset.also);
+    const fromId = openId;
+    const { app: created, undo } = await api('POST', `/api/emails/${button.dataset.split}/assign`, {
+      action: 'new', company: company.value, role: filer.querySelector('[data-new="role"]').value, also,
+    });
+    await load();
+    openById(created.id);
+    const n = also.length + 1;
+    undoToast(`Split ${n} ${n === 1 ? 'email' : 'emails'} into a new application at ${created.company}`, undo, fromId);
   } catch (err) {
     button.disabled = false;
     savedNote(err.message, 'err');
@@ -1339,7 +1362,7 @@ $('#drawer').addEventListener('click', async e => {
 function showFilerPane(filer, which) {
   filer.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== which; });
   filer.querySelectorAll('[data-filer-show]').forEach(b => b.setAttribute('aria-expanded', b.dataset.filerShow === which));
-  filer.querySelector(which === 'move' ? '[data-move-to]' : '[data-ignore]')?.focus();
+  filer.querySelector({ move: '[data-move-to]', split: '[data-new="company"]' }[which] || '[data-ignore]')?.focus();
 }
 $('#drawer').addEventListener('change', async e => {
   // Status at the top of the panel saves at once, the same as in the table.
@@ -1351,9 +1374,9 @@ $('#drawer').addEventListener('change', async e => {
   const pick = e.target.closest('[data-move-to]');
   if (!pick) return;
   const filer = pick.closest('.filer');
-  filer.querySelector('.filer-new').hidden = pick.value !== 'new';
+  // "A new application…" is the split step, so it can take other emails along.
+  if (pick.value === 'new') { pick.value = ''; showFilerPane(filer, 'split'); }
   filer.querySelector('[data-move]').disabled = !pick.value;
-  if (pick.value === 'new') filer.querySelector('[data-new="company"]').focus();
 });
 // Resolving a row: it folds away at once, then the server catches up.
 const foldRow = id => $(`#action-list [data-row="${id}"]`)?.classList.add('leaving');
