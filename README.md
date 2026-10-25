@@ -40,6 +40,8 @@ into memory, so you can click around, edit, filter and export without a Google a
   deadline's date and time yourself; a date with no time means the end of that day.
 - **Keeps your corrections.** Renames, status changes, notes and deadlines survive a full re-scan of the inbox.
 - **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
+- **Keyboard first.** ⌘K (Ctrl+K elsewhere) opens a command menu that finds any application by company,
+  role or job ID, jumps between pages, filters by stage, and runs actions like Sync, Export or the theme switch.
 
 ![Application drawer with details and an email timeline](docs/drawer.png)
 

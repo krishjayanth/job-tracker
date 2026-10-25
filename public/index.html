@@ -55,7 +55,10 @@
       <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
       <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></symbol>
-      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+      <symbol id="i-shield"viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
     </defs>
   </svg>
 
@@ -88,6 +91,9 @@
       <a class="brand" href="#/" aria-label="nuj dashboard">
         <span class="logo-mark" role="img" aria-label="nuj"></span>
       </a>
+      <button id="cmdk-open" class="cmdk-trigger" type="button" aria-haspopup="dialog" aria-controls="cmdk" aria-keyshortcuts="Control+K Meta+K" title="Search and commands">
+        <svg class="icon"><use href="#i-search"/></svg><span>Search</span><kbd class="cmdk-key">Ctrl K</kbd>
+      </button>
     </div>
     <div class="topbar-actions">
       <div id="gmail-status" class="gmail-status" role="status"></div>
@@ -452,6 +458,18 @@
       </button>
     </div>
     <div id="sankey-large" class="sankey sankey-large"></div>
+  </dialog>
+
+  <dialog id="cmdk" class="cmdk" aria-label="Search and commands">
+    <div class="cmdk-input">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="cmdk-input" type="text" placeholder="Search applications, pages and actions…" autocomplete="off" spellcheck="false"
+        role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-autocomplete="list" aria-label="Search applications, pages and actions">
+    </div>
+    <div id="cmdk-list" class="cmdk-list" role="listbox" aria-label="Results"></div>
+    <div class="cmdk-foot" aria-hidden="true">
+      <span><kbd>↑</kbd><kbd>↓</kbd> to move</span><span><kbd>↵</kbd> to open</span><span><kbd>esc</kbd> to close</span>
+    </div>
   </dialog>
 
   <div id="scrim" class="scrim" hidden></div>

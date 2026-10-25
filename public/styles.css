@@ -957,6 +957,66 @@ table.apps { width: 100%; border-collapse: collapse; }
 .soon-note { margin: 24px 0 18px; max-width: 400px; color: var(--muted); font-size: 12.5px; }
 .coming .btn { text-decoration: none; }
 
+/* ------------------------------------------------------------------ command menu (⌘K) */
+.cmdk-trigger {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 11px; min-width: 200px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  color: var(--muted); font-size: 13px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s, transform 160ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+.cmdk-trigger:hover { border-color: var(--border-strong); color: var(--text-2); }
+.cmdk-trigger:active { transform: scale(.98); transition-duration: 60ms; }
+.cmdk-trigger kbd { margin-left: auto; }
+
+.cmdk {
+  position: fixed; inset: 12dvh 0 auto; margin: 0 auto;
+  width: calc(100vw - 24px); max-width: 560px; max-height: none;
+  padding: 0; border: 0; border-radius: 16px; overflow: hidden;
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 0 0 1px var(--border-strong), 0 32px 80px -16px rgba(0, 0, 0, .9);
+}
+:root[data-theme="light"] .cmdk { box-shadow: 0 0 0 1px var(--border), 0 24px 64px -12px rgba(16, 24, 40, .22), 0 2px 6px rgba(16, 24, 40, .05); }
+.cmdk[open] { display: flex; flex-direction: column; animation: cmdk-in 150ms var(--ease); }
+.cmdk.closing { animation: cmdk-out 110ms var(--ease) forwards; }
+.cmdk::backdrop { background: rgba(0, 0, 0, .6); animation: fade 150ms var(--ease); }
+:root[data-theme="light"] .cmdk::backdrop { background: rgba(0, 0, 0, .3); }
+.cmdk.closing::backdrop { animation: cmdk-fade-out 110ms var(--ease) forwards; }
+@keyframes cmdk-in { from { opacity: 0; transform: scale(.97); } }
+@keyframes cmdk-out { to { opacity: 0; transform: scale(.98); } }
+@keyframes cmdk-fade-out { to { opacity: 0; } }
+
+.cmdk-input { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.cmdk-input input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; outline: none; box-shadow: none; font-size: 14px; color: var(--text); }
+.cmdk-input input::placeholder { color: var(--muted); }
+
+.cmdk-list { max-height: min(360px, 60dvh); overflow-y: auto; overscroll-behavior: contain; padding: 6px; scroll-padding: 6px; }
+.cmdk-heading { padding: 6px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.cmdk-sep { height: 1px; margin: 6px -6px; background: var(--border); }
+.cmdk-item {
+  display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 8px 10px;
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); cursor: pointer; user-select: none;
+}
+.cmdk-item[aria-selected="true"] { background: var(--surface-hover); color: var(--text); }
+.cmdk-item > .icon { color: var(--muted); }
+.cmdk-item[aria-selected="true"] > .icon { color: var(--text); }
+.cmdk-dot { width: 16px; height: 16px; flex: none; display: grid; place-items: center; }
+.cmdk-dot::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.cmdk-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.cmdk-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.cmdk-sub { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11.5px; color: var(--muted); }
+.cmdk-sub > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-sub .pill { gap: 5px; font-size: 11.5px; color: var(--text-2); flex: none; }
+.cmdk-sub .pill::before { width: 6px; height: 6px; }
+.cmdk-current { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11.5px; color: var(--muted); }
+.cmdk-current .icon { width: 13px; height: 13px; }
+.cmdk-keys { display: flex; gap: 4px; flex: none; }
+.cmdk kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; font-size: 10.5px; }
+.cmdk-empty { padding: 28px 12px; text-align: center; font-size: 13px; color: var(--muted); }
+.cmdk-foot { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+.cmdk-foot span { display: inline-flex; align-items: center; gap: 4px; }
+.cmdk-foot kbd { min-width: 18px; height: 18px; padding: 0 4px; font-size: 10px; }
+
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {
   .overview { grid-template-columns: minmax(0, 1fr) 300px; }
@@ -983,6 +1043,9 @@ table.apps { width: 100%; border-collapse: collapse; }
   .topbar { padding: 10px 16px; }
   .topbar .btn span, .gmail-status .via { display: none; }
   .topbar .btn { padding: 0 10px; }
+  .cmdk-trigger { min-width: 0; width: 34px; padding: 0; justify-content: center; }
+  .cmdk-trigger span, .cmdk-trigger kbd { display: none; }
+  .cmdk-foot { display: none; } /* no arrow keys on a phone */
   .page { padding: 20px 16px 48px; gap: 16px; }
   .page { gap: 32px; }
   .table-wrap { margin: 0 -8px; }
@@ -1021,4 +1084,6 @@ table.apps { width: 100%; border-collapse: collapse; }
   .tab-indicator { transition: none; }
   /* The Undo countdown is information, not decoration: it keeps its real length (UNDO_SHOW_MS). */
   .toast .toast-timer { animation-duration: 5s !important; }
+  /* The command menu still fades, just without the scale. */
+  .cmdk[open] { animation: fade 150ms ease !important; }
 }
