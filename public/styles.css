@@ -486,7 +486,10 @@ kbd {
   -webkit-backdrop-filter: blur(16px) saturate(180%); backdrop-filter: blur(16px) saturate(180%);
 }
 .table-wrap { margin: 0 -12px; }
-.apps thead th {
+/* The whole head sticks (not each cell): it has a view-transition-name, which makes it a
+   stacking context and a backdrop root, so only on the head itself do the z-index and the
+   blur reach the rows scrolling underneath. */
+.apps thead {
   position: sticky; top: calc(60px + var(--apps-sticky-h, 0px)); z-index: 2;
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   -webkit-backdrop-filter: blur(16px) saturate(180%); backdrop-filter: blur(16px) saturate(180%);
