@@ -18,12 +18,14 @@
   --nav-bg: rgba(0, 0, 0, .72);
   --spot: rgba(255, 255, 255, .045);
 
-  /* Stages differ by shade only. */
-  --applied: #ffffff;
-  --oa: #d4d4d4;
-  --interview: #a3a3a3;
-  --offer: #ffffff;
-  --rejected: #737373;
+  /* Black and white, like the dashboard; colour means one thing only: a stage. Same values as the app. */
+  --applied: #818cf8;
+  --oa: #38bdf8;
+  --interview: #fbbf24;
+  --offer: #34d399;
+  --rejected: #fb7185;
+  --no-response: #6b6b6b;
+  --danger: #f87171;
 
   --ease: cubic-bezier(.16, 1, .3, 1);     /* critically damped feel: fast out, gentle settle */
   --focus: 0 0 0 2px #000, 0 0 0 4px #fff;
@@ -41,7 +43,10 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
 }
-a { color: var(--accent); text-underline-offset: .2em; }
+html { scrollbar-color: #2a2a2a var(--bg); }
+::selection { background: color-mix(in srgb, var(--applied) 45%, transparent); color: var(--text); }
+input, textarea { caret-color: var(--text); }
+a { color: var(--accent); text-underline-offset: .2em; text-decoration-thickness: 1px; }
 a:focus-visible, .btn:focus-visible, summary:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 10px; }
 img { display: block; max-width: 100%; height: auto; }
 .mono { font-family: var(--mono); }
@@ -63,11 +68,13 @@ img { display: block; max-width: 100%; height: auto; }
 .logo-mark { display: block; height: 1.9rem; aspect-ratio: 386 / 277; background: currentColor;
   -webkit-mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; mask: url(/brand/nuj-wordmark.png) center / contain no-repeat; }
 .nav-links { display: flex; gap: .25rem; margin: 0 auto; font-size: .875rem; }
-.nav-links a { padding: .4rem .75rem; border-radius: 999px; color: var(--muted); text-decoration: none; transition: color 150ms ease, background-color 150ms ease; }
+.nav-links a { white-space: nowrap; padding: .4rem .75rem; border-radius: 999px; color: var(--muted); text-decoration: none; transition: color 150ms ease, background-color 150ms ease; }
 .nav-links a:hover, .nav-links a[aria-current] { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
 @media (max-width: 46rem) {
   .nav-links { margin-right: 0; }
   .nav-links .optional { display: none; }
+  .nav .wrap { gap: .75rem; }
+  .nav-links a { padding-inline: .55rem; }
 }
 
 /* ------------------------------------------------------------- buttons */
@@ -91,7 +98,7 @@ img { display: block; max-width: 100%; height: auto; }
 .g { width: 1.1rem; height: 1.1rem; background: #fff; border-radius: 50%; padding: 2px; }
 
 /* --------------------------------------------------------------- hero */
-.hero { position: relative; padding: clamp(6rem, 16vw, 11rem) 0 0; text-align: center; isolation: isolate; }
+.hero { position: relative; padding: clamp(4.5rem, 10vw, 7.5rem) 0 0; text-align: center; isolation: isolate; }
 
 .pill {
   display: inline-flex; align-items: center; gap: .5rem; margin-bottom: 1.75rem; padding: .3rem .35rem .3rem .4rem;
@@ -107,11 +114,11 @@ img { display: block; max-width: 100%; height: auto; }
 
 .display {
   margin: 0 auto; max-width: 16ch;
-  font-size: clamp(2.6rem, 7vw, 5rem); line-height: 1; letter-spacing: -.045em; font-weight: 600;
+  font-size: clamp(2.6rem, 7vw, 5rem); line-height: 1; letter-spacing: -.04em; font-weight: 600;
   text-wrap: balance;
 }
 .display .w { display: inline-block; }
-.quiet { color: var(--faint); }
+.quiet { color: var(--muted); }
 .lede { margin: 2rem auto 0; max-width: 36rem; color: var(--muted); font-size: clamp(1.0625rem, 1.6vw, 1.1875rem); line-height: 1.6; text-wrap: pretty; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: center; margin-top: 2.75rem; }
 .fineprint { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem 1.25rem; margin: 1.5rem 0 0; padding: 0; list-style: none; color: var(--muted); font-size: .8125rem; }
@@ -119,7 +126,7 @@ img { display: block; max-width: 100%; height: auto; }
 .fineprint svg { width: .9rem; height: .9rem; color: var(--text); }
 
 /* The product shot tips back in 3D and flattens as you scroll (see site.js). */
-.stage { margin-top: clamp(5rem, 11vw, 8rem); perspective: 1600px; }
+.stage { margin-top: clamp(3.5rem, 7vw, 5rem); perspective: 1600px; }
 .frame {
   --tilt: 14deg; --lift: .94;
   position: relative; max-width: 66rem; margin: 0 auto; border-radius: 16px;
@@ -131,7 +138,8 @@ img { display: block; max-width: 100%; height: auto; }
 .chrome i { width: .65rem; height: .65rem; border-radius: 50%; background: var(--border-2); }
 .chrome span { margin: 0 auto; padding: .15rem .9rem; border-radius: 6px; background: var(--surface-2); color: var(--muted); font: .75rem var(--mono); }
 .frame picture, .frame img { border-radius: 0 0 16px 16px; }
-.frame img { filter: grayscale(1) contrast(1.05); }
+/* Light falls on the shot from above: a soft, offset shadow lifts it off the page. */
+.frame { box-shadow: 0 0 0 1px var(--border-2), 0 40px 80px -40px rgba(0, 0, 0, .9), 0 -1px 0 rgba(255, 255, 255, .08); }
 
 /* ------------------------------------------------------------ marquee */
 .platforms { padding: clamp(6rem, 13vw, 9rem) 0 0; text-align: center; }
@@ -147,12 +155,15 @@ img { display: block; max-width: 100%; height: auto; }
 @keyframes marquee { to { transform: translateX(-100%); } }
 
 /* ----------------------------------------------------------- sections */
-section { padding: clamp(8rem, 18vw, 14rem) 0 0; }
-.section-head { max-width: 40rem; margin: 0 auto clamp(3.5rem, 7vw, 5.5rem); text-align: center; }
-.kicker { display: inline-flex; align-items: center; gap: .5rem; margin: 0 0 1.25rem; color: var(--muted); font: 500 .75rem var(--mono); letter-spacing: .02em; text-transform: uppercase; }
-.kicker::before { content: ""; width: .4rem; height: .4rem; border-radius: 2px; background: currentColor; }
-h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; letter-spacing: -.04em; font-weight: 600; text-wrap: balance; }
-.section-head > p:last-child { margin: 1.25rem auto 0; max-width: 34rem; color: var(--muted); font-size: 1.0625rem; text-wrap: pretty; }
+section { padding: clamp(6rem, 13vw, 10rem) 0 0; }
+/* Section heads read like an editorial spread: the claim on the left, the detail answering it on the right. */
+.section-head {
+  display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1.25rem 4rem; align-items: end;
+  margin: 0 0 clamp(2.75rem, 5vw, 4rem);
+}
+h2 { margin: 0; max-width: 15ch; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.04; letter-spacing: -.035em; font-weight: 600; text-wrap: balance; }
+.section-head > p { margin: 0; max-width: 30rem; color: var(--muted); font-size: 1.0625rem; line-height: 1.55; text-wrap: pretty; }
+@media (max-width: 52rem) { .section-head { grid-template-columns: 1fr; } }
 
 .card {
   position: relative; overflow: hidden; border-radius: 18px;
@@ -200,6 +211,14 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 }
 .pipe-core svg { width: 1.3rem; height: 1.3rem; }
 .demo.thinking .pipe-core { box-shadow: inset 0 0 0 1px var(--text); transform: scale(1.06); }
+/* While an email is being read, a highlight sweeps across "classify" (after 21st.dev's Text Shimmer). */
+.demo.thinking .pipe-label {
+  color: transparent;
+  background: linear-gradient(90deg, var(--muted) 0 35%, var(--text) 50%, var(--muted) 65% 100%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: shimmer 1100ms linear infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
 .json {
   margin: 1rem 0 0; padding: .8rem .9rem; min-height: 6.6rem; border-radius: 12px;
@@ -213,7 +232,7 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 
 .apps { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
 .app { display: flex; align-items: center; gap: .75rem; padding: .7rem .85rem; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); transition: box-shadow 400ms ease; }
-.app.flash { box-shadow: inset 0 0 0 1px var(--text); }
+.app.flash { box-shadow: inset 0 0 0 1px var(--c, var(--text)), 0 0 0 4px color-mix(in srgb, var(--c, var(--text)) 12%, transparent); }
 .app .logo { display: grid; place-items: center; width: 2rem; height: 2rem; flex: none; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: .8125rem; }
 .app .meta { min-width: 0; flex: 1; }
 .app .name, .app .role { display: block; }
@@ -224,7 +243,8 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 .status {
   --c: var(--muted);
   display: inline-flex; align-items: center; gap: .35rem; flex: none; padding: .2rem .55rem; border-radius: 999px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent); color: var(--c); font-size: .75rem; font-weight: 500;
+  background: color-mix(in srgb, var(--c) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 30%, transparent); color: var(--c); font-size: .75rem; font-weight: 500;
 }
 .status::before { content: ""; width: .4rem; height: .4rem; border-radius: 50%; background: currentColor; }
 .status.pop { animation: pop 500ms var(--ease); }
@@ -248,11 +268,46 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 @media (max-width: 60rem) { .bento { grid-template-columns: 1fr 1fr; grid-template-areas: "a a" "b b" "c d" "e e" "f f"; } }
 @media (max-width: 36rem) { .bento { grid-template-columns: 1fr; grid-template-areas: "a" "b" "c" "d" "e" "f"; } }
 
-/* a: sync log */
-.log { display: grid; gap: .4rem; margin: 0; padding: 0; list-style: none; font: .75rem var(--mono); }
-.log li { display: flex; gap: .75rem; align-items: baseline; padding: .45rem .7rem; border-radius: 8px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); color: var(--text-2); }
+/* a: sync log. New entries spring in at the top and push the rest down (after 21st.dev's Animated List;
+   see site.js). The list keeps a fixed height so the card never jumps. */
+.log { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem; margin: 0; padding: 0; list-style: none; font: .75rem var(--mono); height: 7.6rem; overflow: hidden; align-content: start;
+  -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.log li { display: flex; gap: .75rem; align-items: baseline; padding: .45rem .7rem; border-radius: 8px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); color: var(--text-2); white-space: nowrap; transform-origin: 50% 0; }
+.log li.fresh { box-shadow: inset 0 0 0 1px var(--border-2); color: var(--text); }
 .log time { color: var(--muted); }
+.log .msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .log b { margin-left: auto; font-weight: 500; }
+
+/* ---------------------------------------------------------------- beams */
+/* Platforms on the left, stages on the right, nuj in between; light runs along each curve
+   (after 21st.dev's Animated Beam; paths and pulses drawn by site.js). */
+.beams {
+  position: relative; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: clamp(3rem, 14vw, 12rem);
+  margin: 0 0 clamp(3.5rem, 7vw, 5rem); padding: clamp(1.75rem, 4vw, 3rem) clamp(1rem, 5vw, 4rem);
+  border-radius: 18px; background: var(--surface); box-shadow: 0 0 0 1px var(--border);
+}
+.beam-col { position: relative; z-index: 1; display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.beam-in { justify-items: start; }
+.beam-out { justify-items: end; }
+.beams .node { padding: .45rem .8rem; border-radius: 999px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-2); font-size: .8125rem; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+.beams .node.status { padding: .45rem .8rem; font-size: .8125rem; background: color-mix(in srgb, var(--c) 10%, var(--surface)); }
+.beam-hub {
+  position: relative; z-index: 1; display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: 20px;
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-2), 0 20px 40px -20px rgba(0, 0, 0, .9);
+}
+.beam-hub .logo-mark { height: 1.5rem; color: var(--text); }
+/* The hub brightens briefly each time a pulse lands in it (class toggled by site.js). */
+.beam-hub::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; box-shadow: 0 0 0 1px var(--text); opacity: 0; transition: opacity 600ms ease; }
+.beam-hub.hit::after { opacity: .7; transition-duration: 80ms; }
+.beam-paths { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.beam-paths .track { fill: none; stroke: var(--text); stroke-opacity: .1; stroke-width: 1.5; }
+.beam-paths .pulse { fill: none; stroke-width: 2; stroke-linecap: round; }
+@media (max-width: 36rem) {
+  .beams { gap: 1.5rem; padding-inline: .75rem; }
+  .beams .node, .beams .node.status { padding: .35rem .6rem; font-size: .75rem; }
+  .beam-hub { width: 3.25rem; height: 3.25rem; border-radius: 15px; }
+  .beam-hub .logo-mark { height: 1.1rem; }
+}
 /* b: flow chart that draws itself */
 .flow { width: 100%; height: auto; overflow: visible; }
 .flow path { fill: none; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
@@ -268,7 +323,7 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 /* d: edit diff */
 .diff { display: grid; gap: .35rem; font: .8125rem var(--mono); }
 .diff div { padding: .45rem .7rem; border-radius: 8px; }
-.diff .del { background: rgba(255, 255, 255, .03); color: var(--faint); text-decoration: line-through; }
+.diff .del { background: rgba(255, 255, 255, .03); color: var(--muted); text-decoration: line-through; }
 .diff .add { background: rgba(255, 255, 255, .08); color: var(--text); }
 /* e: export */
 .file { display: flex; align-items: center; gap: .9rem; padding: .85rem 1rem; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
@@ -280,18 +335,6 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 .checks-row { display: flex; flex-wrap: wrap; gap: .5rem; }
 .gtag { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .65rem; border-radius: 8px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); font: .75rem var(--mono); color: var(--text-2); }
 .gtag svg { width: .85rem; height: .85rem; color: var(--text); }
-
-/* ---------------------------------------------------------------- stats */
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); border-radius: 18px; box-shadow: 0 0 0 1px var(--border); overflow: hidden; }
-.stat { padding: 2.25rem 1.75rem; background: transparent; }
-.stat + .stat { box-shadow: -1px 0 0 var(--border); }
-.stat strong { display: block; font-size: clamp(2rem, 4vw, 2.75rem); font-weight: 600; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }
-.stat span { display: block; margin-top: .6rem; color: var(--muted); font-size: .875rem; }
-@media (max-width: 46rem) {
-  .stats { grid-template-columns: 1fr 1fr; }
-  .stat:nth-child(3) { box-shadow: 0 -1px 0 var(--border); }
-  .stat:nth-child(4) { box-shadow: -1px 0 0 var(--border), 0 -1px 0 var(--border); }
-}
 
 /* ---------------------------------------------------------------- steps */
 .steps { position: relative; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; counter-reset: step; }
@@ -326,7 +369,11 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 @media (max-width: 52rem) { .privacy-band { grid-template-columns: 1fr; } }
 
 /* ------------------------------------------------------------------ faq */
-.faq { max-width: 46rem; margin: 0 auto; border-top: 1px solid var(--border); }
+/* Questions sit beside their heading rather than under it. */
+#faq .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 2rem 4rem; align-items: start; }
+#faq .section-head { display: block; margin: 0; }
+@media (max-width: 52rem) { #faq .wrap { grid-template-columns: 1fr; } }
+.faq { border-top: 1px solid var(--border); }
 .faq details { border-bottom: 1px solid var(--border); }
 .faq summary { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.25rem .25rem; cursor: pointer; list-style: none; font-weight: 500; font-size: 1.0625rem; letter-spacing: -.01em; }
 .faq summary::-webkit-details-marker { display: none; }
@@ -343,6 +390,7 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 
 /* ------------------------------------------------------------------ cta */
 .cta-card { position: relative; padding: clamp(4.5rem, 10vw, 8rem) 1.5rem; text-align: center; border-radius: 24px; overflow: hidden; isolation: isolate; background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
+.cta-card h2 { max-width: none; }
 .cta-card p { margin: 1.25rem auto 0; max-width: 32rem; color: var(--muted); font-size: 1.0625rem; }
 .cta-card p a { color: var(--text); }
 
@@ -394,16 +442,17 @@ h2 { margin: 0; font-size: clamp(2rem, 4.4vw, 3.25rem); line-height: 1.05; lette
 }
 
 /* --------------------------------------------------------------- reveal */
-/* Content arrives as it scrolls into view. Without JS everything is simply shown. */
-.js [data-reveal] { opacity: 0; transform: translateY(18px); filter: blur(6px); }
+/* Content settles in as it scrolls into view: a short lift, no theatre, so the demo stays the one
+   moment that moves. Without JS everything is simply shown. */
+.js [data-reveal] { opacity: 0; transform: translateY(12px); }
 .js [data-reveal].in {
-  opacity: 1; transform: none; filter: none;
-  transition: opacity 800ms var(--ease), transform 900ms var(--ease), filter 800ms var(--ease);
-  transition-delay: calc(var(--d, 0) * 90ms);
+  opacity: 1; transform: none;
+  transition: opacity 600ms var(--ease), transform 700ms var(--ease);
+  transition-delay: calc(var(--d, 0) * 70ms);
 }
-/* Hero words rise in one after another on load. */
-.js .rise { animation: rise 1000ms var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 60ms); }
-@keyframes rise { from { opacity: 0; transform: translateY(.35em); filter: blur(8px); } }
+/* Hero words rise in one after another on load, quickly enough that nobody waits to read. */
+.js .rise { animation: rise 800ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(.3em); filter: blur(4px); } }
 .js .frame.rise { animation-name: rise-frame; animation-duration: 1400ms; }
 @keyframes rise-frame { from { opacity: 0; translate: 0 40px; } }
 

@@ -61,7 +61,7 @@
         <div class="frame rise" style="--i:13">
           <div class="chrome" aria-hidden="true"><i></i><i></i><i></i><span>nuj · Dashboard</span></div>
           <picture>
-            <img src="/dashboard-dark.png" width="2880" height="2000" alt="The nuj dashboard: a flow chart of where 37 applications went, a list of assessments with deadlines, and a table of every application">
+            <img src="/dashboard-dark.png" width="2880" height="2000" alt="The nuj dashboard: counts by stage, a flow chart of where 38 applications went, a list of assessments due soon, and a table of every application">
           </picture>
         </div>
       </div>
@@ -84,7 +84,6 @@
     <section id="demo">
       <div class="wrap">
         <div class="section-head" data-reveal>
-          <p class="kicker">Product</p>
           <h2>Watch an email become a status.</h2>
           <p>Every few minutes, new application emails are read, understood and folded into the right application, without you doing anything.</p>
         </div>
@@ -114,7 +113,7 @@
           <div class="pipe" aria-hidden="true">
             <div class="pipe-inner">
               <div class="pipe-core"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></div>
-              <span>classify</span>
+              <span class="pipe-label">classify</span>
             </div>
           </div>
 
@@ -135,7 +134,6 @@
     <section id="features">
       <div class="wrap">
         <div class="section-head" data-reveal>
-          <p class="kicker">Features</p>
           <h2>Replaces the spreadsheet that went stale in a week.</h2>
           <p>Statuses come from the emails companies already send you, so the tracker stays current on its own.</p>
         </div>
@@ -145,10 +143,11 @@
             <h3>Updates itself</h3>
             <p>Checks Gmail every few minutes and streams changes to every open tab.</p>
             <div class="viz">
-              <ul class="log">
-                <li><time>09:41</time>Synced · 2 new updates<b style="color:var(--offer)">+2</b></li>
-                <li><time>09:36</time>Synced · no changes<b style="color:var(--muted)">0</b></li>
-                <li><time>09:31</time>Northwind moved to Assessment<b style="color:var(--oa)">oa</b></li>
+              <!-- New entries arrive at the top every few seconds (see site.js). -->
+              <ul class="log" aria-label="Recent sync activity">
+                <li><time>09:41</time><span class="msg">Synced · 2 new updates</span><b>+2</b></li>
+                <li><time>09:36</time><span class="msg">Synced · no changes</span><b style="color:var(--muted)">0</b></li>
+                <li><time>09:31</time><span class="msg">Northwind moved to Assessment</span><b style="color:var(--oa)">Assessment</b></li>
               </ul>
             </div>
           </article>
@@ -177,7 +176,7 @@
             <h3>Never miss a deadline</h3>
             <p>Finds "complete by Oct 9" and "expires in 5 days" in emails.</p>
             <div class="viz chips">
-              <div class="chip" style="--c:var(--rejected)">Northwind OA <b>today, 11:59 PM</b></div>
+              <div class="chip" style="--c:var(--danger)">Northwind OA <b>today, 11:59 PM</b></div>
               <div class="chip" style="--c:var(--interview)">Lumen Labs <b>in 3 days</b></div>
               <div class="chip">Halcyon <b>Nov 2</b></div>
             </div>
@@ -196,7 +195,7 @@
             <h3>Export to Excel</h3>
             <p>Download the table exactly as you've filtered and sorted it.</p>
             <div class="viz">
-              <div class="file"><span class="ext">XLSX</span><span class="bar"><i></i></span><span class="mono" style="font-size:.75rem;color:var(--muted)">37 rows</span></div>
+              <div class="file"><span class="ext">XLSX</span><span class="bar"><i></i></span><span class="mono" style="font-size:.75rem;color:var(--muted)">38 rows</span></div>
             </div>
           </article>
 
@@ -215,25 +214,33 @@
       </div>
     </section>
 
-    <!-- Numbers -->
-    <section>
-      <div class="wrap">
-        <div class="stats" data-reveal>
-          <div class="stat"><strong data-count="15">15</strong><span>hiring platforms searched</span></div>
-          <div class="stat"><strong data-count="5" data-suffix=" min">5 min</strong><span>between inbox checks</span></div>
-          <div class="stat"><strong data-count="6">6</strong><span>stages read from email</span></div>
-          <div class="stat"><strong>0</strong><span>emails ever changed</span></div>
-        </div>
-      </div>
-    </section>
 
     <!-- How it works -->
     <section id="how">
       <div class="wrap">
         <div class="section-head" data-reveal>
-          <p class="kicker">How it works</p>
           <h2>From inbox to status in four steps.</h2>
         </div>
+
+        <!-- Emails from hiring platforms flow into nuj and out as stages (beams drawn by site.js). -->
+        <figure class="beams" data-reveal aria-label="Emails from Workday, Greenhouse, Lever, Ashby and HackerRank flow into nuj, which sorts each application into Assessment, Interview, Offer or Rejected">
+          <ul class="beam-col beam-in" aria-hidden="true">
+            <li class="node">Workday</li>
+            <li class="node">Greenhouse</li>
+            <li class="node">Lever</li>
+            <li class="node">Ashby</li>
+            <li class="node">HackerRank</li>
+          </ul>
+          <div class="beam-hub" aria-hidden="true"><span class="logo-mark"></span></div>
+          <ul class="beam-col beam-out" aria-hidden="true">
+            <li class="node status s-oa">Assessment</li>
+            <li class="node status s-interview">Interview</li>
+            <li class="node status s-offer">Offer</li>
+            <li class="node status s-rejected">Rejected</li>
+          </ul>
+          <svg class="beam-paths" aria-hidden="true"></svg>
+        </figure>
+
         <ol class="steps" data-reveal>
           <li style="--i:0"><h3>Narrow the inbox</h3><p>A Gmail search keeps only emails from hiring platforms or about applications. Nothing else is opened.</p></li>
           <li style="--i:1"><h3>Understand each email</h3><p>Each match is read for the company, role, job ID and stage, then checked against rules.</p></li>
@@ -267,7 +274,6 @@
     <section id="faq">
       <div class="wrap">
         <div class="section-head" data-reveal>
-          <p class="kicker">FAQ</p>
           <h2>Questions, answered.</h2>
         </div>
         <div class="faq" data-reveal>

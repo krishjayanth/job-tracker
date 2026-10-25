@@ -8,6 +8,15 @@
         "value": "geist mono",
         "createdAt": "2026-10-24T13:03:21.425Z",
         "reason": "Agent decided: Geist/Geist Mono is nuj's existing brand typeface on the landing page (predates this session); the dashboard was matched to it at the user's request"
+      },
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "public-site/site.css"
+        ],
+        "createdAt": "2026-10-25T18:37:15.330Z",
+        "reason": "Agent decided: the only background-clip:text in site.css is the demo's 'classify' shimmer, a status indicator shown only while an email is being read (21st.dev Text Shimmer, added at the user's request), not decorative emphasis"
       }
     ]
   }
