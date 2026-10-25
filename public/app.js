@@ -2014,8 +2014,27 @@ $('#sync-btn').onclick = async () => {
 
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderSankey, 150); });
-// Colours come from CSS variables when things are drawn, so redraw when the system theme flips.
-matchMedia('(prefers-color-scheme: light)').addEventListener('change', render);
+// Theme: Light, Dark or System (Settings → Appearance), kept on this device. The page head
+// applies it before the first paint; colours come from CSS variables when things are drawn,
+// so redraw whenever it changes.
+const systemLight = matchMedia('(prefers-color-scheme: light)');
+const themePick = () => { try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; } };
+function applyTheme() {
+  const pick = themePick();
+  document.documentElement.dataset.theme = pick === 'system' ? (systemLight.matches ? 'light' : 'dark') : pick;
+  document.querySelectorAll('input[name="theme"]').forEach(r => { r.checked = r.value === pick; });
+  render();
+}
+document.querySelectorAll('input[name="theme"]').forEach(r => {
+  r.checked = r.value === themePick();
+  r.addEventListener('change', () => {
+    try { r.value === 'system' ? localStorage.removeItem('theme') : localStorage.setItem('theme', r.value); } catch {}
+    applyTheme();
+  });
+});
+systemLight.addEventListener('change', () => { if (themePick() === 'system') applyTheme(); });
+// Another open tab changed it.
+addEventListener('storage', e => { if (e.key === 'theme') applyTheme(); });
 
 // Live updates: the server pings whenever a sync or edit changes the data.
 new EventSource('/api/events').onmessage = e => {

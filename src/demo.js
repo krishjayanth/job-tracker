@@ -4,6 +4,8 @@
 import crypto from 'node:crypto';
 
 const DAY = 86_400_000;
+// Deadlines land at the end of their day (11:59 PM), as a date-only deadline in an email does.
+const endOfDay = d => { d.setHours(23, 59, 0, 0); return d.toISOString(); };
 
 // Each entry: company, role, job ID, then the emails as [days ago, stage] pairs.
 // A third element on an "oa" email is its deadline, in days after that email.
@@ -95,7 +97,7 @@ export function buildDemoDb(now = Date.now()) {
         from: stage === 'oa' ? 'HackerRank <noreply@hackerrankforwork.com>' : from,
         snippet: SNIPPETS[stage], jobId,
       };
-      if (dueInDays) event.deadline = new Date(date.getTime() + dueInDays * DAY).toISOString();
+      if (dueInDays) event.deadline = endOfDay(new Date(date.getTime() + dueInDays * DAY));
       return event;
     });
     return {
@@ -119,7 +121,7 @@ export function buildDemoDb(now = Date.now()) {
   applications.find(a => a.company === 'Relecloud').events.push({
     id: crypto.randomUUID(), date: at(1), stage: 'oa', subject: 'Relecloud: complete your video interview',
     from: 'Relecloud <noreply@hirevue.com>', snippet: 'Record your answers on HireVue at any time in the next 5 days.',
-    summary: 'HireVue video interview to complete within 5 days', deadline: at(-4),
+    summary: 'HireVue video interview to complete within 5 days', deadline: endOfDay(new Date(now + 4 * DAY)),
   });
   // A second application at one company, and an email that doesn't say which job it's about.
   applications.push({

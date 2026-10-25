@@ -10,6 +10,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <script>
+    // Light, dark or the system's choice (Settings → Appearance), set before anything paints.
+    (function () {
+      var pick;
+      try { pick = localStorage.getItem('theme'); } catch (e) {}
+      var light = pick === 'light' || (pick !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
+      document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    })();
+  </script>
 </head>
 <body>
   <!-- Icon set (Lucide, ISC licence) -->
@@ -239,6 +248,20 @@
       <p class="settings-intro">nuj skips email from these. To add one, open an email's "Filed correctly?" and choose Not a job. Emails removed when you ignored a sender stay removed.</p>
       <ul id="blocked-list" class="blocked-list"></ul>
       <p id="blocked-empty" class="settings-empty">You haven't ignored any senders.</p>
+    </section>
+
+    <section class="panel settings-group" aria-labelledby="set-look-title">
+      <h2 id="set-look-title">Appearance</h2>
+      <div class="settings-row">
+        <div><strong>Theme</strong><p>System follows your device's light or dark setting. Saved on this device.</p></div>
+        <div class="settings-actions">
+          <fieldset class="segmented theme-choice" aria-label="Theme">
+            <label><input type="radio" name="theme" value="system"><span>System</span></label>
+            <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+            <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+          </fieldset>
+        </div>
+      </div>
     </section>
 
     <section class="panel settings-group" aria-labelledby="set-help-title">

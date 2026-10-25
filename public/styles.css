@@ -49,53 +49,52 @@
   --on-danger: #000000;
 }
 
-/* Light: the same black-and-white look the other way round, for people whose system is
-   set to light. Stage colours are a step darker so they hold up on white. */
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --bg: #fafafa;
-    --side-bg: #f4f4f4;
-    --surface: #ffffff;
-    --surface-2: #f6f6f6;
-    --surface-hover: #efefef;
-    --border: rgba(0, 0, 0, .09);
-    --border-strong: rgba(0, 0, 0, .18);
-    --line: rgba(0, 0, 0, .06);
-    --text: #0a0a0a;
-    --text-2: #3f3f3f;
-    --muted: #686868;
-    --faint: #9a9a9a;
-    --accent: #0a0a0a;
-    --accent-hover: #262626;
-    --accent-soft: rgba(0, 0, 0, .05);
-    --accent-text: #ffffff;
-    --danger: #b91c1c;
-    --danger-soft: #fef2f2;
-    --focus: 0 0 0 3px rgba(0, 0, 0, .14);
-    --focus-border: rgba(0, 0, 0, .55);
-    --on-danger: #ffffff;
-    --nav-bg: rgba(250, 250, 250, .78);
+/* Light: the same black-and-white look the other way round. The page head sets
+   data-theme from Settings → Appearance (Light, Dark, or System, which follows the
+   device). Stage colours are a step darker so they hold up on white. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #fafafa;
+  --side-bg: #f4f4f4;
+  --surface: #ffffff;
+  --surface-2: #f6f6f6;
+  --surface-hover: #efefef;
+  --border: rgba(0, 0, 0, .09);
+  --border-strong: rgba(0, 0, 0, .18);
+  --line: rgba(0, 0, 0, .06);
+  --text: #0a0a0a;
+  --text-2: #3f3f3f;
+  --muted: #686868;
+  --faint: #9a9a9a;
+  --accent: #0a0a0a;
+  --accent-hover: #262626;
+  --accent-soft: rgba(0, 0, 0, .05);
+  --accent-text: #ffffff;
+  --danger: #b91c1c;
+  --danger-soft: #fef2f2;
+  --focus: 0 0 0 3px rgba(0, 0, 0, .14);
+  --focus-border: rgba(0, 0, 0, .55);
+  --on-danger: #ffffff;
+  --nav-bg: rgba(250, 250, 250, .78);
 
-    --applied: #6366f1;
-    --oa: #0284c7;
-    --interview: #d97706;
-    --offer: #059669;
-    --rejected: #e11d48;
-    --no_response: #8f8f8f;
-    --in_progress: #262626;
-    --flow: rgba(0, 0, 0, .09);
-    --withdrawn: #5c5c5c;
+  --applied: #6366f1;
+  --oa: #0284c7;
+  --interview: #d97706;
+  --offer: #059669;
+  --rejected: #e11d48;
+  --no_response: #8f8f8f;
+  --in_progress: #262626;
+  --flow: rgba(0, 0, 0, .09);
+  --withdrawn: #5c5c5c;
 
-    --shadow: 0 1px 2px rgba(16, 24, 40, .06);
-    --panel-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 12px 32px -18px rgba(16, 24, 40, .16);
-    --panel-sheen: linear-gradient(transparent, transparent);
-    --glow: none;
-    --shadow-lg: -12px 0 32px -8px rgba(16, 24, 40, .18);
-  }
-  /* Avatars are greys picked for dark; flipping them keeps them distinct and readable. */
-  .avatar { filter: invert(1); }
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+  --panel-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 12px 32px -18px rgba(16, 24, 40, .16);
+  --panel-sheen: linear-gradient(transparent, transparent);
+  --glow: none;
+  --shadow-lg: -12px 0 32px -8px rgba(16, 24, 40, .18);
 }
+/* Avatars are greys picked for dark; flipping them keeps them distinct and readable. */
+[data-theme="light"] .avatar { filter: invert(1); }
 
 /* ------------------------------------------------------------------ base */
 * { box-sizing: border-box; }
@@ -861,6 +860,7 @@ table.apps { width: 100%; border-collapse: collapse; }
 .segmented span:hover { color: var(--text); }
 .segmented input:checked + span { background: var(--surface-hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong), 0 1px 2px rgba(0, 0, 0, .5); }
 .segmented input:focus-visible + span { box-shadow: var(--focus); }
+.theme-choice { width: 15rem; }
 #report-form .field textarea { min-height: 120px; }
 .check-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; cursor: pointer; }
 .check-row input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
