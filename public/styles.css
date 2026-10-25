@@ -240,8 +240,11 @@ input, textarea { caret-color: var(--accent); }
   animation: toast-timer linear forwards;
 }
 @keyframes toast-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-.deadline-field { display: flex; gap: 8px; }
-.deadline-field input { flex: 1; }
+/* Date, time and "Mark done" share a line; on a narrow screen "Mark done" wraps below. */
+.deadline-field { display: flex; flex-wrap: wrap; gap: 8px; }
+.deadline-field input { min-width: 0; }
+.deadline-field input[type="date"] { flex: 1 1 9rem; }
+.deadline-field input[type="time"] { flex: 1 1 7rem; }
 
 /* ------------------------------------------------------------------ page */
 .page { max-width: 1240px; margin: 0 auto; padding: 40px 32px 72px; display: grid; gap: 40px; }

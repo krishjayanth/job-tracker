@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initStorage, flushAll, refresh, newId } from './src/store.js';
+import { initStorage, flushAll, refresh, newId, typedDeadline } from './src/store.js';
 import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
 import { rescanEveryoneOnce } from './src/rescan-all.js';
 import { addRequest, listRequests, pendingCount, setRequestStatus, tooMany } from './src/access.js';
@@ -261,11 +261,12 @@ app.patch('/api/applications/:id', (req, res) => {
     if (a.source === 'gmail' && isStage(req.body.status) && req.body.status !== a.status) req.account.store.noteCorrection('statusChanged');
     addManualStatus(a, req.body.status);
   }
-  // Deadline: "YYYY-MM-DD" sets your own (end of that day); "" or done=true clears the current one.
+  // Deadline: a date and time (or "YYYY-MM-DD" for the end of that day) sets your own;
+  // "" or done=true clears the current one.
   if (typeof req.body.deadline === 'string') {
-    const m = req.body.deadline.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) {
-      a.manualDeadline = new Date(+m[1], +m[2] - 1, +m[3], 23, 59).toISOString();
+    const typed = typedDeadline(req.body.deadline);
+    if (typed) {
+      a.manualDeadline = typed;
       a.deadlineDone = null;
     } else {
       a.deadlineDone = a.deadline;

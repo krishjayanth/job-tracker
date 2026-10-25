@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { Store, refresh, newId } from '../src/store.js';
+import { Store, refresh, newId, typedDeadline } from '../src/store.js';
 
 // A fresh in-memory tracker per test; it never writes anywhere.
 let s;
@@ -315,4 +315,14 @@ test('splitting emails off into a new application, which a re-scan keeps apart',
   const [first, split] = s.applications;
   assert.deepEqual(first.events.map(e => e.stage), ['applied', 'oa']);
   assert.deepEqual(split.events.map(e => e.stage), ['applied', 'interview']);
+});
+
+test('typedDeadline: a date and time from the dashboard is kept to the minute', () => {
+  const at5pm = new Date(2026, 9, 30, 17, 0).toISOString();
+  assert.equal(typedDeadline(at5pm), at5pm);
+});
+
+test('typedDeadline: a bare date means the end of that day, and junk is refused', () => {
+  assert.equal(typedDeadline('2026-10-30'), new Date(2026, 9, 30, 23, 59).toISOString());
+  for (const bad of ['', 'tomorrow', '2026-13-45T99:99', '30/10/2026', null, 42]) assert.equal(typedDeadline(bad), null);
 });

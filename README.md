@@ -36,7 +36,8 @@ into memory, so you can click around, edit, filter and export without a Google a
 - **Shows where applications went.** A Sankey chart traces every application from *Applied* through
   *Assessment* and *Interview* to *Offer*, *Rejected*, *Withdrawn* or *No response*. Click a stage to filter.
 - **Lists what needs your action.** Assessments to finish, interviews in progress and offers, with deadlines
-  parsed from the emails ("expires in 5 days", "complete by Oct 9 at 11:59 PM").
+  parsed from the emails ("expires in 5 days", "complete by Oct 9 at 11:59 PM"). You can set or change a
+  deadline's date and time yourself; a date with no time means the end of that day.
 - **Keeps your corrections.** Renames, status changes, notes and deadlines survive a full re-scan of the inbox.
 - **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
 

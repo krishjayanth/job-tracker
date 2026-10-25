@@ -57,6 +57,17 @@ const isoDate = iso => {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+// Local time of day for <input type="time">.
+const isoTime = iso => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+// A deadline's time, like "5:00 PM", or '' when it's the end of the day (11:59 PM),
+// which is what a date on its own means.
+const dueTime = iso => {
+  const d = new Date(iso);
+  return d.getHours() === 23 && d.getMinutes() === 59 ? '' : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+};
 
 const pill = s => `<span class="pill" style="--c:${color(s)}">${STAGE_LABEL[s]}</span>`;
 const latestEvent = a => a.events.at(-1);
@@ -379,14 +390,18 @@ function dueInfo(deadline) {
   const today = new Date();
   const sameDay = end.toDateString() === today.toDateString();
   const tomorrow = new Date(today.getTime() + 86_400_000).toDateString() === end.toDateString();
-  if (sameDay) return { level: 'urgent', text: `Due today${end.getHours() < 23 ? `, ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}` };
-  if (tomorrow) return { level: 'urgent', text: 'Due tomorrow' };
+  const at = dueTime(deadline) ? `, ${dueTime(deadline)}` : '';
+  if (sameDay) return { level: 'urgent', text: `Due today${at}` };
+  if (tomorrow) return { level: 'urgent', text: `Due tomorrow${at}` };
   if (days <= 4) return { level: 'soon', text: `Due in ${days} days` };
-  return { level: 'later', text: `Due ${shortDate(deadline)}` };
+  return { level: 'later', text: `Due ${shortDate(deadline)}${at}` };
 }
+// The chip's tooltip always gives the exact day and time, even when the chip says "in 3 days".
 const dueChip = deadline => {
   const d = dueInfo(deadline);
-  return d ? `<span class="due ${d.level}">${icon('clock')}${d.text}</span>` : '';
+  if (!d) return '';
+  const exact = new Date(deadline).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `<span class="due ${d.level}" title="Due ${esc(exact)}">${icon('clock')}${d.text}</span>`;
 };
 
 // When an application first reached any of these stages, from the company's own emails.
@@ -1072,6 +1087,7 @@ function detailFieldsHtml(a, isNew) {
       ${isNew ? '' : `<div class="field wide"><label for="f-deadline">Deadline</label>
         <div class="deadline-field">
           <input id="f-deadline" name="deadline" type="date" value="${a.deadline ? isoDate(a.deadline) : ''}">
+          <input id="f-deadline-time" name="deadlineTime" type="time" value="${a.deadline ? isoTime(a.deadline) : ''}" aria-label="Deadline time" title="Leave empty for the end of the day">
           ${a.deadline ? `<button class="btn" type="button" id="deadline-done">${icon('check')}Mark done</button>` : ''}
         </div></div>`}
       <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
@@ -1172,13 +1188,21 @@ function openDrawer(app) {
       return savedNote("Company can't be empty", 'err');
     }
     if (name === 'url' && value && !input.checkValidity()) return savedNote('Links need to start with https://', 'err');
+    // The date and time boxes save together as one deadline, worked out in your own time
+    // zone. No time means the end of the day; a time with no date waits for the date.
+    const isDeadline = name === 'deadline' || name === 'deadlineTime';
+    const day = form.elements.deadline?.value;
+    if (name === 'deadlineTime' && !day) return savedNote('Pick a date for the deadline too');
+    const body = isDeadline
+      ? { deadline: day ? new Date(`${day}T${form.elements.deadlineTime.value || '23:59'}`).toISOString() : '' }
+      : { [name]: value };
     saved[name] = value;
     savedNote('Saving…');
     try {
-      await api('PATCH', `/api/applications/${a.id}`, { [name]: value });
+      await api('PATCH', `/api/applications/${a.id}`, body);
       await load();
-      // A new deadline shows or hides "Mark done".
-      if (name === 'deadline') openDrawer(state.applications.find(x => x.id === a.id));
+      // A new deadline shows or hides "Mark done", and fills in its time.
+      if (isDeadline) openDrawer(state.applications.find(x => x.id === a.id));
       savedNote('Saved', 'ok');
     } catch (err) {
       savedNote(err.message, 'err');
@@ -1385,7 +1409,7 @@ $('#action-list').addEventListener('click', async e => {
   if (done) {
     const a = state.applications.find(x => x.id === done.dataset.done);
     // A deadline you typed is put back as typed; one from an email is simply reopened.
-    const restore = a.manualDeadline ? { deadline: isoDate(a.manualDeadline) } : { deadlineDone: false };
+    const restore = a.manualDeadline ? { deadline: a.manualDeadline } : { deadlineDone: false };
     done.disabled = true;
     foldRow(a.id);
     try {

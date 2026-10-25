@@ -123,6 +123,17 @@ export function refresh(app) {
   return app;
 }
 
+// A deadline you typed, as an ISO time, or null if it isn't one. The dashboard sends the
+// full date and time worked out in your own time zone; a bare "YYYY-MM-DD" (older pages)
+// means the end of that day.
+export function typedDeadline(value) {
+  if (typeof value !== 'string') return null;
+  const day = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const when = day ? new Date(+day[1], +day[2] - 1, +day[3], 23, 59)
+    : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) ? new Date(value) : null;
+  return when && !isNaN(when) ? when.toISOString() : null;
+}
+
 // The deadline that's still open: from the latest email that set one, unless a later
 // email arrived (usually "thanks for completing...") or you marked it done. A date you
 // typed in yourself wins over the emails.
