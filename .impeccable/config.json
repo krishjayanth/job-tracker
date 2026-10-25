@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "geist mono",
+        "createdAt": "2026-10-24T13:03:21.425Z",
+        "reason": "Agent decided: Geist/Geist Mono is nuj's existing brand typeface on the landing page (predates this session); the dashboard was matched to it at the user's request"
+      }
+    ]
+  }
+}
