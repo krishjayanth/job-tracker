@@ -1,13 +1,14 @@
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initStorage, flushAll, refresh, newId, typedDeadline } from './src/store.js';
+import { initStorage, flushAll, refresh, newId, typedDeadline, getKv, setKv, deleteKv } from './src/store.js';
 import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
 import { rescanEveryoneOnce } from './src/rescan-all.js';
 import { addRequest, listRequests, pendingCount, setRequestStatus, tooMany } from './src/access.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
 import { buildWorkbook } from './src/export.js';
+import { buildIcs, newFeedToken, looksLikeFeedToken, typedInterview, validTimeZone } from './src/calendar.js';
 import * as gmail from './src/gmail.js';
 import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
@@ -108,6 +109,20 @@ app.all('/api/cron/sync', (req, res) => {
   runSyncAll();
 });
 
+// Someone's calendar feed (Settings → Calendar), for Google Calendar or any calendar app
+// to fetch on its own. Calendar apps can't sign in, so the long random token in the
+// address is the key; resetting it in Settings stops the old one.
+app.get('/cal/:file', async (req, res) => {
+  const token = req.params.file.replace(/\.ics$/, '');
+  const userId = looksLikeFeedToken(token) && await getKv(`calfeed_${token}`);
+  if (!userId) return res.status(404).send('This calendar link was turned off or reset. Get the current one from Settings in nuj.');
+  const user = await getUser(userId);
+  const feed = user.store.db.calendarFeed;
+  if (feed?.token !== token) return res.status(404).send('This calendar link was reset. Get the current one from Settings in nuj.');
+  res.set({ 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, no-cache' });
+  res.send(buildIcs(user.store.applications, { timeZone: feed.timeZone, link: `${req.protocol}://${req.get('host')}/#/calendar` }));
+});
+
 // --- everything below requires sign-in -----------------------------------------
 app.use(requireLogin);
 app.use(express.static('public'));
@@ -183,6 +198,7 @@ app.get('/api/state', async (req, res) => {
     reports,
     demo: DEMO,
     ghostDays: GHOST_DAYS,
+    calendarFeed: db.calendarFeed ? { url: feedUrl(req, db.calendarFeed.token) } : null,
   });
 });
 
@@ -211,6 +227,30 @@ function whatsNewFor(user) {
 app.post('/api/whats-new/seen', (req, res) => {
   req.account.store.db.seenRelease = LATEST_RELEASE.id;
   req.account.store.save();
+  res.json({ ok: true });
+});
+
+// --- calendar feed ----------------------------------------------------------
+const feedUrl = (req, token) => `${req.protocol}://${req.get('host')}/cal/${token}.ics`;
+
+// Make (or reset) your calendar feed's address. The time zone is yours, so a deadline
+// at the end of your day shows as an all-day event on the right date.
+app.post('/api/calendar-feed', async (req, res) => {
+  const db = req.account.store.db;
+  const timeZone = validTimeZone(req.body?.timeZone) ? req.body.timeZone : 'UTC';
+  if (db.calendarFeed) await deleteKv(`calfeed_${db.calendarFeed.token}`);
+  const token = newFeedToken();
+  await setKv(`calfeed_${token}`, req.account.id);
+  db.calendarFeed = { token, timeZone, createdAt: new Date().toISOString() };
+  changed(req.account);
+  res.json({ url: feedUrl(req, token) });
+});
+
+app.delete('/api/calendar-feed', async (req, res) => {
+  const db = req.account.store.db;
+  if (db.calendarFeed) await deleteKv(`calfeed_${db.calendarFeed.token}`);
+  db.calendarFeed = null;
+  changed(req.account);
   res.json({ ok: true });
 });
 
@@ -278,6 +318,12 @@ app.patch('/api/applications/:id', (req, res) => {
     a.manualDeadline = null;
   }
   if (req.body.deadlineDone === false) a.deadlineDone = null; // undo "done" on an email's deadline
+  // Interview: a date and time sets it; "" clears it.
+  if (typeof req.body.interviewAt === 'string') {
+    const at = typedInterview(req.body.interviewAt);
+    if (req.body.interviewAt && !at) return res.status(400).json({ error: 'Give the interview a date and a time' });
+    a.interviewAt = at;
+  }
   refresh(a);
   changed(req.account);
   res.json(a);

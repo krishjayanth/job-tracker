@@ -177,7 +177,7 @@ export function startsNewApplication(app, { date, stage }) {
 
 const userEdited = a =>
   a.events.some(e => e.manual) || a.renamed || a.notes || a.url || a.edited ||
-  a.manualDeadline || a.deadlineDone || a.notifiedDeadline;
+  a.manualDeadline || a.deadlineDone || a.notifiedDeadline || a.interviewAt;
 
 // One person's applications and sync bookkeeping, with everything that reads or
 // changes them. Nothing here can reach another person's data.
@@ -251,7 +251,7 @@ export class Store {
         for (const field of Object.keys(old.edited)) target[field] = old[field];
         target.edited = { ...target.edited, ...old.edited };
       }
-      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline']) {
+      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline', 'interviewAt']) {
         if (old[field]) target[field] = old[field];
       }
       const ids = new Set(target.events.map(e => e.id));

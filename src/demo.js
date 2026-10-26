@@ -123,6 +123,17 @@ export function buildDemoDb(now = Date.now()) {
     from: 'Relecloud <noreply@hirevue.com>', snippet: 'Record your answers on HireVue at any time in the next 5 days.',
     summary: 'HireVue video interview to complete within 5 days', deadline: endOfDay(new Date(now + 4 * DAY)),
   });
+  // Interview times typed in by hand, so the calendar has something on it: two coming up,
+  // one soon after an assessment, and one that's already happened.
+  const interview = (company, inDays, hour, minute = 0) => {
+    const d = new Date(now + inDays * DAY);
+    d.setHours(hour, minute, 0, 0);
+    applications.find(a => a.company === company).interviewAt = d.toISOString();
+  };
+  interview('Wide World Importers', 2, 14);
+  interview('Datum Corporation', 5, 10, 30);
+  interview('Graphic Design Institute', 9, 11);
+  interview('Margie\'s Travel', -4, 15, 30);
   // A second application at one company, and an email that doesn't say which job it's about.
   applications.push({
     id: crypto.randomUUID(), company: 'Datum Corporation', role: 'Data Analyst Intern', jobId: '', url: '', notes: '',

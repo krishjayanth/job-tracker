@@ -939,9 +939,6 @@ table.apps { width: 100%; border-collapse: collapse; }
   transform-origin: bottom; animation: grow .9s var(--ease) both; animation-delay: calc(var(--d) * 60ms + 150ms);
 }
 @keyframes grow { from { transform: scaleY(.1); opacity: 0; } }
-.ghost-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.ghost-cal span { aspect-ratio: 1.4; border-radius: 7px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); animation: fade .6s var(--ease) both; animation-delay: calc(var(--d) * 50ms); }
-.ghost-cal span.on { background: color-mix(in srgb, var(--c) 22%, var(--surface-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent); }
 .ghost-rings { display: flex; justify-content: center; gap: 28px; padding: 6px 0 18px; }
 .ghost-rings svg { width: 96px; height: 96px; transform: rotate(-90deg); }
 .ghost-rings circle { fill: none; stroke: var(--surface-hover); stroke-width: 4.5; }
@@ -1016,6 +1013,114 @@ table.apps { width: 100%; border-collapse: collapse; }
 .cmdk-foot { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
 .cmdk-foot span { display: inline-flex; align-items: center; gap: 4px; }
 .cmdk-foot kbd { min-width: 18px; height: 18px; padding: 0 4px; font-size: 10px; }
+
+/* ------------------------------------------------------------------ calendar */
+/* A month of hairline cells; a chip per deadline or interview, coloured by stage. */
+.cal-nav { display: flex; align-items: center; gap: 4px; }
+.cal-prev .icon { transform: rotate(90deg); }
+.cal-next .icon { transform: rotate(-90deg); }
+.cal-legend { display: inline-flex; gap: 14px; }
+.cal-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-legend .icon { width: 12px; height: 12px; }
+.cal-dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--interview)); }
+
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-top: 1px solid var(--border); border-left: 1px solid var(--line);
+}
+.cal-wd {
+  padding: 8px 10px; font-size: 11.5px; font-weight: 500; color: var(--muted);
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--border);
+}
+.cal-day {
+  min-height: 112px; padding: 6px; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.cal-day.out { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+.cal-day.out .cal-num { color: var(--faint); }
+.cal-num {
+  align-self: flex-start; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px;
+  display: inline-grid; place-items: center; font-size: 12.5px; font-weight: 500; color: var(--text-2);
+}
+.cal-day.today .cal-num { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.cal-items { display: grid; gap: 3px; min-width: 0; container-type: inline-size; }
+/* In a narrow day the company name matters more than the time (it's in the tooltip and the list). */
+@container (max-width: 130px) { .cal-chip .t { display: none; } }
+.cal-day.crowded:not(.expanded) .cal-chip:nth-child(n + 4) { display: none; }
+
+.cal-chip {
+  display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; padding: 3px 6px;
+  border: 0; border-radius: 6px; cursor: pointer; text-align: left;
+  font: inherit; font-size: 12px; line-height: 1.35; color: var(--text);
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--c);
+  transition: background var(--fast);
+}
+.cal-chip:hover { background: color-mix(in srgb, var(--c) 24%, transparent); }
+.cal-chip:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--c), var(--focus); }
+.cal-chip .icon { width: 11px; height: 11px; flex: none; color: var(--c); }
+.cal-chip .t { flex: none; color: var(--text-2); font-size: 11px; }
+.cal-chip .co { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.cal-chip.deadline { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent); }
+.cal-chip.deadline:hover { background: color-mix(in srgb, var(--c) 10%, transparent); }
+.cal-chip.deadline:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent), var(--focus); }
+.cal-chip.urgent, .cal-chip.overdue { --c: var(--danger) !important; }
+.cal-chip.missed, .cal-chip.past { opacity: .55; }
+.cal-more {
+  justify-self: start; padding: 2px 6px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  font: inherit; font-size: 11.5px; font-weight: 500; color: var(--muted);
+}
+.cal-more:hover { color: var(--text); background: var(--surface-hover); }
+
+/* the next two weeks */
+.agenda { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
+.agenda ul { list-style: none; margin: 0 -8px; padding: 0; display: grid; gap: 2px; }
+.agenda-date { font-size: 12.5px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.agenda-day.overdue .agenda-date { color: var(--danger); }
+.agenda-row {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; align-items: center; gap: 14px;
+  padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--fast);
+}
+.agenda-row:hover { background: var(--surface-hover); }
+.agenda-row:focus-visible { outline: none; box-shadow: var(--focus); }
+.agenda-time { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.agenda-time::before { content: ""; flex: none; width: 3px; height: 18px; border-radius: 2px; background: var(--c); }
+.agenda-row.deadline .agenda-time::before { background: none; box-shadow: inset 0 0 0 1px var(--c); }
+.agenda-row.urgent .agenda-time, .agenda-row.overdue .agenda-time { color: var(--danger); }
+.agenda-what { min-width: 0; }
+.agenda-what .co { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-what .why { display: block; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-add, [data-feed-link] { text-decoration: none; }
+.agenda-add { color: var(--muted); }
+.agenda .action-empty { margin: 0; }
+
+.interview-chip .cal-dot { margin-right: 2px; }
+
+/* Settings → Calendar link */
+.feed-url { display: flex; gap: 8px; padding-bottom: 14px; }
+.feed-url input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+  font: 12.5px var(--mono);
+}
+.feed-url input:focus { outline: none; border-color: var(--focus-border); box-shadow: var(--focus); }
+
+/* On a phone the grid keeps its shape with a dot per item; the list below has the details. */
+@media (max-width: 640px) {
+  .cal-legend { display: none; }
+  .cal-wd { padding: 6px 0; text-align: center; font-size: 11px; }
+  .cal-day { min-height: 52px; padding: 4px 2px; align-items: center; }
+  .cal-num { align-self: center; height: 22px; min-width: 22px; padding: 0 4px; font-size: 12px; }
+  .cal-items { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; }
+  .cal-chip { width: 7px; height: 7px; padding: 0; border-radius: 50%; background: var(--c); box-shadow: none; pointer-events: none; }
+  .cal-chip.deadline { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+  .cal-chip > * { display: none; }
+  .cal-day.crowded .cal-chip:nth-child(n + 4) { display: flex; }
+  .cal-more { display: none; }
+  .agenda-row { grid-template-columns: 74px minmax(0, 1fr) auto; gap: 10px; }
+  .agenda-add span { display: none; }
+  .feed-url { flex-wrap: wrap; }
+}
 
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {

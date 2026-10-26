@@ -72,6 +72,8 @@ export async function deleteUser(id) {
   await user.mailbox.stop();
   await user.mailbox.disconnect();
   if (user.apiKey) forgetClient(user.apiKey);
+  const feed = user.store.db.calendarFeed;
+  if (feed) await deleteKv(`calfeed_${feed.token}`);
   await closeStore(id);
   const keys = [`db_${id}`, `groq_key_${id}`, `db_before_rescan_${id}`];
   if (user.owner) keys.push('db_before_accounts', 'db_before_rescan'); // backups from before accounts

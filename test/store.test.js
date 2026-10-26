@@ -89,6 +89,19 @@ test('re-scan keeps your edits: renames, notes and manual status changes come ba
   assert.equal(rebuilt.status, 'rejected');
 });
 
+test('re-scan keeps an interview time you added', () => {
+  const a = gmailApp({ company: 'Fabrikam', events: [['2026-09-01', 'applied'], ['2026-09-08', 'interview']] });
+  a.interviewAt = '2026-11-02T14:00:00.000Z';
+  const snapshots = s.snapshotEdits();
+  const emails = a.events.filter(e => e.messageId);
+  s.db.applications.length = 0;
+  const rebuilt = s.createApplication({ company: 'Fabrikam', source: 'gmail' });
+  rebuilt.events.push(...structuredClone(emails));
+  refresh(rebuilt);
+  assert.deepEqual(s.restoreEdits(snapshots), { restored: 1, kept: 0 });
+  assert.equal(rebuilt.interviewAt, '2026-11-02T14:00:00.000Z');
+});
+
 test('re-scan keeps an edited application whose emails no longer classify', () => {
   const a = gmailApp({ company: 'Trey Research' });
   a.notes = 'Keep me';

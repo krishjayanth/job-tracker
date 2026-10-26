@@ -70,6 +70,7 @@
       <div class="side-label">Workspace</div>
       <a class="side-link" href="#/" data-view="dashboard"><svg class="icon"><use href="#i-dashboard"/></svg>Dashboard</a>
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
+      <a class="side-link" href="#/calendar" data-view="calendar"><svg class="icon"><use href="#i-calendar"/></svg>Calendar<span class="side-count num" id="cal-count" title="Deadlines and interviews in the next 7 days"></span></a>
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
       <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
       <div class="side-label">Coming soon</div>
@@ -235,6 +236,36 @@
     </section>
   </main>
 
+  <main class="page cal-page" id="view-calendar" hidden>
+    <section class="summary">
+      <div class="summary-head">
+        <h1>Calendar</h1>
+        <span class="since">Open deadlines from your emails and the interviews you've added.</span>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="cal-title">
+      <div class="panel-head">
+        <div class="head-text">
+          <h2 id="cal-title" aria-live="polite"></h2>
+          <span class="cal-legend hint" aria-hidden="true"><span><i class="cal-dot"></i>Interview</span><span><svg class="icon"><use href="#i-clock"/></svg>Deadline</span></span>
+        </div>
+        <div class="cal-nav">
+          <button class="btn btn-sm" type="button" data-cal-nav="0">Today</button>
+          <button class="icon-btn cal-prev" type="button" data-cal-nav="-1" aria-label="Previous month"><svg class="icon"><use href="#i-chevron"/></svg></button>
+          <button class="icon-btn cal-next" type="button" data-cal-nav="1" aria-label="Next month"><svg class="icon"><use href="#i-chevron"/></svg></button>
+        </div>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+    </section>
+    <section class="panel" aria-labelledby="agenda-title">
+      <div class="panel-head">
+        <div class="head-text"><h2 id="agenda-title">Next two weeks</h2><span class="hint" id="agenda-hint"></span></div>
+        <a class="btn btn-sm" href="#/settings" data-feed-link><svg class="icon"><use href="#i-calendar"/></svg><span>Add all to Google Calendar</span></a>
+      </div>
+      <ul class="agenda" id="agenda"></ul>
+    </section>
+  </main>
+
   <main class="page settings-page" id="view-settings" hidden>
     <section class="summary">
       <div class="summary-head"><h1>Settings</h1></div>
@@ -258,6 +289,18 @@
       <div class="settings-row">
         <div><strong id="groq-menu-title"></strong><p id="groq-menu-status"></p></div>
         <div class="settings-actions"><button id="groq-menu-btn" class="btn" type="button"><svg class="icon"><use href="#i-key"/></svg>Manage key</button></div>
+      </div>
+    </section>
+
+    <section class="panel settings-group" id="calendar-feed" aria-labelledby="set-cal-title">
+      <h2 id="set-cal-title">Calendar</h2>
+      <div class="settings-row">
+        <div><strong>Calendar link</strong><p id="feed-status"></p></div>
+        <div class="settings-actions" id="feed-actions"></div>
+      </div>
+      <div class="feed-url" id="feed-url-row" hidden>
+        <input id="feed-url" type="text" readonly aria-label="Calendar link" spellcheck="false">
+        <button class="btn" id="feed-copy" type="button"><svg class="icon"><use href="#i-link"/></svg><span>Copy</span></button>
       </div>
     </section>
 
