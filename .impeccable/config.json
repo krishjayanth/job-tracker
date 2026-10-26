@@ -17,6 +17,12 @@
         ],
         "createdAt": "2026-10-25T18:37:15.330Z",
         "reason": "Agent decided: the only background-clip:text in site.css is the demo's 'classify' shimmer, a status indicator shown only while an email is being read (21st.dev Text Shimmer, added at the user's request), not decorative emphasis"
+      },
+      {
+        "rule": "overused-font",
+        "value": "geist",
+        "createdAt": "2026-10-25T20:13:21.786Z",
+        "reason": "Project's established type: the task brief states the dashboard's type is Geist, set in body font before this session; not a new choice"
       }
     ]
   }
