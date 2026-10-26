@@ -1087,3 +1087,31 @@ table.apps { width: 100%; border-collapse: collapse; }
   /* The command menu still fades, just without the scale. */
   .cmdk[open] { animation: fade 150ms ease !important; }
 }
+
+/* ------------------------------------------------------------------ selecting rows */
+/* A narrow first column of checkboxes; the whole cell is the hit area. */
+.apps th.col-pick, .apps td.col-pick { width: 40px; padding: 0; }
+.pick { display: grid; place-items: center; width: 40px; min-height: 44px; cursor: pointer; }
+.pick input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.apps tbody tr.picked { background: var(--accent-soft); }
+.apps tbody tr.picked:hover { background: var(--surface-hover); }
+
+/* The bulk bar sits in the sticky head, so it stays in reach while you scroll the table. */
+.bulk-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 2px 0 10px; padding: 5px 5px 5px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.bulk-count { margin-right: auto; font-weight: 500; font-variant-numeric: tabular-nums; }
+.bulk-bar .btn, .bulk-bar .select-wrap { height: 32px; }
+.bulk-clear { width: 32px; padding: 0; justify-content: center; }
+.bulk-status select { padding-left: 12px; }
+@media (max-width: 760px) {
+  .bulk-count { flex-basis: 100%; }
+  .bulk-bar .bulk-status { flex: 1; }
+  .bulk-bar .bulk-status select { width: 100%; }
+  /* Icons only here, so the status picker gets the room (the buttons keep their names). */
+  .bulk-bar .btn span { display: none; }
+  .bulk-bar .btn { width: 32px; padding: 0; justify-content: center; }
+}

@@ -326,3 +326,21 @@ test('typedDeadline: a bare date means the end of that day, and junk is refused'
   assert.equal(typedDeadline('2026-10-30'), new Date(2026, 9, 30, 23, 59).toISOString());
   for (const bad of ['', 'tomorrow', '2026-13-45T99:99', '30/10/2026', null, 42]) assert.equal(typedDeadline(bad), null);
 });
+
+test('undo: a status set on several applications comes off, but an email that arrived meanwhile stays', () => {
+  const a = gmailApp({ company: 'Northwind', events: [['2026-09-01', 'applied']] });
+  const b = gmailApp({ company: 'Lumen Labs', events: [['2026-09-02', 'applied']] });
+  const token = s.checkpoint([a.id, b.id]);
+  for (const app of [a, b]) {
+    const manual = { id: newId(), date: '2026-09-10T12:00:00.000Z', stage: 'rejected', manual: true };
+    app.events.push(manual);
+    s.undoAlsoDrops(token, [manual.id]);
+    refresh(app);
+  }
+  a.events.push(email('2026-09-11T12:00:00.000Z', 'interview'));
+  refresh(a);
+  assert.equal(s.undo(token), true);
+  const find = id => s.applications.find(x => x.id === id);
+  assert.equal(find(b.id).status, 'applied');
+  assert.deepEqual(find(a.id).events.map(e => e.stage), ['applied', 'interview']);
+});

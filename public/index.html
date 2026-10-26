@@ -170,12 +170,24 @@
       <div class="stage-tabs" id="stage-tabs" role="tablist" aria-label="Filter by status"><span class="tab-indicator" id="tab-indicator" aria-hidden="true"></span></div>
       <div class="stage-bar" id="stage-bar" aria-hidden="true"></div>
       <div class="filter-chips" id="filter-chips" hidden></div>
+      <!-- Shows once rows are ticked: act on all of them at once (after 21st.dev's Data Table Toolbar). -->
+      <div class="bulk-bar" id="bulk-bar" role="group" aria-label="Selected applications" hidden>
+        <span class="bulk-count num" id="bulk-count"></span>
+        <label class="select-wrap bulk-status">
+          <select id="bulk-status" aria-label="Set the status of the selected applications"></select>
+          <svg class="icon chev"><use href="#i-chevron"/></svg>
+        </label>
+        <button class="btn" id="bulk-export" type="button" aria-label="Export selected"><svg class="icon"><use href="#i-download"/></svg><span>Export</span></button>
+        <button class="btn btn-danger" id="bulk-delete" type="button" aria-label="Delete selected"><svg class="icon"><use href="#i-trash"/></svg><span>Delete</span></button>
+        <button class="btn bulk-clear" id="bulk-clear" type="button" aria-label="Clear selection" title="Clear selection (Esc)"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
       </div>
 
       <div class="table-wrap">
         <table class="apps">
           <thead>
             <tr>
+              <th class="col-pick"><label class="pick"><input type="checkbox" id="pick-all" aria-label="Select all applications shown"></label></th>
               <th><button class="sort" data-sort="company">Company</button></th>
               <th class="col-role">Role</th>
               <th><button class="sort" data-sort="status">Status</button></th>

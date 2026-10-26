@@ -282,7 +282,7 @@ export class Store {
     const messageIds = apps.flatMap(a => a.events.map(e => e.messageId).filter(Boolean));
     const token = newId();
     this.undoable.set(token, {
-      at: Date.now(), apps, blockedSender, remove: [],
+      at: Date.now(), apps, blockedSender, remove: [], drop: [],
       ignored: Object.fromEntries(messageIds.map(m => [m, this.db.ignored[m]])),
       assignments: Object.fromEntries(messageIds.map(m => [m, structuredClone(this.db.assignments[m])])),
       corrections: structuredClone(this.db.corrections || {}),
@@ -293,6 +293,12 @@ export class Store {
   // An application the action created (e.g. "move to a new application"): undo removes it.
   undoAlsoRemoves(token, appId) {
     this.undoable.get(token)?.remove.push(appId);
+  }
+
+  // Timeline entries the action itself added (e.g. a status set on several applications at
+  // once): undo takes them out, where entries a sync adds in the meantime are kept.
+  undoAlsoDrops(token, eventIds) {
+    this.undoable.get(token)?.drop.push(...eventIds);
   }
 
   undo(token) {
@@ -307,7 +313,7 @@ export class Store {
     // Anything a sync added to these applications since then stays.
     for (const old of cp.apps) {
       const now = db.applications.find(a => a.id === old.id);
-      const added = now?.events.filter(e => !eventIds.has(e.id)) || [];
+      const added = now?.events.filter(e => !eventIds.has(e.id) && !cp.drop.includes(e.id)) || [];
       if (added.length) { old.events.push(...added); refresh(old); }
     }
     db.applications = db.applications.filter(a => !putBack.has(a.id) && !cp.remove.includes(a.id));

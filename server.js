@@ -365,6 +365,33 @@ app.post('/api/export', async (req, res) => {
   res.send(Buffer.from(buffer));
 });
 
+// Several applications at once, from the table's selection: give them all one status, or
+// delete them. One checkpoint covers the lot, so a single Undo puts every one back.
+app.post('/api/applications/bulk', (req, res) => {
+  const store = req.account.store;
+  const { action, status } = req.body || {};
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(id => typeof id === 'string'))] : [];
+  const apps = ids.map(id => store.applications.find(a => a.id === id)).filter(Boolean);
+  if (!apps.length) return res.status(400).json({ error: 'Nothing selected' });
+  if (action !== 'status' && action !== 'delete') return res.status(400).json({ error: 'Unknown action' });
+  if (action === 'status' && !isStage(status)) return res.status(400).json({ error: 'Unknown status' });
+  const undo = store.checkpoint(apps.map(a => a.id));
+  for (const a of apps) {
+    if (action === 'delete') {
+      if (a.source === 'gmail') store.noteCorrection('deleted');
+      store.deleteApplication(a.id);
+    } else {
+      if (a.source === 'gmail' && status !== a.status) store.noteCorrection('statusChanged');
+      const before = a.events.length;
+      addManualStatus(a, status);
+      if (a.events.length > before) store.undoAlsoDrops(undo, [a.events.at(-1).id]);
+      refresh(a);
+    }
+  }
+  changed(req.account);
+  res.json({ ok: true, count: apps.length, undo });
+});
+
 app.delete('/api/applications/:id', (req, res) => {
   const store = req.account.store;
   const undo = store.checkpoint([req.params.id]);

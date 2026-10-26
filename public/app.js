@@ -864,6 +864,12 @@ function setQuery(value) {
   renderTable();
 }
 
+// Ticked rows, by id. Only rows the table is showing stay ticked, so an action never
+// reaches something you can't see.
+const selected = new Set();
+let lastPicked = null; // where a Shift-click range starts
+const appCount = n => `${n} ${n === 1 ? 'application' : 'applications'}`;
+
 function renderTable() {
   const words = queryWords();
   const rows = state.applications
@@ -877,6 +883,8 @@ function renderTable() {
 
   visibleRows = rows;
   $('#export-btn').disabled = rows.length === 0;
+  const shown = new Set(rows.map(a => a.id));
+  for (const id of selected) if (!shown.has(id)) selected.delete(id);
   const prev = seen;
   seen = new Map(state.applications.map(a => [a.id, a.lastActivity]));
 
@@ -884,7 +892,8 @@ function renderTable() {
     const last = latestEvent(a);
     const fresh = prev && prev.get(a.id) !== a.lastActivity;
     return `
-    <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}"${rows.length <= MAX_ROWS_TO_MOVE ? ` style="view-transition-name:r-${a.id}"` : ''}>
+    <tr data-id="${a.id}" tabindex="0" class="${fresh ? 'fresh' : ''}${selected.has(a.id) ? ' picked' : ''}"${rows.length <= MAX_ROWS_TO_MOVE ? ` style="view-transition-name:r-${a.id}"` : ''}>
+      <td class="col-pick"><label class="pick"><input type="checkbox" data-pick="${a.id}" aria-label="Select ${esc(a.company)}"${selected.has(a.id) ? ' checked' : ''}></label></td>
       <td>
         <div class="company">
           <div style="min-width:0"><div class="name">${hl(a.company)}${a.needsReview ? `<span class="check-chip" title="An email here may be filed under the wrong application">Check filing</span>` : ''}</div><div class="sub">${hl(a.role)}</div></div>
@@ -911,6 +920,7 @@ function renderTable() {
   });
 
   renderFilterChips(rows.length, state.applications.length);
+  renderSelection();
   $('#side-count').textContent = state.applications.length || '';
   const q = query.trim();
   const empty = $('#empty');
@@ -1573,14 +1583,92 @@ $('#delete-account-btn').onclick = async () => {
 
 const rowsEl = $('#rows');
 rowsEl.addEventListener('click', e => {
-  if (e.target.closest('.status-select')) return; // changing status inline, not opening
+  const pick = e.target.closest('[data-pick]');
+  if (pick) return pickRows(pick.dataset.pick, pick.checked, e.shiftKey);
+  if (e.target.closest('.status-select, .col-pick')) return; // changing status or ticking, not opening
   const tr = e.target.closest('tr[data-id]');
   if (tr) openById(tr.dataset.id);
 });
 rowsEl.addEventListener('keydown', e => {
-  if (e.key !== 'Enter' || e.target.tagName !== 'TR') return;
-  openById(e.target.dataset.id);
+  if (e.target.tagName !== 'TR') return;
+  if (e.key === 'Enter') openById(e.target.dataset.id);
+  // Space ticks the focused row, like a checkbox; Shift+Space ticks the range.
+  if (e.key === ' ') {
+    e.preventDefault();
+    pickRows(e.target.dataset.id, !selected.has(e.target.dataset.id), e.shiftKey);
+  }
 });
+
+// ---------------------------------------------------------------- selection
+// Tick rows to act on them together (after 21st.dev's Data Table Toolbar): set one status,
+// export just those, or delete them, each with a single Undo.
+function pickRows(id, on, range) {
+  const ids = visibleRows.map(a => a.id);
+  const from = ids.indexOf(lastPicked), to = ids.indexOf(id);
+  const span = range && from !== -1 && to !== -1 ? ids.slice(Math.min(from, to), Math.max(from, to) + 1) : [id];
+  for (const x of span) on ? selected.add(x) : selected.delete(x);
+  lastPicked = id;
+  renderSelection();
+}
+function clearSelection() {
+  selected.clear();
+  lastPicked = null;
+  renderSelection();
+}
+function renderSelection() {
+  const n = selected.size;
+  const all = $('#pick-all');
+  all.checked = n > 0 && n === visibleRows.length;
+  all.indeterminate = n > 0 && n < visibleRows.length;
+  all.disabled = !visibleRows.length;
+  document.querySelectorAll('#rows tr[data-id]').forEach(tr => {
+    const on = selected.has(tr.dataset.id);
+    tr.classList.toggle('picked', on);
+    tr.querySelector('[data-pick]').checked = on;
+  });
+  const bar = $('#bulk-bar');
+  const opening = bar.hidden && n > 0;
+  bar.hidden = n === 0;
+  $('#bulk-count').textContent = `${n} selected`;
+  // The bar drops in when a selection starts; it leaves at once, so nothing lingers to misclick.
+  if (opening && !reduceMotion.matches) {
+    bar.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.23, 1, .32, 1)' });
+  }
+}
+$('#pick-all').addEventListener('change', e => {
+  if (e.target.checked) visibleRows.forEach(a => selected.add(a.id));
+  else selected.clear();
+  lastPicked = null;
+  renderSelection();
+});
+// Esc lets go of the selection, unless it's closing something else first (it runs before them).
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !selected.size) return;
+  if ($('#drawer').classList.contains('open') || document.querySelector('dialog[open]') || $('#sidebar').classList.contains('open')) return;
+  if (e.target.closest?.('textarea, select, input:not([type="checkbox"])')) return;
+  clearSelection();
+}, { capture: true });
+
+$('#bulk-status').innerHTML = `<option value="">Set status…</option>${STATUS_ORDER.map(s => `<option value="${s}">${STAGE_LABEL[s]}</option>`).join('')}`;
+async function runBulk(action, extra, message) {
+  const ids = [...selected];
+  try {
+    const { count, undo } = await api('POST', '/api/applications/bulk', { ids, action, ...extra });
+    clearSelection();
+    await load();
+    undoToast(message(count), undo);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+$('#bulk-status').addEventListener('change', e => {
+  const status = e.target.value;
+  e.target.value = '';
+  if (status) runBulk('status', { status }, n => `${appCount(n)} set to ${STAGE_LABEL[status]}`);
+});
+$('#bulk-delete').onclick = () => runBulk('delete', {}, n => `Deleted ${appCount(n)}`);
+$('#bulk-export').onclick = () => exportRows(visibleRows.filter(a => selected.has(a.id)), $('#bulk-export'), ['selected']);
+$('#bulk-clear').onclick = () => { clearSelection(); $('#pick-all').focus(); };
 rowsEl.addEventListener('change', e => {
   const sel = e.target.closest('select[data-status-for]');
   if (sel) setStatus(sel.dataset.statusFor, sel.value).then(() => toast(`Status set to ${STAGE_LABEL[sel.value]}`));
@@ -1629,18 +1717,18 @@ $('#month').addEventListener('change', e => withTransition(() => {
   renderTable();
 }));
 
-// Excel export of exactly what the table shows.
-$('#export-btn').onclick = async () => {
-  const btn = $('#export-btn');
+// Excel export of exactly what the table shows (or just the ticked rows, from the bulk bar).
+$('#export-btn').onclick = () => exportRows(visibleRows, $('#export-btn'));
+async function exportRows(rows, btn, extraName = []) {
   const label = btn.querySelector('span');
   btn.disabled = true;
   label.textContent = 'Exporting…';
-  const parts = ['job-applications', month !== 'all' && month, filter !== 'all' && STAGE_LABEL[filter].toLowerCase()].filter(Boolean);
+  const parts = ['job-applications', month !== 'all' && month, filter !== 'all' && STAGE_LABEL[filter].toLowerCase(), ...extraName].filter(Boolean);
   try {
     const res = await fetch('/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: visibleRows.map(a => a.id), filename: parts.join('-') }),
+      body: JSON.stringify({ ids: rows.map(a => a.id), filename: parts.join('-') }),
     });
     if (!res.ok) throw new Error(`Export failed (${res.status})`);
     const url = URL.createObjectURL(await res.blob());
@@ -1652,10 +1740,10 @@ $('#export-btn').onclick = async () => {
   } catch (err) {
     alert(err.message);
   } finally {
-    btn.disabled = visibleRows.length === 0;
+    btn.disabled = btn === $('#export-btn') && visibleRows.length === 0;
     label.textContent = 'Export';
   }
-};
+}
 
 // Large chart dialog
 $('#expand-flow').addEventListener('click', openFlowDialog);
