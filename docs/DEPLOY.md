@@ -124,7 +124,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `GROQ_API_KEY` | — | Groq key for the owner only; everyone else adds their own in the app |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
 | `GROQ_REASONING_EFFORT` | `medium` | `low` uses fewer tokens per email, but reads tricky emails less carefully |
-| `GROQ_GATE_MODEL` | `llama-3.1-8b-instant` | Small model that checks whether an unclear email is about a job before the full read |
+| `GROQ_GATE_MODEL` | `llama-3.1-8b-instant` | Small model that checks whether an unclear email is about a job before the full read. If Groq retires it, nuj uses `GROQ_MODEL` for the check instead and notes it on the Developer page; set this to another small model from Groq's model list to go back to a cheap one |
 | `CRON_SECRET` | — | Key for `/api/cron/sync` (16+ characters) |
 | `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked while awake |
 | `INITIAL_SYNC_DAYS` | 90 | How far back the first sync looks |

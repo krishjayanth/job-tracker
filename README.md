@@ -157,7 +157,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 148 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 149 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic

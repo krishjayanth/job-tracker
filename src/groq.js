@@ -92,12 +92,22 @@ Answer false for every other kind of application or account: apartments, rentals
 Reply with JSON only: {"job": true or false, "why": "a few words"}`;
 
 // true / false, or undefined when Groq can't answer now (the full read then decides).
+// Groq retires models now and then. When the small model is gone, the job check moves to
+// the main model (with little reasoning, so it stays cheap) until the server restarts,
+// instead of failing on every unclear email. GROQ_GATE_MODEL picks a different small one.
+let gateGone = false;
+const modelGone = err => err.status === 404 || err.error?.error?.code === 'model_not_found' || err.code === 'model_not_found';
+export const gateModel = () => (gateGone ? MODEL : GATE_MODEL);
+export function resetGateModelForTests() { gateGone = false; }
+
 export async function isJobEmailWithGroq(client, { from, subject, body }) {
+  const fallback = gateGone;
   try {
     const res = await client.chat.completions.create({
-      model: GATE_MODEL,
+      model: gateModel(),
       temperature: 0,
-      max_completion_tokens: 60,
+      // The main model thinks before it answers, and that counts towards the limit.
+      ...(fallback ? { reasoning_effort: 'low', max_completion_tokens: 400 } : { max_completion_tokens: 60 }),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: GATE_SYSTEM },
@@ -108,6 +118,12 @@ export async function isJobEmailWithGroq(client, { from, subject, body }) {
     return typeof out.job === 'boolean' ? out.job : undefined;
   } catch (err) {
     if (err.status === 401 || err.status === 403) throw err; // the key itself is bad
+    if (!fallback && modelGone(err)) {
+      gateGone = true;
+      console.warn(`[groq] ${GATE_MODEL} isn't available; the job check uses ${MODEL} instead`);
+      recordError('groq', `${GATE_MODEL} isn't available on Groq; the job check uses ${MODEL} instead. Set GROQ_GATE_MODEL to choose another small model`, { level: 'warning' });
+      return isJobEmailWithGroq(client, { from, subject, body });
+    }
     if (err.status !== 429) {
       console.warn(`[groq] job check failed: ${err.message}`);
       recordError('groq', err, { level: 'warning', detail: 'The job check; the full read decided instead' });

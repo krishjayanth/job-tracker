@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeWithRules, classifyWithRules, classify } from '../src/classify.js';
-import { GATE_MODEL, pickApplicationWithGroq } from '../src/groq.js';
+import { GATE_MODEL, MODEL, pickApplicationWithGroq, isJobEmailWithGroq, gateModel, resetGateModelForTests } from '../src/groq.js';
 
 const email = { from: 'Relecloud <noreply@hirevue.com>', subject: 'Relecloud interview invitation', date: '2026-10-01T12:00:00.000Z',
   body: 'Hi, thanks for applying to Relecloud. Please complete your HireVue interview. Requisition ID: R-12345.' };
@@ -177,4 +177,24 @@ test('both prompts tell the model student clubs are not jobs', async () => {
   await classify(vague, { groq });
   assert.equal(prompts.length, 2);
   for (const p of prompts) assert.match(p, /student clubs/i);
+});
+
+test('job check: when Groq has retired the small model, it moves to the main model and keeps working', async () => {
+  resetGateModelForTests();
+  const calls = [];
+  const groq = { chat: { completions: { create: async req => {
+    calls.push([req.model, req.max_completion_tokens]);
+    if (req.model === GATE_MODEL) {
+      // The shape groq-sdk throws for a model that doesn't exist.
+      throw Object.assign(new Error('404 The model does not exist'), { status: 404, error: { error: { code: 'model_not_found' } } });
+    }
+    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ job: true, why: 'test' }) } }] };
+  } } } };
+  assert.equal(await isJobEmailWithGroq(groq, vague), true);
+  assert.equal(gateModel(), MODEL);
+  // The next email goes straight to the main model, with room for it to think.
+  assert.equal(await isJobEmailWithGroq(groq, vague), true);
+  assert.deepEqual(calls.map(c => c[0]), [GATE_MODEL, MODEL, MODEL]);
+  assert.ok(calls[1][1] > 60);
+  resetGateModelForTests();
 });
