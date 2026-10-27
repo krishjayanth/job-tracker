@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { initStorage, flushAll, refresh, newId, typedDeadline, getKv, setKv, deleteKv } from './src/store.js';
 import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
-import { rescanEveryoneOnce } from './src/rescan-all.js';
+import { rescanEveryoneOnce, rescanAccount } from './src/rescan-all.js';
 import { addRequest, listRequests, pendingCount, setRequestStatus, tooMany } from './src/access.js';
 import { isStage, stagePath } from './src/stages.js';
 import { classifierName } from './src/classify.js';
@@ -14,7 +14,7 @@ import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
 import { canBlockDomain, senderDomain } from './src/jobcheck.js';
 import { addReport, listReports, openCount, setReportStatus, deleteReport, deleteReportsBy } from './src/reports.js';
-import { getUser, allUsers, deleteUser, LOCAL_ID, DEMO_ID } from './src/users.js';
+import { getUser, knownUser, allUsers, deleteUser, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
@@ -527,6 +527,15 @@ app.post('/api/reports', async (req, res) => {
 
 const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the owner can see reports' });
 app.get('/api/reports', ownerOnly, async (req, res) => res.json({ reports: await listReports() }));
+// Re-read someone's emails with the current sorting, from their problem report. Their own
+// edits are kept and a backup is made first, as with their Settings button.
+app.post('/api/accounts/:id/rescan', ownerOnly, async (req, res) => {
+  if (DEMO) return res.status(400).json({ error: 'Re-scan reads Gmail, so it is off in demo mode' });
+  const user = await knownUser(req.params.id);
+  const r = await rescanAccount(user && live(user), { onDone: u => broadcast(u.id) });
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  res.status(202).json({ started: true });
+});
 app.get('/api/access-requests', ownerOnly, async (req, res) => res.json({ requests: await listRequests() }));
 app.patch('/api/access-requests/:id', ownerOnly, async (req, res) => {
   const r = await setRequestStatus(req.params.id, req.body?.status);

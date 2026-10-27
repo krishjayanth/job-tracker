@@ -85,3 +85,9 @@ test('someone new is asked how to sort before anything is synced; existing users
   synced.store.db.lastSync = new Date().toISOString();
   assert.equal(synced.needsSetup(), false);
 });
+
+test("knownUser: finds someone registered, and never registers an ID it's given", async () => {
+  assert.equal((await users.knownUser('sub-friend'))?.id, 'sub-friend');
+  assert.equal(await users.knownUser('sub-nobody'), null);
+  assert.equal(((await store.getKv('users')) || {})['sub-nobody'], undefined);
+});

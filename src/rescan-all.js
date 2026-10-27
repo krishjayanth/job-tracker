@@ -41,3 +41,20 @@ export async function rescanEveryoneOnce(people, { onUser = () => {}, log = cons
   log.log(`[rescan-all] finished: ${record.done.length} accounts`);
   return { done: record.done.length, failed: 0, finished: true };
 }
+
+// The owner re-scanning one person's account (Reports → a problem report), after a fix
+// to sorting that their report was about. The same re-scan as their Settings button.
+// Returns { started, finished } (finished settles when it's done, for tests), or
+// { status, error } when it can't run; nothing is read then.
+export async function rescanAccount(user, { onDone = () => {}, log = console } = {}) {
+  if (!user) return { status: 404, error: 'No account with that ID' };
+  if (!user.mailbox.connected()) return { status: 400, error: "Their Gmail isn't connected" };
+  if (user.needsSetup()) return { status: 400, error: "They haven't chosen how to sort their emails yet" };
+  if (user.mailbox.isRescanning()) return { status: 409, error: 'Their emails are already being re-scanned' };
+  log.log(`[rescan] ${user.id}: started by the owner`);
+  const finished = user.mailbox.rescan()
+    .then(r => log.log(`[rescan] ${user.id}: ${r.applications} applications, ${r.restored} with edits restored`))
+    .catch(err => log.error(`[rescan] ${user.id} failed: ${err.message}`))
+    .finally(() => onDone(user));
+  return { started: true, finished };
+}

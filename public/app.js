@@ -2245,6 +2245,7 @@ function renderReports() {
         <dl>${details.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>` : ''}
       <div class="report-actions">
         ${r.email ? `<a class="btn btn-sm" href="mailto:${esc(r.email)}?subject=${encodeURIComponent('Your nuj report')}">${icon('mail')}Reply</a>` : ''}
+        ${r.userId ? `<button class="btn btn-sm" type="button" data-rescan-account="${esc(r.userId)}" data-who="${esc(r.email || 'this account')}" title="Read their emails again with the current sorting. Their edits are kept and a backup is made first">${icon('refresh')}Re-scan their emails</button>` : ''}
         <button class="btn btn-sm" type="button" data-report-status="${r.id}" data-to="${r.status === 'open' ? 'resolved' : 'open'}">${icon(r.status === 'open' ? 'check' : 'refresh')}${r.status === 'open' ? 'Mark resolved' : 'Reopen'}</button>
         <button class="btn btn-sm btn-quiet btn-danger" type="button" data-report-delete="${r.id}">${icon('trash')}Delete</button>
       </div>
@@ -2256,6 +2257,18 @@ $('#report-tabs').addEventListener('click', e => {
   if (t) { reportFilter = t.dataset.reportFilter; renderReports(); }
 });
 $('#report-list').addEventListener('click', async e => {
+  const rescan = e.target.closest('[data-rescan-account]');
+  if (rescan) {
+    rescan.disabled = true;
+    try {
+      await api('POST', `/api/accounts/${encodeURIComponent(rescan.dataset.rescanAccount)}/rescan`);
+      toast(`Re-scanning ${rescan.dataset.who}'s emails. Their dashboard updates as it goes`);
+    } catch (err) {
+      toast(err.message);
+    }
+    rescan.disabled = false;
+    return;
+  }
   const status = e.target.closest('[data-report-status]');
   if (status) {
     status.disabled = true;

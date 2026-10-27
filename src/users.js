@@ -23,6 +23,12 @@ export function getUser(id, email = null) {
   return users.get(id);
 }
 
+// Someone already registered, or null. Unlike getUser, an unknown ID is never added.
+export async function knownUser(id) {
+  const registry = (await getKv(REGISTRY)) || {};
+  return Object.hasOwn(registry, id) ? getUser(id) : null;
+}
+
 // Everyone registered, loaded.
 export async function allUsers() {
   const registry = (await getKv(REGISTRY)) || {};
