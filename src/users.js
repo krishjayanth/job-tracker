@@ -7,6 +7,7 @@ import { encrypt, decrypt } from './secrets.js';
 import { groqClient, forgetClient, SERVER_KEY } from './groq.js';
 import { ownerEmail } from './auth.js';
 import { recordError, forgetUserErrors } from './errors.js';
+import { forgetUserFeedback } from './feedback.js';
 
 export const LOCAL_ID = 'local';
 export const DEMO_ID = 'demo';
@@ -93,6 +94,7 @@ export async function deleteUser(id) {
   for (const key of keys) await deleteKv(key);
   await updateRegistry(r => { delete r[id]; });
   await forgetUserErrors(id);
+  await forgetUserFeedback(id);
   users.delete(id);
 }
 

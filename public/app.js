@@ -207,6 +207,7 @@ function renderGmail() {
   renderProgress();
   renderSetup();
   renderWhatsNew();
+  renderFeedback();
   renderGroq();
   drawBanners();
 }
@@ -282,6 +283,74 @@ $('#whats-new').addEventListener('click', e => {
 $('#whats-new').addEventListener('close', () => {
   state.whatsNew = null;
   api('POST', '/api/whats-new/seen').catch(() => {});
+  renderFeedback(); // waiting its turn behind the release notes
+});
+// "How's nuj going?": questions the owner asked you, shown once when you open nuj (not
+// in the middle of a visit, when a live update brings them in). Closing them without
+// sending is "Not now", and they don't come back.
+let feedbackAsk; // undefined until the first load of this visit; then the ask or null
+function renderFeedback() {
+  if (feedbackAsk === undefined) feedbackAsk = state.feedback || null;
+  const dialog = $('#feedback-dialog');
+  if (!feedbackAsk || dialog.open || state.needsSetup || document.querySelector('dialog[open]')) return;
+  $('#feedback-form').reset();
+  setStars(0);
+  $('#feedback-msg').textContent = '';
+  // Without Gmail there's no sorting to judge.
+  $('#feedback-sorting').hidden = !state.gmail?.connected && !state.demo;
+  dialog.showModal();
+}
+const STAR_WORDS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
+// Stars fill up to the one you point at, and to your choice when you're not pointing.
+function setStars(n, preview = false) {
+  const box = $('#feedback-stars');
+  box.querySelectorAll('label').forEach((l, i) => l.classList.toggle('on', i < n));
+  box.classList.toggle('preview', preview);
+  $('#feedback-stars-word').textContent = STAR_WORDS[n];
+}
+const chosenStars = () => Number($('#feedback-form').elements.rating.value || 0);
+$('#feedback-stars').addEventListener('pointerover', e => {
+  const l = e.target.closest('label');
+  if (l) setStars([...l.parentNode.querySelectorAll('label')].indexOf(l) + 1, true);
+});
+$('#feedback-stars').addEventListener('pointerleave', () => setStars(chosenStars()));
+$('#feedback-stars').addEventListener('change', () => setStars(chosenStars()));
+$('#feedback-form').addEventListener('change', () => { $('#feedback-msg').textContent = ''; }); // answered what it asked for
+
+$('#feedback-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target.elements;
+  const sortingAsked = !$('#feedback-sorting').hidden;
+  const msg = text => { $('#feedback-msg').className = 'key-msg err'; $('#feedback-msg').textContent = text; };
+  if (!f.enjoying.value) return msg('Say whether you’re enjoying nuj');
+  if (!f.rating.value) return msg('Pick a rating from 1 to 5 stars');
+  if (sortingAsked && !f.sorting.value) return msg('Say how the email sorting is doing');
+  const send = $('#feedback-send');
+  send.disabled = true;
+  try {
+    await api('POST', `/api/feedback/${feedbackAsk.id}`, {
+      enjoying: f.enjoying.value, rating: Number(f.rating.value),
+      sorting: sortingAsked ? f.sorting.value : null, comment: f.comment.value,
+    });
+    // Settled before closing, so a live update arriving now can't bring the questions back.
+    feedbackAsk = null;
+    $('#feedback-dialog').close();
+    toast('Thanks! That helps make nuj better');
+  } catch (err) {
+    msg(err.message);
+  }
+  send.disabled = false;
+});
+$('#feedback-skip').onclick = () => $('#feedback-dialog').close();
+$('#feedback-dialog').addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) e.currentTarget.close();
+});
+// Closed any way but Send: that's "Not now".
+$('#feedback-dialog').addEventListener('close', () => {
+  if (!feedbackAsk) return;
+  const { id } = feedbackAsk;
+  feedbackAsk = null;
+  api('POST', `/api/feedback/${id}/skip`).catch(() => {});
 });
 
 // First run: nothing is read until you choose a Groq key or the built-in rules.
@@ -2335,6 +2404,7 @@ async function loadDeveloper() {
   }
   renderHealth();
   renderAccounts();
+  renderFeedbackResults();
   renderErrors();
   // While something is re-scanning, keep its progress moving; otherwise live updates do.
   clearTimeout(devPoll);
@@ -2446,6 +2516,9 @@ function accountRow(a) {
           ${a.email ? `<button class="btn btn-sm" type="button" data-copy-email="${esc(a.email)}">${icon('mail')}Copy email</button>` : ''}
           ${canRead ? `<button class="btn btn-sm" type="button" data-account-sync="${esc(a.id)}"${a.busy ? ' disabled' : ''}>${icon('refresh')}Sync now</button>
           <button class="btn btn-sm" type="button" data-rescan-account="${esc(a.id)}" data-who="${esc(a.email || 'this account')}"${a.busy ? ' disabled' : ''} title="Read their emails again with the current sorting. Their edits are kept and a backup is made first">${icon('refresh')}Re-scan their emails</button>` : ''}
+          ${a.allowed ? (a.feedbackAsked
+            ? `<button class="btn btn-sm ask-btn asked" type="button" disabled>${icon('star')}Asked ${timeAgo(a.feedbackAsked)}, not seen yet</button>`
+            : `<button class="btn btn-sm ask-btn" type="button" data-ask-feedback="${esc(a.id)}" data-who="${esc(a.email || 'them')}">${icon('star')}Ask how it’s going</button>`) : ''}
           ${a.owner ? '' : `<button class="btn btn-sm btn-quiet btn-danger" type="button" data-account-delete="${esc(a.id)}">${icon('trash')}<span>Delete account</span></button>`}
         </div>
         ${a.allowed ? '' : `<p class="dev-note">Not on ALLOWED_EMAIL: they can't sign in and aren't synced. Their data stays until it's deleted.</p>`}
@@ -2499,6 +2572,19 @@ $('#account-rows').addEventListener('click', async e => {
     $(`[data-error="${CSS.escape(ids[0])}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
+  const askOne = e.target.closest('[data-ask-feedback]');
+  if (askOne) {
+    askOne.disabled = true;
+    try {
+      await api('POST', '/api/dev/feedback', { to: askOne.dataset.askFeedback });
+      toast(`Asked ${askOne.dataset.who}. They’ll see it the next time they open nuj`);
+      loadDeveloper();
+    } catch (err) {
+      toast(err.message);
+      askOne.disabled = false;
+    }
+    return;
+  }
   const sync = e.target.closest('[data-account-sync]');
   if (sync) {
     sync.disabled = true;
@@ -2548,6 +2634,91 @@ $('#account-rows').addEventListener('click', async e => {
   }
   const row = e.target.closest('tr[data-account]');
   if (row && !e.target.closest('a, button')) toggleDevRow(`a:${row.dataset.account}`);
+});
+
+// ---- feedback: ask one person (from their row) or everyone, and read what they said
+const ENJOY = { yes: ['Enjoying it', 'offer'], okay: ['It’s okay', 'interview'], no: ['Not really', 'rejected'] };
+const SORTED = { right: ['Mostly right', 'offer'], some: ['A few mistakes', 'interview'], wrong: ['Often wrong', 'rejected'], unsure: ['Not sure', 'withdrawn'] };
+let fbShowAll = false;
+const miniStars = (rating, label = true) => `<span class="mini-stars"${label ? ` role="img" aria-label="${rating} out of 5 stars"` : ' aria-hidden="true"'}>${
+  [1, 2, 3, 4, 5].map(i => icon('star', `icon ${i <= Math.round(rating) ? 'on' : 'off'}`)).join('')}</span>`;
+// One thin bar split by answer, with a legend under it.
+function split(counts, names) {
+  const total = Object.values(counts).reduce((n, v) => n + v, 0);
+  const parts = Object.entries(names).filter(([k]) => counts[k]);
+  if (!total) return '<span class="dim">No answers yet</span>';
+  return `<div class="split" aria-hidden="true">${parts.map(([k, [, tone]]) => `<i style="--c:var(--${tone});flex:${counts[k]}"></i>`).join('')}</div>
+    <div class="split-legend">${parts.map(([k, [label, tone]]) => `<span style="--c:var(--${tone})">${label} <span class="num">${counts[k]}</span></span>`).join('')}</div>`;
+}
+function renderFeedbackResults() {
+  const { summary: s, asks } = dev.feedback;
+  $('#fb-summary').innerHTML = `
+    <div><dt>Rating</dt><dd>${s.rating === null ? '<span class="dim">No answers yet</span>'
+      : `<div class="fb-rating"><span class="value">${s.rating}</span>${miniStars(s.rating)}</div><span class="hint">From ${s.answers} answer${s.answers === 1 ? '' : 's'}</span>`}</dd></div>
+    <div><dt>Enjoying nuj</dt><dd>${split(s.enjoying, ENJOY)}</dd></div>
+    <div><dt>Email sorting</dt><dd>${split(s.sorting, SORTED)}</dd></div>`;
+  // Each time you asked, and how many have answered.
+  $('#fb-asks').innerHTML = asks.map(a => {
+    const answered = a.answers.length;
+    const waiting = a.stoppedAt ? 0 : a.asked - answered - a.skipped;
+    return `<li class="fb-ask">
+      <span class="what">${a.everyone ? 'Asked everyone' : `Asked ${esc(a.who || 'one person')}`}</span>
+      <span>${shortDate(a.createdAt)}</span>
+      <span class="num">${answered} of ${a.asked} answered${a.skipped ? ` · ${a.skipped} said not now` : ''}${waiting > 0 ? ` · ${waiting} yet to see it` : ''}${a.stoppedAt ? ' · stopped' : ''}</span>
+      ${waiting > 0 ? `<button class="btn btn-sm btn-quiet" type="button" data-stop-ask="${esc(a.id)}">Stop asking</button>` : ''}
+    </li>`;
+  }).join('');
+  const answers = asks.flatMap(a => a.answers).sort((x, y) => y.at.localeCompare(x.at));
+  const shown = fbShowAll ? answers : answers.slice(0, 12);
+  $('#fb-answers').innerHTML = answers.length ? shown.map(x => `
+    <li class="fb-answer">
+      <div class="report-head">
+        <span class="report-from">${esc(x.email || 'An account since deleted')}</span>
+        ${miniStars(x.rating)}
+        <span class="report-when" title="${esc(new Date(x.at).toLocaleString())}">${timeAgo(x.at)}</span>
+      </div>
+      <div class="fb-tags">
+        <span style="--c:var(--${ENJOY[x.enjoying][1]})">${ENJOY[x.enjoying][0]}</span>
+        ${x.sorting ? `<span style="--c:var(--${SORTED[x.sorting][1]})">Sorting: ${SORTED[x.sorting][0].toLowerCase()}</span>` : ''}
+      </div>
+      ${x.comment ? `<p class="report-message">${esc(x.comment)}</p>` : ''}
+    </li>`).join('') + (answers.length > shown.length ? `<li><button class="btn btn-sm btn-quiet" type="button" data-fb-all>Show all ${answers.length} answers</button></li>` : '')
+    : `<li class="action-empty"><strong>No answers yet</strong>Ask everyone, or one person from their row in Accounts.</li>`;
+  $('#ask-everyone').disabled = !dev.accounts.some(a => a.allowed && !a.owner);
+}
+$('#fb-answers').addEventListener('click', e => {
+  if (e.target.closest('[data-fb-all]')) { fbShowAll = true; renderFeedbackResults(); }
+});
+$('#fb-asks').addEventListener('click', async e => {
+  const stop = e.target.closest('[data-stop-ask]');
+  if (!stop) return;
+  stop.disabled = true;
+  await api('POST', `/api/dev/feedback/${stop.dataset.stopAsk}/stop`).catch(err => toast(err.message));
+  toast('Stopped. Anyone who hadn’t seen it won’t be asked');
+  loadDeveloper();
+});
+// It pops up for everyone, so the first click says how many and the second sends it.
+$('#ask-everyone').addEventListener('click', async () => {
+  const btn = $('#ask-everyone');
+  const label = btn.querySelector('span');
+  const n = dev.accounts.filter(a => a.allowed && !a.owner).length;
+  if (!btn.classList.contains('confirming')) {
+    btn.classList.add('confirming');
+    label.textContent = `Ask all ${n}? Click again`;
+    setTimeout(() => { btn.classList.remove('confirming'); label.textContent = 'Ask everyone'; }, 5000);
+    return;
+  }
+  btn.classList.remove('confirming');
+  label.textContent = 'Ask everyone';
+  btn.disabled = true;
+  try {
+    const { asked } = await api('POST', '/api/dev/feedback', { to: 'everyone' });
+    toast(`Asked ${asked} ${asked === 1 ? 'person' : 'people'}. They’ll see it the next time they open nuj`);
+    loadDeveloper();
+  } catch (err) {
+    toast(err.message);
+  }
+  btn.disabled = false;
 });
 
 // ---- errors (after 21st.dev's Interactive Logs Table: level, source, message and count on

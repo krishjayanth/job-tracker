@@ -45,6 +45,9 @@ into memory, so you can click around, edit, filter and export without a Google a
 - **A Developer page for whoever runs it.** Every account's health (Gmail connected or expired, how emails are
   sorted, last seen, last sync) and a grouped log of errors from syncing, Groq, the server and people's browsers,
   with sync, re-scan and delete-account actions. Counts and dates only: nobody's applications or emails.
+- **Asks how it's going.** From the Developer page, ask one person or everyone: the next time they open nuj
+  they see three quick questions (enjoying it, a 1–5 rating, is sorting right) and can leave a comment. The
+  answers, averages and splits show on the Developer page.
 - **Keyboard first.** ⌘K (Ctrl+K elsewhere) opens a command menu that finds any application by company,
   role or job ID, jumps between pages, filters by stage, and runs actions like Sync, Export or the theme switch.
 
@@ -154,7 +157,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 137 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 147 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
@@ -164,6 +167,7 @@ There are 137 tests, written with the built-in `node:test` runner and no test de
 - a labeled set of 24 emails, which the rules must sort with no misses
 - ignoring senders, problem reports, and counting fixes to sorting
 - the error log (grouping, no email addresses, reopening when an error comes back) and account health summaries
+- feedback questions: who sees them, answering once, "Not now", asking again, and the summary
 - deadline tracking
 - re-scan edit preservation
 - session cookies, including tampered, unauthorized and pre-accounts ones
@@ -193,6 +197,7 @@ also shows how often people fix sorting across all accounts.
 | [`src/groq.js`](src/groq.js) | Groq client: the job check, the full read, and picking between applications |
 | [`src/reports.js`](src/reports.js) | Problem reports people send, for the owner |
 | [`src/errors.js`](src/errors.js) | Error log for the owner's Developer page: grouped, counted, no email addresses |
+| [`src/feedback.js`](src/feedback.js) | "How's nuj going?" questions the owner sends, and the answers |
 | [`src/accounts.js`](src/accounts.js) | Each account's health for the Developer page: counts and dates only |
 | [`src/rules.js`](src/rules.js) | Rule-based classifier: stages, companies, roles, job IDs, deadlines |
 | [`src/stages.js`](src/stages.js) | Pipeline stages, status and chart-path logic |

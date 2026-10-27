@@ -1371,3 +1371,74 @@ table.apps { width: 100%; border-collapse: collapse; }
   .sdot.live::before, .sdot.live::after { animation: none; }
   .dev-detail { transform: none; }
 }
+
+/* ------------------------------------------------------------------ feedback */
+/* "How's nuj going?": three questions, each a fieldset with its question as the legend. */
+.feedback .sheet-body { gap: 20px; }
+.q { display: grid; gap: 9px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.q legend { padding: 0; margin-bottom: 9px; font-size: 13.5px; font-weight: 600; letter-spacing: -.005em; }
+.segmented.four { grid-template-columns: repeat(4, 1fr); }
+.segmented span:active { transform: scale(.97); transition-duration: 60ms; }
+.foot-actions { display: flex; gap: 8px; margin-left: auto; }
+
+/* Stars: they fill up to the one under the pointer as a preview, and settle on your choice.
+   Pressing one gives it a small squeeze, so the choice is felt where you made it. */
+.stars { display: flex; align-items: center; gap: 2px; }
+.stars label { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; cursor: pointer; color: var(--faint); }
+.stars input { position: absolute; opacity: 0; pointer-events: none; }
+.stars .icon { width: 28px; height: 28px; stroke-width: 1.6; transition: transform .28s var(--ease), color var(--fast), fill var(--fast); }
+.stars label.on { color: var(--interview); }
+.stars label.on .icon { fill: currentColor; }
+.stars.preview label.on .icon { fill: color-mix(in srgb, currentColor 45%, transparent); }
+.stars label:active .icon { transform: scale(.86); transition-duration: 80ms; }
+.stars label:has(input:checked) .icon { animation: star-set .36s var(--ease); }
+@keyframes star-set { 40% { transform: scale(1.14); } }
+.stars label:has(input:focus-visible) { box-shadow: var(--focus); }
+.stars-word { margin-left: 10px; color: var(--text-2); font-size: 13px; font-weight: 500; min-width: 6em; }
+
+@media (max-width: 520px) {
+  .segmented.four { grid-template-columns: 1fr 1fr; }
+  .feedback .sheet-foot .fine { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stars label:has(input:checked) .icon { animation: none; }
+}
+
+/* Feedback on the Developer page: how people rate nuj, then what each person said. */
+.fb-head-actions { display: flex; gap: 8px; align-items: center; }
+.fb-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--border); }
+.fb-summary > div { display: grid; align-content: start; gap: 6px; padding: 14px 20px 0; border-left: 1px solid var(--border); min-width: 0; }
+.fb-summary > div:first-child { padding-left: 0; border-left: 0; }
+.fb-summary dt { font-size: 12px; font-weight: 500; color: var(--muted); }
+.fb-summary dd { margin: 0; display: grid; align-content: start; gap: 6px; }
+.fb-rating { display: flex; align-items: baseline; gap: 10px; }
+.fb-rating .value { font-size: 28px; font-weight: 600; letter-spacing: -.035em; line-height: 1; font-variant-numeric: tabular-nums; }
+.mini-stars { display: inline-flex; gap: 1px; color: var(--interview); }
+.mini-stars .icon { width: 13px; height: 13px; stroke-width: 1.8; }
+.mini-stars .icon.on { fill: currentColor; }
+.mini-stars .icon.off { color: var(--faint); }
+/* A split as one thin bar with a legend: the parts of every answer. */
+.split { display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: var(--line); gap: 2px; }
+.split i { background: var(--c); min-width: 3px; }
+.split-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12.5px; color: var(--text-2); }
+.split-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.split-legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.split-legend .num { color: var(--muted); }
+
+.fb-asks { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 0; }
+.fb-ask { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-2); }
+.fb-ask .what { font-weight: 500; color: var(--text); }
+.fb-ask .btn { margin-left: auto; }
+.fb-answers { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.fb-answer { padding: 14px 16px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.fb-answer .report-head { gap: 12px; }
+.fb-tags { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12.5px; color: var(--text-2); }
+.fb-tags span { display: inline-flex; align-items: center; gap: 6px; }
+.fb-tags span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.ask-btn.asked { color: var(--muted); }
+
+@media (max-width: 760px) {
+  .fb-summary { grid-template-columns: 1fr; }
+  .fb-summary > div { padding: 12px 0 0; border-left: 0; }
+  .fb-summary > div + div { border-top: 1px solid var(--border); margin-top: 12px; }
+}

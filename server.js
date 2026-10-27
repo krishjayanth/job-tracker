@@ -17,7 +17,8 @@ import { addReport, listReports, openCount, setReportStatus, deleteReport, delet
 import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
-import { buildDemoAccounts, buildDemoErrors } from './src/demo.js';
+import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback } from './src/demo.js';
+import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
@@ -204,6 +205,8 @@ app.get('/api/state', async (req, res) => {
     // Gmail is connected but nothing has been read yet: ask how to sort first.
     needsSetup: !DEMO && user.mailbox.connected() && user.needsSetup(),
     whatsNew: whatsNewFor(user),
+    // Questions the owner asked this person, shown the next time they open nuj.
+    feedback: await feedbackFor(user),
     user: authEnabled ? user.email : null,
     reports,
     demo: DEMO,
@@ -233,6 +236,22 @@ function whatsNewFor(user) {
       : null,
   };
 }
+
+async function feedbackFor(user) {
+  const a = await pendingFor(user.id);
+  return a ? { id: a.id } : null;
+}
+app.post('/api/feedback/:id', async (req, res) => {
+  const { enjoying, rating, sorting = null, comment = '' } = req.body || {};
+  const r = await answer(req.params.id, { userId: req.account.id, email: req.account.email, enjoying, rating, sorting, comment });
+  if (r.error) return res.status(400).json({ error: r.error });
+  tellOwner();
+  res.json({ ok: true });
+});
+app.post('/api/feedback/:id/skip', async (req, res) => {
+  if (await skip(req.params.id, req.account.id)) tellOwner();
+  res.json({ ok: true });
+});
 
 app.post('/api/whats-new/seen', (req, res) => {
   req.account.store.db.seenRelease = LATEST_RELEASE.id;
@@ -607,6 +626,11 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
   }));
   if (DEMO) accounts.push(...buildDemoAccounts().map(a => ({ ...a, attention: attentionFor(a) })));
   const emails = Object.fromEntries(accounts.map(a => [a.id, a.email]));
+  const asks = await listAsks();
+  for (const a of accounts) {
+    const waiting = asks.find(x => !x.stoppedAt && x.userIds.includes(a.id) && !x.answers.some(y => y.userId === a.id) && !x.skipped.includes(a.id));
+    a.feedbackAsked = waiting ? waiting.createdAt : null;
+  }
   res.json({
     server: {
       startedAt: STARTED_AT,
@@ -623,6 +647,15 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
     accounts,
     // Each error with the addresses of the accounts it hit, for reading at a glance.
     errors: errors.map(g => ({ ...g, emails: g.users.map(id => emails[id] || null) })),
+    feedback: {
+      summary: summarize(asks),
+      asks: asks.map(({ userIds, skipped, answers, ...rest }) => ({
+        ...rest, asked: userIds.length, skipped: skipped.length,
+        // An account without an address (running locally, or the demo) goes by its ID.
+        who: userIds.length === 1 ? emails[userIds[0]] || userIds[0] : null,
+        answers: answers.map(x => ({ ...x, email: emails[x.userId] || x.email || (x.userId in emails ? x.userId : null) })),
+      })),
+    },
   });
 });
 
@@ -635,6 +668,31 @@ app.patch('/api/dev/errors/:id', ownerOnly, async (req, res) => {
 app.delete('/api/dev/errors/:id', ownerOnly, async (req, res) => {
   await deleteError(req.params.id);
   tellOwner();
+  res.json({ ok: true });
+});
+
+// Ask one person, or everyone with access, how nuj is going. They see the questions the
+// next time they open it. Everyone means everyone but you (in demo mode, you too, to try it).
+app.post('/api/dev/feedback', ownerOnly, async (req, res) => {
+  const to = String(req.body?.to || '');
+  let userIds;
+  if (to === 'everyone') {
+    userIds = DEMO
+      ? [req.account.id, ...buildDemoAccounts().filter(a => a.allowed).map(a => a.id)]
+      : (await allUsers()).filter(u => u.id !== LOCAL_ID && !u.owner && isAllowed(u.email)).map(u => u.id);
+  } else {
+    const known = DEMO ? (to === req.account.id || buildDemoAccounts().some(a => a.id === to)) : Boolean(await knownUser(to));
+    if (!known) return res.status(404).json({ error: 'No account with that ID' });
+    userIds = [to];
+  }
+  const r = await ask({ userIds, everyone: to === 'everyone' });
+  if (r.error) return res.status(400).json({ error: r.error });
+  console.log(`[feedback] asked ${userIds.length} account(s)`);
+  res.json({ asked: userIds.length });
+});
+app.post('/api/dev/feedback/:id/stop', ownerOnly, async (req, res) => {
+  const a = await stopAsking(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });
 
@@ -751,7 +809,10 @@ async function rescanAll() {
 if (DEMO && authEnabled) throw new Error('Demo mode runs without sign-in; unset ALLOWED_EMAIL to use it');
 checkAuthConfig();
 await initStorage({ demo: DEMO });
-if (DEMO) await setKv('errors', buildDemoErrors());
+if (DEMO) {
+  await setKv('errors', buildDemoErrors());
+  await setKv('feedback', buildDemoFeedback());
+}
 await initSecrets();
 
 app.listen(PORT, HOST, () => {

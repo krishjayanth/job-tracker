@@ -192,3 +192,20 @@ export function buildDemoErrors(now = Date.now()) {
     { ...group('demo-e6', 'server', 'error', 'connect ETIMEDOUT', 2, 400, 390, [], [[390, null, 'GET /api/state']]), status: 'resolved', resolvedAt: at(380) },
   ];
 }
+
+// And answers to an earlier "how's it going?", so the Feedback section has something in it.
+// The demo's own account isn't asked here; "Ask everyone" in demo mode asks it too, to try.
+export function buildDemoFeedback(now = Date.now()) {
+  const at = daysAgo => new Date(now - daysAgo * DAY).toISOString();
+  const answer = (userId, email, daysAgo, enjoying, rating, sorting, comment = '') => ({ userId, email, at: at(daysAgo), enjoying, rating, sorting, comment });
+  return [{
+    id: 'demo-ask-1', createdAt: at(6), everyone: true,
+    userIds: ['demo-ava', 'demo-noah', 'demo-mei', 'demo-sam', 'demo-jo'],
+    skipped: ['demo-jo'],
+    answers: [
+      answer('demo-ava', 'ava.lindqvist@example.com', 5.6, 'yes', 5, 'right', 'The deadline list saved me twice this week.'),
+      answer('demo-noah', 'noah.okafor@example.com', 4.2, 'yes', 4, 'some', 'A recruiter newsletter got filed as an application.'),
+      answer('demo-sam', 'sam.reyes@example.com', 2, 'okay', 3, 'wrong', ''),
+    ],
+  }];
+}
