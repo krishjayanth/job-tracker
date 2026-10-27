@@ -2,6 +2,7 @@
 // API key (the server's GROQ_API_KEY covers only the owner). Without one, emails are
 // sorted by the built-in rules. Default model: openai/gpt-oss-20b, with strict JSON-schema output.
 import Groq from 'groq-sdk';
+import { recordError } from './errors.js';
 
 export const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
 export const SERVER_KEY = process.env.GROQ_API_KEY || '';
@@ -107,7 +108,10 @@ export async function isJobEmailWithGroq(client, { from, subject, body }) {
     return typeof out.job === 'boolean' ? out.job : undefined;
   } catch (err) {
     if (err.status === 401 || err.status === 403) throw err; // the key itself is bad
-    if (err.status !== 429) console.warn(`[groq] job check failed: ${err.message}`);
+    if (err.status !== 429) {
+      console.warn(`[groq] job check failed: ${err.message}`);
+      recordError('groq', err, { level: 'warning', detail: 'The job check; the full read decided instead' });
+    }
     return undefined;
   }
 }
@@ -143,7 +147,10 @@ export async function pickApplicationWithGroq(client, { from, subject, body }, c
     return i >= 0 && i < candidates.length && out.confidence !== 'low' ? i : -1;
   } catch (err) {
     if (err.status === 401 || err.status === 403) throw err;
-    if (err.status !== 429) console.warn(`[groq] picking an application failed: ${err.message}`);
+    if (err.status !== 429) {
+      console.warn(`[groq] picking an application failed: ${err.message}`);
+      recordError('groq', err, { level: 'warning', detail: 'Picking between applications; left for the person to check' });
+    }
     return -1;
   }
 }
@@ -188,6 +195,7 @@ export async function classifyWithGroq(client, { from, subject, date, body }, at
         return classifyWithGroq(client, { from, subject, date, body }, 1);
       }
       console.warn(`[groq] rate limited for ${wait}s; using rules for this email`);
+      recordError('groq', `Rate limited for ${wait}s; read with the rules instead`, { level: 'warning' });
       return undefined;
     }
     throw err;

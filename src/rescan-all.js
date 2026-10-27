@@ -5,6 +5,7 @@
 // and anyone whose re-scan failed is tried again then.
 import { getKv, setKv } from './store.js';
 import { RESCAN_ID } from './releases.js';
+import { recordError } from './errors.js';
 
 // people: the accounts to consider. onUser(user): called after each attempt (to tell
 // their open tabs). Returns { done, failed, finished }.
@@ -23,6 +24,7 @@ export async function rescanEveryoneOnce(people, { onUser = () => {}, log = cons
         log.log(`[rescan-all] ${user.id}: ${r.applications} applications, ${r.restored} with edits restored`);
       } catch (err) {
         log.error(`[rescan-all] ${user.id} failed: ${err.message}`);
+        recordError('rescan', err, { userId: user.id, detail: 'The one-time re-read after a sorting update' });
         failed++;
         continue;
       } finally {
@@ -54,7 +56,10 @@ export async function rescanAccount(user, { onDone = () => {}, log = console } =
   log.log(`[rescan] ${user.id}: started by the owner`);
   const finished = user.mailbox.rescan()
     .then(r => log.log(`[rescan] ${user.id}: ${r.applications} applications, ${r.restored} with edits restored`))
-    .catch(err => log.error(`[rescan] ${user.id} failed: ${err.message}`))
+    .catch(err => {
+      log.error(`[rescan] ${user.id} failed: ${err.message}`);
+      recordError('rescan', err, { userId: user.id, detail: 'Started by the owner' });
+    })
     .finally(() => onDone(user));
   return { started: true, finished };
 }

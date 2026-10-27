@@ -42,6 +42,9 @@ into memory, so you can click around, edit, filter and export without a Google a
 - **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
 - **Acts on several at once.** Tick applications in the table (Shift-click for a range, Space on a focused
   row) to give them all one status, export just those, or delete them, with a single Undo.
+- **A Developer page for whoever runs it.** Every account's health (Gmail connected or expired, how emails are
+  sorted, last seen, last sync) and a grouped log of errors from syncing, Groq, the server and people's browsers,
+  with sync, re-scan and delete-account actions. Counts and dates only: nobody's applications or emails.
 - **Keyboard first.** ⌘K (Ctrl+K elsewhere) opens a command menu that finds any application by company,
   role or job ID, jumps between pages, filters by stage, and runs actions like Sync, Export or the theme switch.
 
@@ -151,7 +154,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 80 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 137 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
@@ -160,6 +163,7 @@ There are 80 tests, written with the built-in `node:test` runner and no test dep
 - the job check and the sorting steps, with a stand-in Groq client: non-job "applications" never reach the model
 - a labeled set of 24 emails, which the rules must sort with no misses
 - ignoring senders, problem reports, and counting fixes to sorting
+- the error log (grouping, no email addresses, reopening when an error comes back) and account health summaries
 - deadline tracking
 - re-scan edit preservation
 - session cookies, including tampered, unauthorized and pre-accounts ones
@@ -188,6 +192,8 @@ also shows how often people fix sorting across all accounts.
 | [`src/jobcheck.js`](src/jobcheck.js) | Is an email about a job? Hiring-software senders, job and non-job wording |
 | [`src/groq.js`](src/groq.js) | Groq client: the job check, the full read, and picking between applications |
 | [`src/reports.js`](src/reports.js) | Problem reports people send, for the owner |
+| [`src/errors.js`](src/errors.js) | Error log for the owner's Developer page: grouped, counted, no email addresses |
+| [`src/accounts.js`](src/accounts.js) | Each account's health for the Developer page: counts and dates only |
 | [`src/rules.js`](src/rules.js) | Rule-based classifier: stages, companies, roles, job IDs, deadlines |
 | [`src/stages.js`](src/stages.js) | Pipeline stages, status and chart-path logic |
 | [`src/store.js`](src/store.js) | Persistence, application matching, re-scan snapshots |

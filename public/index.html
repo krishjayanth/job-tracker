@@ -56,6 +56,7 @@
       <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></symbol>
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
       <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
       <symbol id="i-shield"viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
@@ -72,6 +73,7 @@
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
       <a class="side-link" href="#/calendar" data-view="calendar"><svg class="icon"><use href="#i-calendar"/></svg>Calendar<span class="side-count num" id="cal-count" title="Deadlines and interviews in the next 7 days"></span></a>
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
+      <a class="side-link" href="#/developer" data-view="developer" id="developer-link" hidden><svg class="icon"><use href="#i-terminal"/></svg>Developer<span class="side-badge num" id="developer-count" title="Open errors"></span></a>
       <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
       <div class="side-label">Coming soon</div>
       <div id="soon-links"></div>
@@ -233,6 +235,56 @@
     <section class="panel">
       <div class="stage-tabs" id="report-tabs" role="tablist" aria-label="Filter reports"></div>
       <ul id="report-list" class="report-list"></ul>
+    </section>
+  </main>
+
+  <main class="page dev-page" id="view-developer" hidden>
+    <section class="summary">
+      <div class="summary-head">
+        <h1>Developer</h1>
+        <span class="since">Who's using nuj, what broke, and how the server is doing. Only you can see this page.</span>
+      </div>
+      <dl class="dev-health" id="dev-health" aria-label="Server"></dl>
+    </section>
+
+    <section class="panel" aria-labelledby="accounts-title">
+      <div class="panel-head">
+        <div class="head-text">
+          <h2 id="accounts-title">Accounts</h2>
+          <span class="hint" id="accounts-hint"></span>
+        </div>
+        <label class="search dev-search">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="accounts-search" type="search" placeholder="Find an account by email" aria-label="Find an account by email" autocomplete="off">
+        </label>
+      </div>
+      <div class="stage-tabs plain-tabs" id="account-tabs" role="tablist" aria-label="Filter accounts"></div>
+      <div class="table-wrap dev-table-wrap">
+        <table class="apps dev-accounts">
+          <thead><tr>
+            <th scope="col">Account</th><th scope="col">Last seen</th><th scope="col">Gmail</th>
+            <th scope="col">Sorting</th><th scope="col" class="n-col">Applications</th><th scope="col">Last sync</th><th scope="col"><span class="sr-only">Details</span></th>
+          </tr></thead>
+          <tbody id="account-rows"></tbody>
+        </table>
+      </div>
+      <p class="dev-note">Counts and dates only. Applications, companies and emails stay private to each person, as the privacy policy promises.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="errors-title">
+      <div class="panel-head">
+        <div class="head-text">
+          <h2 id="errors-title">Errors</h2>
+          <span class="hint">The same problem is one line, counted. One that comes back after you resolve it opens again.</span>
+        </div>
+        <label class="search dev-search">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="errors-search" type="search" placeholder="Find an error" aria-label="Find an error" autocomplete="off">
+        </label>
+      </div>
+      <div class="stage-tabs plain-tabs" id="error-tabs" role="tablist" aria-label="Filter errors"></div>
+      <div class="dev-sources" id="error-sources" role="group" aria-label="Where it happened"></div>
+      <ul class="dev-errors" id="error-list"></ul>
     </section>
   </main>
 

@@ -6,6 +6,7 @@ import { Mailbox } from './gmail.js';
 import { encrypt, decrypt } from './secrets.js';
 import { groqClient, forgetClient, SERVER_KEY } from './groq.js';
 import { ownerEmail } from './auth.js';
+import { recordError, forgetUserErrors } from './errors.js';
 
 export const LOCAL_ID = 'local';
 export const DEMO_ID = 'demo';
@@ -27,6 +28,12 @@ export function getUser(id, email = null) {
 export async function knownUser(id) {
   const registry = (await getKv(REGISTRY)) || {};
   return Object.hasOwn(registry, id) ? getUser(id) : null;
+}
+
+// When each person first signed in, by ID.
+export async function joinDates() {
+  const registry = (await getKv(REGISTRY)) || {};
+  return Object.fromEntries(Object.entries(registry).map(([id, r]) => [id, r.createdAt ?? null]));
 }
 
 // Everyone registered, loaded.
@@ -85,6 +92,7 @@ export async function deleteUser(id) {
   if (user.owner) keys.push('db_before_accounts', 'db_before_rescan'); // backups from before accounts
   for (const key of keys) await deleteKv(key);
   await updateRegistry(r => { delete r[id]; });
+  await forgetUserErrors(id);
   users.delete(id);
 }
 
@@ -148,9 +156,11 @@ export class User {
       this.keyRecord = { ...this.keyRecord, rejected: true };
       setKv(this.keyName, this.keyRecord).catch(err => console.error(`[users] saving key state failed: ${err.message}`));
       console.warn(`[groq] key for ${this.id} was rejected; using rules until it's replaced`);
+      recordError('groq', "Groq rejected this person's key; using the rules until it's replaced", { userId: this.id, level: 'warning' });
     } else if (!this.apiKey && !this.serverKeyRejected) {
       this.serverKeyRejected = true;
       console.warn('[groq] GROQ_API_KEY was rejected; using rules');
+      recordError('groq', 'GROQ_API_KEY was rejected; using the rules', { userId: this.id });
     }
   }
 

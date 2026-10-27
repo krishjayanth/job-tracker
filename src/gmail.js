@@ -5,6 +5,8 @@ import { refresh, newId, normalizeCompany, getKv, setKv, deleteKv } from './stor
 import { classify } from './classify.js';
 import { HIRING_SENDERS } from './jobcheck.js';
 import { pickApplicationWithGroq } from './groq.js';
+import { recordError } from './errors.js';
+import { EXPIRED } from './accounts.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -256,7 +258,7 @@ export class Mailbox {
         subject: header(msg, 'Subject'),
         date: new Date(Number(msg.internalDate)).toISOString(),
         body: bodyText(msg.payload),
-      }, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected() });
+      }, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
       if (!result) { notJob++; continue; }
       const before = JSON.stringify([e.stage, e.deadline, e.summary]);
       e.stage = result.stage;
@@ -353,7 +355,7 @@ export class Mailbox {
         };
         // Blocked after this search began, or beyond the search's exclusion list.
         const result = store.isBlocked(email.from) ? null
-          : await classify(email, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected() });
+          : await classify(email, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
         // Saved per message so an interrupted sync resumes where it left off.
         db.processed[msg.id] = true;
         if (!result) {
@@ -410,9 +412,11 @@ export class Mailbox {
       // asks for Gmail access again instead of reusing the dead token.
       if (isInvalidGrant(err)) {
         await this.disconnect({ revoke: false });
-        db.lastSyncError = 'Google sign-in for Gmail expired or was revoked';
+        db.lastSyncError = EXPIRED;
+        recordError('gmail', EXPIRED, { userId: this.user.id, level: 'warning' });
       } else {
         db.lastSyncError = err.message;
+        recordError('sync', err, { userId: this.user.id, detail: mode === 'rescan' ? 'during a re-scan' : '' });
       }
       store.save();
       throw err;

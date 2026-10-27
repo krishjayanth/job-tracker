@@ -1,6 +1,7 @@
 import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, rejectionWords, AI_INTERVIEW } from './rules.js';
 import { classifyWithGroq, isJobEmailWithGroq, MODEL } from './groq.js';
 import { jobSignal, senderAddress } from './jobcheck.js';
+import { recordError } from './errors.js';
 
 export { classifyWithRules };
 
@@ -85,7 +86,7 @@ export function mergeWithRules(llm, rules, email) {
 //   3. the full read (Groq, cross-checked by the rules), or the rules alone.
 // Which application it belongs to is settled afterwards, in gmail.js.
 // `self` is your own address: an email you sent (a reply to a recruiter) is never filed.
-export async function classify(email, { groq = null, self = null, onKeyRejected } = {}) {
+export async function classify(email, { groq = null, self = null, onKeyRejected, userId = null } = {}) {
   if (self && senderAddress(email.from) === self.trim().toLowerCase()) return null;
   const signal = jobSignal(email);
   if (signal.verdict === 'not_job') return null;
@@ -102,7 +103,10 @@ export async function classify(email, { groq = null, self = null, onKeyRejected 
       if (llm) result = mergeWithRules(llm, classifyWithRules(email), email);
     } catch (err) {
       if (err.status === 401 || err.status === 403) onKeyRejected?.();
-      else console.warn(`[classify] Groq call failed, using rules: ${err.message}`);
+      else {
+        console.warn(`[classify] Groq call failed, using rules: ${err.message}`);
+        recordError('groq', err, { userId, level: 'warning', detail: 'Read with the rules instead' });
+      }
     }
   }
   if (result === undefined) {

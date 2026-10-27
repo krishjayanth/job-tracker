@@ -14,7 +14,10 @@ import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
 import { canBlockDomain, senderDomain } from './src/jobcheck.js';
 import { addReport, listReports, openCount, setReportStatus, deleteReport, deleteReportsBy } from './src/reports.js';
-import { getUser, knownUser, allUsers, deleteUser, LOCAL_ID, DEMO_ID } from './src/users.js';
+import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
+import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
+import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
+import { buildDemoAccounts, buildDemoErrors } from './src/demo.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
@@ -25,6 +28,9 @@ const GHOST_DAYS = Number(process.env.GHOST_AFTER_DAYS || 21);
 const CRON_SECRET = process.env.CRON_SECRET || '';
 // `npm run demo`: sample data in memory, no Gmail, no sign-in.
 const DEMO = process.argv.includes('--demo');
+const STARTED_AT = new Date().toISOString();
+let lastCronAt = null;    // when the external pinger last called
+let lastSyncPassAt = null; // when everyone's syncs last finished
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
@@ -80,6 +86,7 @@ app.get('/oauth2callback', async (req, res) => {
     const { sub, email, tokens, grantedGmail } = await gmail.handleCallback(String(req.query.code));
     if (authEnabled && !isAllowed(email)) {
       console.warn(`[auth] sign-in refused for ${email}`);
+      recordError('sign-in', 'Sign-in refused: not on ALLOWED_EMAIL', { level: 'warning' });
       return res.redirect('/login?error=denied');
     }
     const user = live(await getUser(authEnabled ? sub : LOCAL_ID, email));
@@ -94,6 +101,7 @@ app.get('/oauth2callback', async (req, res) => {
     if (firstConnect && user.mailbox.connected()) runSync(user);
   } catch (err) {
     console.error(`[auth] sign-in failed: ${err.message}`);
+    recordError('sign-in', err);
     res.redirect(authEnabled ? '/login?error=failed' : '/');
   }
 });
@@ -106,6 +114,7 @@ app.all('/api/cron/sync', (req, res) => {
     crypto.timingSafeEqual(Buffer.from(key), Buffer.from(CRON_SECRET));
   if (!ok) return res.status(401).json({ error: 'Bad or missing key' });
   res.status(202).json({ started: true }); // reply right away; pingers time out quickly
+  lastCronAt = new Date().toISOString();
   runSyncAll();
 });
 
@@ -134,6 +143,7 @@ app.use('/api', async (req, res, next) => {
   try {
     const id = req.user?.id ?? (DEMO ? DEMO_ID : LOCAL_ID);
     req.account = live(await getUser(id, req.user?.email ?? null));
+    noteSeen(req.account);
     next();
   } catch (err) {
     next(err);
@@ -170,7 +180,7 @@ const tellOwner = () => { for (const res of ownerClients) res.write('data: repor
 // --- state ----------------------------------------------------------------
 app.get('/api/state', async (req, res) => {
   const user = req.account;
-  const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount() } : null;
+  const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount(), errors: await openErrorCount() } : null;
   const db = user.store.db;
   res.json({
     applications: db.applications.map(a => ({
@@ -570,6 +580,90 @@ app.delete('/api/reports/:id', ownerOnly, async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- errors from people's browsers ------------------------------------------------
+// The dashboard sends what crashed (a message and where), so it reaches the Developer
+// page without anyone having to report it. A few an hour per person is plenty.
+app.post('/api/client-errors', (req, res) => {
+  const { message, where, view } = req.body || {};
+  if (!message || tooMany(`client-errors:${req.account.id}`, { max: 30 })) return res.status(204).end();
+  recordError('browser', String(message), { userId: req.account.id, detail: [where, view].filter(Boolean).join(' · ') });
+  res.status(204).end();
+});
+
+// --- the Developer page (owner only) -----------------------------------------------
+// How the server is doing, every account's health, and what went wrong. Counts and dates
+// only: nothing here shows anyone's applications or emails.
+app.get('/api/dev/overview', ownerOnly, async (req, res) => {
+  const [errors, joined, reports] = await Promise.all([listErrors(), joinDates(), listReports()]);
+  const openErrors = {}, openReports = {};
+  for (const g of errors) if (g.status === 'open') for (const id of g.users) openErrors[id] = (openErrors[id] || 0) + 1;
+  for (const r of reports) if (r.status === 'open' && r.userId) openReports[r.userId] = (openReports[r.userId] || 0) + 1;
+  const people = DEMO ? [req.account] : (await allUsers()).filter(u => u.id !== LOCAL_ID || !authEnabled);
+  const accounts = people.map(u => accountSummary(u, {
+    joinedAt: joined[u.id] ?? null,
+    allowed: !authEnabled || isAllowed(u.email),
+    errors: openErrors[u.id] || 0,
+    reports: openReports[u.id] || 0,
+  }));
+  if (DEMO) accounts.push(...buildDemoAccounts().map(a => ({ ...a, attention: attentionFor(a) })));
+  const emails = Object.fromEntries(accounts.map(a => [a.id, a.email]));
+  res.json({
+    server: {
+      startedAt: STARTED_AT,
+      version: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null,
+      node: process.version,
+      storage: DEMO ? 'memory' : process.env.DATABASE_URL ? 'postgres' : 'files',
+      memoryMb: Math.round(process.memoryUsage().rss / 1_048_576),
+      syncMinutes: SYNC_MINUTES,
+      lastSyncPassAt,
+      lastCronAt,
+      cronConfigured: CRON_SECRET.length >= 16,
+      demo: DEMO,
+    },
+    accounts,
+    // Each error with the addresses of the accounts it hit, for reading at a glance.
+    errors: errors.map(g => ({ ...g, emails: g.users.map(id => emails[id] || null) })),
+  });
+});
+
+app.patch('/api/dev/errors/:id', ownerOnly, async (req, res) => {
+  const g = await setErrorStatus(req.params.id, req.body?.status);
+  if (!g) return res.status(404).json({ error: 'Not found' });
+  tellOwner();
+  res.json(g);
+});
+app.delete('/api/dev/errors/:id', ownerOnly, async (req, res) => {
+  await deleteError(req.params.id);
+  tellOwner();
+  res.json({ ok: true });
+});
+
+// Check someone's Gmail now instead of waiting for the next round.
+app.post('/api/accounts/:id/sync', ownerOnly, async (req, res) => {
+  if (DEMO) return res.status(400).json({ error: 'Syncing reads Gmail, so it is off in demo mode' });
+  const user = await knownUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'No account with that ID' });
+  if (!user.mailbox.connected()) return res.status(400).json({ error: "Their Gmail isn't connected" });
+  if (user.needsSetup()) return res.status(400).json({ error: "They haven't chosen how to sort their emails yet" });
+  res.status(202).json({ started: true });
+  runSync(live(user));
+});
+
+// Delete someone's account when they ask (the privacy policy promises it within 30 days),
+// the same as their own "Delete my account". Your own is deleted from Settings.
+app.delete('/api/accounts/:id', ownerOnly, async (req, res) => {
+  if (DEMO) return res.status(400).json({ error: 'There are no accounts to delete in demo mode' });
+  const user = await knownUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'No account with that ID' });
+  if (user.owner) return res.status(400).json({ error: 'Delete your own account from Settings' });
+  await deleteUser(user.id);
+  await deleteReportsBy(user.id);
+  console.log(`[users] deleted ${user.id} (by the owner)`);
+  broadcast(user.id); // their open tabs reload
+  tellOwner();
+  res.json({ ok: true });
+});
+
 // --- your Groq key and your account -----------------------------------------
 app.put('/api/groq-key', async (req, res) => {
   if (DEMO) return res.status(400).json({ error: 'Groq keys are off in demo mode' });
@@ -603,6 +697,19 @@ app.delete('/api/account', async (req, res) => {
   broadcast(id); // other open tabs reload and find themselves signed out
 });
 
+// Anything a route didn't handle itself: noted for the Developer page, and a plain
+// message for the person instead of a stack trace.
+app.use((err, req, res, next) => {
+  console.error(`[server] ${req.method} ${req.path}: ${err.stack || err.message}`);
+  recordError('server', err, { userId: req.account?.id ?? null, detail: `${req.method} ${req.route?.path ?? req.path}` });
+  if (res.headersSent) return next(err);
+  res.status(err.status && err.status < 500 ? err.status : 500).json({ error: 'Something went wrong on our side. Try again in a moment' });
+});
+process.on('unhandledRejection', err => {
+  console.error(`[server] unhandled: ${err?.stack || err}`);
+  recordError('server', err ?? 'Unhandled rejection', { detail: 'Not tied to a request' });
+});
+
 // --- background syncing ---------------------------------------------------------
 async function runSync(user) {
   if (user.mailbox.isRescanning() || !user.mailbox.connected()) return;
@@ -625,6 +732,7 @@ function runSyncAll() {
       ? (await allUsers()).filter(u => u.id !== LOCAL_ID && isAllowed(u.email))
       : [await getUser(LOCAL_ID)];
     for (const user of users) await runSync(live(user));
+    lastSyncPassAt = new Date().toISOString();
   })().catch(err => console.error(`[sync] ${err.message}`)).finally(() => { syncingAll = null; });
   return syncingAll;
 }
@@ -643,6 +751,7 @@ async function rescanAll() {
 if (DEMO && authEnabled) throw new Error('Demo mode runs without sign-in; unset ALLOWED_EMAIL to use it');
 checkAuthConfig();
 await initStorage({ demo: DEMO });
+if (DEMO) await setKv('errors', buildDemoErrors());
 await initSecrets();
 
 app.listen(PORT, HOST, () => {
@@ -658,7 +767,7 @@ app.listen(PORT, HOST, () => {
 // Render stops the old instance on every deploy; write pending changes first.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, async () => {
-    await flushAll();
+    await Promise.all([flushAll(), flushErrors()]);
     process.exit(0);
   });
 }

@@ -152,3 +152,43 @@ export function buildDemoDb(now = Date.now()) {
 
   return { applications, processed: {}, ignored: {}, lastSync: new Date(now).toISOString(), lastSyncError: null };
 }
+
+// For the Developer page in demo mode: a few made-up accounts beside the demo's own, in
+// the shape accountSummary() returns, so every state shows (working, syncing, an expired
+// Gmail sign-in, a rejected Groq key, someone still setting up, someone taken off the list).
+export function buildDemoAccounts(now = Date.now()) {
+  const at = daysAgo => new Date(now - daysAgo * DAY).toISOString();
+  const groq = { by: 'groq', key: 'own', problem: null };
+  const rules = { by: 'rules', key: null, problem: null };
+  const base = { owner: false, allowed: true, gmail: 'connected', setupDone: true, toCheck: 0, lastSyncError: null, busy: null, errors: 0, reports: 0 };
+  return [
+    { ...base, id: 'demo-ava', email: 'ava.lindqvist@example.com', joinedAt: at(41), lastSeenAt: at(0.02), sorting: groq, applications: 52, emails: 131, toCheck: 2, lastSync: at(0.003) },
+    { ...base, id: 'demo-noah', email: 'noah.okafor@example.com', joinedAt: at(33), lastSeenAt: at(0.4), sorting: groq, applications: 18, emails: 44, lastSync: at(0.01), busy: { mode: 'rescan', done: 27, total: 44 } },
+    { ...base, id: 'demo-mei', email: 'mei.tanaka@example.com', joinedAt: at(29), lastSeenAt: at(9), gmail: 'expired', sorting: rules, applications: 23, emails: 61, lastSync: at(9), lastSyncError: 'Google sign-in for Gmail expired or was revoked', errors: 1 },
+    { ...base, id: 'demo-sam', email: 'sam.reyes@example.com', joinedAt: at(20), lastSeenAt: at(1.5), sorting: { ...groq, problem: 'rejected' }, applications: 9, emails: 20, lastSync: at(0.004), errors: 1, reports: 1 },
+    { ...base, id: 'demo-jo', email: 'jo.martins@example.com', joinedAt: at(2), lastSeenAt: at(2), setupDone: false, sorting: rules, applications: 0, emails: 0, lastSync: null },
+    { ...base, id: 'demo-lee', email: 'lee.harper@example.com', joinedAt: at(64), lastSeenAt: at(38), allowed: false, gmail: 'off', sorting: rules, applications: 14, emails: 30, lastSync: at(38) },
+  ];
+}
+
+// And what went wrong lately, in the shape src/errors.js keeps, grouped as it groups them.
+export function buildDemoErrors(now = Date.now()) {
+  const at = hoursAgo => new Date(now - hoursAgo * 3_600_000).toISOString();
+  const group = (id, source, level, message, count, firstH, lastH, users, samples, extra = {}) => ({
+    id, source, level, message, count, firstAt: at(firstH), lastAt: at(lastH), users, status: 'open',
+    samples: samples.map(([h, userId, detail]) => ({ at: at(h), userId, detail, message })), ...extra,
+  });
+  return [
+    group('demo-e1', 'groq', 'warning', 'Rate limited for 42s; read with the rules instead', 37, 70, 0.3, ['demo-ava', 'demo-noah'],
+      [[0.3, null, ''], [1.1, null, ''], [3.4, null, '']]),
+    group('demo-e2', 'sync', 'error', 'Request failed with status code 503', 4, 30, 2.2, ['demo-ava'],
+      [[2.2, 'demo-ava', ''], [11, 'demo-ava', 'during a re-scan']]),
+    group('demo-e3', 'browser', 'error', "Cannot read properties of undefined (reading 'events')", 3, 26, 5, ['demo-sam', 'demo-ava'],
+      [[5, 'demo-sam', 'app.js:1488 · Calendar'], [19, 'demo-ava', 'app.js:1488 · Calendar']], { regressed: true }),
+    group('demo-e4', 'groq', 'warning', "Groq rejected this person's key; using the rules until it's replaced", 1, 36, 36, ['demo-sam'],
+      [[36, 'demo-sam', '']]),
+    group('demo-e5', 'gmail', 'warning', 'Google sign-in for Gmail expired or was revoked', 1, 216, 216, ['demo-mei'],
+      [[216, 'demo-mei', '']]),
+    { ...group('demo-e6', 'server', 'error', 'connect ETIMEDOUT', 2, 400, 390, [], [[390, null, 'GET /api/state']]), status: 'resolved', resolvedAt: at(380) },
+  ];
+}

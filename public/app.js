@@ -87,6 +87,7 @@ async function load() {
   render();
 }
 
+class ApiError extends Error {}
 async function api(method, url, body) {
   const res = await fetch(url, {
     method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body),
@@ -94,7 +95,7 @@ async function api(method, url, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     noteError(`${method} ${url} → ${res.status} ${data.error || res.statusText}`);
-    throw new Error(data.error || res.statusText);
+    throw new ApiError(data.error || res.statusText);
   }
   return data;
 }
@@ -105,8 +106,24 @@ function noteError(text) {
   recentErrors.push(`${new Date().toLocaleTimeString()} ${text}`);
   if (recentErrors.length > 10) recentErrors.shift();
 }
-window.addEventListener('error', e => noteError(`${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
-window.addEventListener('unhandledrejection', e => noteError(`Unhandled: ${e.reason?.message || e.reason}`));
+// Crashes in the page also go to the owner's Developer page, once per message per visit.
+const sentErrors = new Set();
+function sendError(message, where) {
+  if (!message || sentErrors.has(message) || sentErrors.size > 20) return;
+  sentErrors.add(message);
+  fetch('/api/client-errors', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, where, view: location.hash || '#/' }) }).catch(() => {});
+}
+window.addEventListener('error', e => {
+  const where = `${(e.filename || '').split('/').pop()}:${e.lineno}`;
+  noteError(`${e.message} (${where})`);
+  sendError(e.message, where);
+});
+window.addEventListener('unhandledrejection', e => {
+  const message = String(e.reason?.message || e.reason);
+  noteError(`Unhandled: ${message}`);
+  if (!(e.reason instanceof ApiError)) sendError(message, 'unhandled promise');
+});
 
 async function setStatus(id, status) {
   await api('PATCH', `/api/applications/${id}`, { status });
@@ -181,6 +198,8 @@ function renderGmail() {
   $('#side-user-row').hidden = !state.user;
   $('#side-user').textContent = state.user || '';
   $('#reports-link').hidden = !state.reports;
+  $('#developer-link').hidden = !state.reports;
+  $('#developer-count').textContent = state.reports?.errors || '';
   // The badge counts everything waiting for you there: open reports and invite requests.
   $('#reports-count').textContent = (state.reports?.open || 0) + (state.reports?.requests || 0) || '';
   $('#delete-section').hidden = state.demo;
@@ -2046,18 +2065,20 @@ let view = 'dashboard';
 function route() {
   const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
   const soon = SOON[id];
-  const page = ['reports', 'settings', 'calendar'].includes(id) ? id : null; // pages of their own
+  const page = ['reports', 'developer', 'settings', 'calendar'].includes(id) ? id : null; // pages of their own
   const prev = view;
   if (view !== (soon ? id : page || 'dashboard') && $('#drawer').classList.contains('open')) closeDrawer(); // a new page, not the panel on top of it
   view = soon ? id : page || 'dashboard';
   $('#view-dashboard').hidden = view !== 'dashboard';
   $('#view-soon').hidden = !soon;
   $('#view-reports').hidden = page !== 'reports';
+  $('#view-developer').hidden = page !== 'developer';
   $('#view-settings').hidden = page !== 'settings';
   $('#view-calendar').hidden = page !== 'calendar';
   if (soon) renderSoon(id);
   if (page === 'calendar') renderCalendar();
   if (page === 'reports') loadReports();
+  if (page === 'developer') loadDeveloper();
   const current = soon || page ? id : id === 'applications' ? 'applications' : 'dashboard';
   document.querySelectorAll('.side-link').forEach(l => {
     if (l.dataset.view === current) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
@@ -2295,6 +2316,339 @@ $('#report-list').addEventListener('click', async e => {
     });
   }
 });
+// ---------------------------------------------------------------- developer page
+// The owner's view of every account and everything that went wrong. Accounts show
+// counts and dates only, never anyone's applications or emails.
+let dev = { server: null, accounts: [], errors: [] };
+let accountFilter = 'all';
+let errorFilter = 'open';
+let errorSource = 'all';
+const devOpen = new Set(); // rows expanded: 'a:<id>' for accounts, 'e:<id>' for errors
+let devPoll = null;
+
+async function loadDeveloper() {
+  try {
+    dev = await api('GET', '/api/dev/overview');
+  } catch {
+    location.hash = '#/'; // not the owner
+    return;
+  }
+  renderHealth();
+  renderAccounts();
+  renderErrors();
+  // While something is re-scanning, keep its progress moving; otherwise live updates do.
+  clearTimeout(devPoll);
+  if (view === 'developer' && dev.accounts.some(a => a.busy) && !dev.server.demo) devPoll = setTimeout(loadDeveloper, 5000);
+}
+
+// A status dot (after 21st.dev's Status Dot): a steady colour, and a slow ripple only while
+// something is actually happening, so motion always means "working on it".
+const TONE = { ok: 'offer', warn: 'interview', err: 'rejected', off: 'withdrawn', busy: 'oa' };
+const sdot = (tone, label = '') => `<span class="sdot${tone === 'busy' ? ' live' : ''}" style="--c:var(--${TONE[tone]})"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}></span>`;
+
+const duration = ms => {
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+};
+
+function renderHealth() {
+  const s = dev.server;
+  const cronAge = s.lastCronAt ? Date.now() - Date.parse(s.lastCronAt) : null;
+  // A free Render service sleeps without the pinger; it should call every ~10 minutes.
+  const cronTone = s.demo || !s.cronConfigured ? 'off' : cronAge === null || cronAge > 25 * 60_000 ? 'warn' : 'ok';
+  const items = [
+    ['Server', `${sdot('ok')}Up ${duration(Date.now() - Date.parse(s.startedAt))}`, `Since ${new Date(s.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`],
+    ['Version', s.version ? `<span class="mono">${esc(s.version)}</span>` : 'Local', `Node ${esc(s.node)}`],
+    ['Storage', { postgres: 'Postgres', files: 'Local files', memory: 'Memory' }[s.storage], `${s.memoryMb} MB in use`],
+    ['Sync round', s.demo ? 'Off in demo' : s.lastSyncPassAt ? timeAgo(s.lastSyncPassAt) : 'Not yet', `Every ${s.syncMinutes} min while awake`],
+    ['Pinger', `${sdot(cronTone)}${s.demo ? 'Off in demo' : !s.cronConfigured ? 'Not set up' : s.lastCronAt ? timeAgo(s.lastCronAt) : 'No call yet'}`,
+      s.cronConfigured || s.demo ? 'Keeps the free service awake' : 'Set CRON_SECRET (docs/DEPLOY.md)'],
+  ];
+  $('#dev-health').innerHTML = items.map(([k, v, sub]) => `<div><dt>${k}</dt><dd><span class="v">${v}</span><span class="sub">${sub}</span></dd></div>`).join('');
+}
+
+// ---- accounts
+const GMAIL_STATE = { connected: ['ok', 'Connected'], expired: ['err', 'Sign-in expired'], off: ['off', 'Not connected'] };
+function accountGmail(a) {
+  if (a.busy) {
+    const what = a.busy.mode === 'rescan' ? 'Re-scanning' : 'Syncing';
+    return `${sdot('busy')}<span>${what}${a.busy.total ? ` <span class="num dim">${a.busy.done}/${a.busy.total}</span>` : ''}</span>`;
+  }
+  const [tone, label] = GMAIL_STATE[a.gmail];
+  return `${sdot(tone)}<span>${label}</span>`;
+}
+function accountSorting(a) {
+  const s = a.sorting;
+  if (s.problem === 'rejected') return '<span class="bad">Groq key rejected</span>';
+  if (s.problem === 'unreadable') return '<span class="bad">Groq key unreadable</span>';
+  if (s.by === 'groq') return `Groq<span class="dim"> · ${s.key === 'server' ? 'server key' : 'own key'}</span>`;
+  return a.setupDone ? 'Rules' : '<span class="dim">Not chosen yet</span>';
+}
+const ACCOUNT_TABS = [
+  ['all', 'With access', a => a.allowed],
+  ['attention', 'Needs you', a => a.attention.length > 0],
+  ['quiet', 'Away 2+ weeks', a => a.allowed && (!a.lastSeenAt || Date.now() - Date.parse(a.lastSeenAt) > 14 * 86_400_000)],
+  ['removed', 'No access', a => !a.allowed],
+];
+function renderAccounts() {
+  const all = dev.accounts;
+  const attention = all.filter(a => a.attention.length).length;
+  $('#accounts-hint').textContent = `${all.filter(a => a.allowed).length} with access${attention ? ` · ${attention} need${attention === 1 ? 's' : ''} you` : ''}`;
+  $('#account-tabs').innerHTML = ACCOUNT_TABS.map(([id, label, fits]) =>
+    `<button class="tab" role="tab" type="button" aria-selected="${accountFilter === id}" data-account-filter="${id}">${label}<span class="n">${all.filter(fits).length}</span></button>`).join('');
+  const q = $('#accounts-search').value.trim().toLowerCase();
+  const fits = ACCOUNT_TABS.find(t => t[0] === accountFilter)[2];
+  // Who needs you first, then whoever was around most recently.
+  const shown = all.filter(a => fits(a) && (!q || (a.email || '').toLowerCase().includes(q)))
+    .sort((a, b) => (b.attention.length > 0) - (a.attention.length > 0) || (b.lastSeenAt || '').localeCompare(a.lastSeenAt || ''));
+  $('#account-rows').innerHTML = shown.length ? shown.map(accountRow).join('')
+    : `<tr><td colspan="7"><div class="empty"><strong>${q ? 'No account matches' : accountFilter === 'attention' ? 'Every account is working' : 'No one here'}</strong>${q ? 'Try part of the address.' : 'Accounts show up once someone signs in.'}</div></td></tr>`;
+}
+function accountTone(a) {
+  if (!a.allowed) return 'off';
+  if (a.gmail === 'expired' || a.lastSyncError || a.sorting.problem) return 'err';
+  return a.attention.length ? 'warn' : 'ok';
+}
+function accountRow(a) {
+  const open = devOpen.has(`a:${a.id}`);
+  const errs = dev.errors.filter(g => g.users.includes(a.id));
+  const canRead = a.allowed && a.gmail === 'connected' && a.setupDone;
+  return `
+    <tr class="dev-row${open ? ' open' : ''}${a.allowed ? '' : ' gone'}" data-account="${esc(a.id)}" tabindex="0" aria-expanded="${open}">
+      <td><div class="who">${sdot(accountTone(a), a.attention[0] || (a.allowed ? 'Working' : 'No access'))}<div class="who-t">
+        <span class="who-email">${esc(a.email || a.id)}</span>
+        <span class="who-sub">${a.owner ? 'You · ' : ''}${a.attention.length
+          ? `<span class="${accountTone(a) === 'err' ? 'bad' : 'warn'}">${esc(a.attention[0])}</span>${a.attention.length > 1 ? ` <span class="dim">+${a.attention.length - 1} more</span>` : ''}`
+          : a.joinedAt ? `Joined ${shortDate(a.joinedAt)}` : ''}</span>
+      </div></div></td>
+      <td class="date">${a.lastSeenAt ? timeAgo(a.lastSeenAt) : '<span class="dim">Never</span>'}</td>
+      <td><div class="state">${accountGmail(a)}</div></td>
+      <td class="sorting">${accountSorting(a)}</td>
+      <td class="n-col num">${a.applications}<span class="dim"> · ${a.emails} emails</span></td>
+      <td class="date">${a.lastSyncError ? `<span class="bad" title="${esc(a.lastSyncError)}">Failed</span>` : a.lastSync ? timeAgo(a.lastSync) : '<span class="dim">Never</span>'}</td>
+      <td class="chev">${icon('chevron')}</td>
+    </tr>
+    <tr class="dev-more${open ? ' open' : ''}" aria-hidden="${!open}"><td colspan="7"><div class="reveal"><div>
+      <div class="dev-detail">
+        <dl>
+          ${a.attention.length ? `<dt>Needs you</dt><dd>${a.attention.map(esc).join(' · ')}</dd>` : ''}
+          ${a.lastSyncError ? `<dt>Last sync error</dt><dd class="mono">${esc(a.lastSyncError)}</dd>` : ''}
+          <dt>Joined</dt><dd>${a.joinedAt ? new Date(a.joinedAt).toLocaleString() : '—'}</dd>
+          <dt>Last seen</dt><dd>${a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString() : 'Never'}</dd>
+          <dt>Last sync</dt><dd>${a.lastSync ? new Date(a.lastSync).toLocaleString() : 'Never'}</dd>
+          <dt>To check</dt><dd>${a.toCheck ? `${a.toCheck} application${a.toCheck === 1 ? '' : 's'} with an email to confirm` : 'Nothing'}</dd>
+          ${errs.length ? `<dt>Errors</dt><dd><button class="link-btn" type="button" data-show-errors="${esc(a.id)}">${errs.length} kind${errs.length === 1 ? '' : 's'}, ${errs.reduce((n, g) => n + g.count, 0)} times in all</button></dd>` : ''}
+          ${a.reports ? `<dt>Reports</dt><dd><a class="link-btn" href="#/reports">${a.reports} open</a></dd>` : ''}
+        </dl>
+        <div class="report-actions">
+          ${a.email ? `<button class="btn btn-sm" type="button" data-copy-email="${esc(a.email)}">${icon('mail')}Copy email</button>` : ''}
+          ${canRead ? `<button class="btn btn-sm" type="button" data-account-sync="${esc(a.id)}"${a.busy ? ' disabled' : ''}>${icon('refresh')}Sync now</button>
+          <button class="btn btn-sm" type="button" data-rescan-account="${esc(a.id)}" data-who="${esc(a.email || 'this account')}"${a.busy ? ' disabled' : ''} title="Read their emails again with the current sorting. Their edits are kept and a backup is made first">${icon('refresh')}Re-scan their emails</button>` : ''}
+          ${a.owner ? '' : `<button class="btn btn-sm btn-quiet btn-danger" type="button" data-account-delete="${esc(a.id)}">${icon('trash')}<span>Delete account</span></button>`}
+        </div>
+        ${a.allowed ? '' : `<p class="dev-note">Not on ALLOWED_EMAIL: they can't sign in and aren't synced. Their data stays until it's deleted.</p>`}
+      </div>
+    </div></div></td></tr>`;
+}
+// Open or close one row in place, so the reveal animates instead of the list re-rendering.
+function toggleDevRow(key) {
+  const open = !devOpen.has(key);
+  if (open) devOpen.add(key); else devOpen.delete(key);
+  const id = CSS.escape(key.slice(2));
+  if (key.startsWith('a:')) {
+    const row = $(`tr[data-account="${id}"]`);
+    row?.classList.toggle('open', open);
+    row?.setAttribute('aria-expanded', open);
+    row?.nextElementSibling?.classList.toggle('open', open);
+    row?.nextElementSibling?.setAttribute('aria-hidden', !open);
+  } else {
+    const item = $(`[data-error="${id}"]`);
+    item?.classList.toggle('open', open);
+    item?.querySelector('.dev-err-line')?.setAttribute('aria-expanded', open);
+    item?.querySelector('.dev-more')?.classList.toggle('open', open);
+    item?.querySelector('.dev-more')?.setAttribute('aria-hidden', !open);
+  }
+}
+$('#account-tabs').addEventListener('click', e => {
+  const t = e.target.closest('[data-account-filter]');
+  if (t) { accountFilter = t.dataset.accountFilter; renderAccounts(); }
+});
+$('#accounts-search').addEventListener('input', renderAccounts);
+$('#account-rows').addEventListener('keydown', e => {
+  const row = e.target.closest('tr[data-account]');
+  if (row && e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleDevRow(`a:${row.dataset.account}`); }
+});
+$('#account-rows').addEventListener('click', async e => {
+  const copy = e.target.closest('[data-copy-email]');
+  if (copy) {
+    try { await navigator.clipboard.writeText(copy.dataset.copyEmail); toast(`Copied ${copy.dataset.copyEmail}`); }
+    catch { toast("Couldn't copy. Select the address instead"); }
+    return;
+  }
+  // "3 kinds of error": show just those, opened, in the Errors list below.
+  const showErrors = e.target.closest('[data-show-errors]');
+  if (showErrors) {
+    const ids = dev.errors.filter(g => g.users.includes(showErrors.dataset.showErrors)).map(g => g.id);
+    errorFilter = 'all';
+    errorSource = 'all';
+    $('#errors-search').value = '';
+    ids.forEach(id => devOpen.add(`e:${id}`));
+    renderErrors();
+    $(`[data-error="${CSS.escape(ids[0])}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const sync = e.target.closest('[data-account-sync]');
+  if (sync) {
+    sync.disabled = true;
+    try {
+      await api('POST', `/api/accounts/${encodeURIComponent(sync.dataset.accountSync)}/sync`);
+      toast('Checking their Gmail now');
+      setTimeout(loadDeveloper, 4000);
+    } catch (err) {
+      toast(err.message);
+      sync.disabled = false;
+    }
+    return;
+  }
+  const rescan = e.target.closest('[data-rescan-account]');
+  if (rescan) {
+    rescan.disabled = true;
+    try {
+      await api('POST', `/api/accounts/${encodeURIComponent(rescan.dataset.rescanAccount)}/rescan`);
+      toast(`Re-scanning ${rescan.dataset.who}'s emails. Progress shows here`);
+      loadDeveloper();
+    } catch (err) {
+      toast(err.message);
+      rescan.disabled = false;
+    }
+    return;
+  }
+  // Deleting someone's account can't be undone, so it takes a second click, as your own does.
+  const del = e.target.closest('[data-account-delete]');
+  if (del) {
+    const label = del.querySelector('span');
+    if (!del.classList.contains('confirming')) {
+      del.classList.add('confirming');
+      label.textContent = 'Click again to delete for good';
+      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirming'); label.textContent = 'Delete account'; } }, 5000);
+      return;
+    }
+    del.disabled = true;
+    try {
+      await api('DELETE', `/api/accounts/${encodeURIComponent(del.dataset.accountDelete)}`);
+      toast('Account deleted. Take them off ALLOWED_EMAIL too, or they start afresh at their next sign-in');
+      loadDeveloper();
+    } catch (err) {
+      toast(err.message);
+      del.disabled = false;
+    }
+    return;
+  }
+  const row = e.target.closest('tr[data-account]');
+  if (row && !e.target.closest('a, button')) toggleDevRow(`a:${row.dataset.account}`);
+});
+
+// ---- errors (after 21st.dev's Interactive Logs Table: level, source, message and count on
+// one line; open it for when it happened and to whom)
+const SOURCE_LABEL = { sync: 'Sync', gmail: 'Gmail', groq: 'Groq', server: 'Server', 'sign-in': 'Sign-in', rescan: 'Re-scan', browser: 'Browser' };
+const ERROR_TABS = [['open', 'Open', g => g.status === 'open'], ['resolved', 'Resolved', g => g.status === 'resolved'], ['all', 'All', () => true]];
+function renderErrors() {
+  const all = dev.errors;
+  $('#error-tabs').innerHTML = ERROR_TABS.map(([id, label, fits]) =>
+    `<button class="tab" role="tab" type="button" aria-selected="${errorFilter === id}" data-error-filter="${id}">${label}<span class="n">${all.filter(fits).length}</span></button>`).join('');
+  const inTab = all.filter(ERROR_TABS.find(t => t[0] === errorFilter)[2]);
+  const sources = Object.keys(SOURCE_LABEL).filter(src => inTab.some(g => g.source === src));
+  if (errorSource !== 'all' && !sources.includes(errorSource)) errorSource = 'all';
+  $('#error-sources').hidden = sources.length < 2;
+  $('#error-sources').innerHTML = [['all', 'Everywhere', inTab.length], ...sources.map(src => [src, SOURCE_LABEL[src], inTab.filter(g => g.source === src).length])]
+    .map(([id, label, n]) => `<button class="dev-chip" type="button" aria-pressed="${errorSource === id}" data-error-source="${id}">${label}<span class="num">${n}</span></button>`).join('');
+  const q = $('#errors-search').value.trim().toLowerCase();
+  // Errors before warnings, then the most recent.
+  const shown = inTab.filter(g => (errorSource === 'all' || g.source === errorSource) && (!q || g.message.toLowerCase().includes(q)))
+    .sort((a, b) => (a.level === 'error' ? 0 : 1) - (b.level === 'error' ? 0 : 1) || b.lastAt.localeCompare(a.lastAt));
+  $('#error-list').innerHTML = shown.length ? shown.map(errorRow).join('')
+    : `<li class="action-empty"><strong>${q ? 'No error matches' : errorFilter === 'open' ? 'Nothing is broken' : 'Nothing here'}</strong>${q ? 'Try fewer words.' : 'Errors from syncing, Groq, the server and people’s browsers show up here.'}</li>`;
+}
+const emailOf = (g, userId) => g.emails?.[g.users.indexOf(userId)] || null;
+function errorRow(g) {
+  const open = devOpen.has(`e:${g.id}`);
+  const who = g.users.length ? `${g.users.length} account${g.users.length === 1 ? '' : 's'}` : 'No account';
+  return `
+    <li class="dev-err ${g.level} st-${g.status}${open ? ' open' : ''}" data-error="${esc(g.id)}">
+      <button class="dev-err-line" type="button" aria-expanded="${open}">
+        ${icon('chevron', 'icon chev')}
+        <span class="lvl">${g.level === 'error' ? 'Error' : 'Warning'}</span>
+        <span class="src">${SOURCE_LABEL[g.source] || esc(g.source)}</span>
+        <span class="msg">${esc(g.message)}${g.regressed ? ' <span class="back">Back again</span>' : ''}</span>
+        <span class="count num" title="${g.count} times">×${g.count}</span>
+        <span class="who-n">${who}</span>
+        <time class="when" datetime="${esc(g.lastAt)}" title="${esc(new Date(g.lastAt).toLocaleString())}">${timeAgo(g.lastAt)}</time>
+      </button>
+      <div class="dev-more reveal${open ? ' open' : ''}" aria-hidden="${!open}"><div>
+        <div class="dev-detail">
+          <p class="dev-msg mono">${esc(g.message)}</p>
+          <dl>
+            <dt>First seen</dt><dd>${new Date(g.firstAt).toLocaleString()}</dd>
+            <dt>Last seen</dt><dd>${new Date(g.lastAt).toLocaleString()}</dd>
+            ${g.resolvedAt && g.status === 'resolved' ? `<dt>Resolved</dt><dd>${new Date(g.resolvedAt).toLocaleString()}</dd>` : ''}
+            <dt>Accounts</dt><dd>${g.users.length ? g.users.map(id => esc(emailOf(g, id) || id)).join(', ') : 'Not tied to an account'}</dd>
+            <dt>Latest</dt><dd><ol class="dev-samples">${g.samples.map(smp => `<li>
+              <time class="num">${new Date(smp.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time>
+              <span>${esc(smp.userId ? emailOf(g, smp.userId) || 'a deleted account' : 'no account')}${smp.detail ? `<span class="dim"> · ${esc(smp.detail)}</span>` : ''}</span></li>`).join('')}</ol></dd>
+          </dl>
+          <div class="report-actions">
+            <button class="btn btn-sm" type="button" data-error-status="${esc(g.id)}" data-to="${g.status === 'open' ? 'resolved' : 'open'}">${icon(g.status === 'open' ? 'check' : 'refresh')}${g.status === 'open' ? 'Mark resolved' : 'Reopen'}</button>
+            <button class="btn btn-sm btn-quiet btn-danger" type="button" data-error-delete="${esc(g.id)}">${icon('trash')}Delete</button>
+          </div>
+        </div>
+      </div></div>
+    </li>`;
+}
+$('#error-tabs').addEventListener('click', e => {
+  const t = e.target.closest('[data-error-filter]');
+  if (t) { errorFilter = t.dataset.errorFilter; renderErrors(); }
+});
+$('#error-sources').addEventListener('click', e => {
+  const c = e.target.closest('[data-error-source]');
+  if (c) { errorSource = c.dataset.errorSource; renderErrors(); }
+});
+$('#errors-search').addEventListener('input', renderErrors);
+$('#error-list').addEventListener('click', async e => {
+  const status = e.target.closest('[data-error-status]');
+  if (status) {
+    status.disabled = true;
+    const { errorStatus: id, to } = status.dataset;
+    await api('PATCH', `/api/dev/errors/${id}`, { status: to });
+    await loadDeveloper();
+    toast(to === 'resolved' ? 'Marked resolved. It opens again if it comes back' : 'Reopened', async () => {
+      await api('PATCH', `/api/dev/errors/${id}`, { status: to === 'resolved' ? 'open' : 'resolved' });
+      await loadDeveloper();
+    });
+    return;
+  }
+  // Like a report: gone at once, deleted for good once the Undo has had its chance.
+  const del = e.target.closest('[data-error-delete]');
+  if (del) {
+    const id = del.dataset.errorDelete;
+    const kept = dev.errors;
+    dev.errors = kept.filter(g => g.id !== id);
+    renderErrors();
+    const timer = setTimeout(() => api('DELETE', `/api/dev/errors/${id}`).catch(() => {}), UNDO_SHOW_MS + 300);
+    toast('Error deleted', async () => {
+      clearTimeout(timer);
+      dev.errors = kept;
+      renderErrors();
+    });
+    return;
+  }
+  const line = e.target.closest('.dev-err-line');
+  if (line) toggleDevRow(`e:${line.closest('[data-error]').dataset.error}`);
+});
+// Keep the uptime and "3m ago" times fresh while the page is open.
+setInterval(() => { if (view === 'developer' && dev.server) renderHealth(); }, 30_000);
+
 // Clicking the link you're on still takes you there (e.g. back up to the applications).
 $('#sidebar').addEventListener('click', e => {
   const link = e.target.closest('a[href^="#/"]');
@@ -2391,6 +2745,7 @@ function cmdkSources() {
     ['Calendar', '#/calendar', 'calendar', 'deadlines interviews schedule google'],
     ['Settings', '#/settings', 'sliders', 'appearance gmail groq key ignored senders account'],
     !$('#reports-link').hidden && ['Reports', '#/reports', 'flag', 'invite requests problems'],
+    !$('#developer-link').hidden && ['Developer', '#/developer', 'terminal', 'accounts users errors server health logs'],
   ].filter(Boolean).map(([label, href, ic, keywords = '']) => ({ group: 'Go to', label, icon: ic, keywords: `page ${keywords}`, run: () => go(href) }));
   const actions = [
     { label: 'Add application', icon: 'plus', keywords: 'new create', run: () => $('#add-btn').click() },
@@ -2554,6 +2909,7 @@ document.addEventListener('keydown', e => {
 new EventSource('/api/events').onmessage = e => {
   load();
   if (e.data === 'reports' && view === 'reports') loadReports();
+  if (view === 'developer') loadDeveloper();
 };
 // Keep relative times ("synced 2m ago") fresh.
 setInterval(renderGmail, 30_000);
