@@ -8,19 +8,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { poolOptions, prepareTable } from '../src/store.js';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
-  console.error('Set DATABASE_URL to your Neon connection string first.');
+  console.error('Set DATABASE_URL to your database connection string first (and DATABASE_CA for Supabase).');
   process.exit(1);
 }
 // data/db_local.json since accounts; data/db.json before.
 const file = path.resolve(process.argv[2] || ['data/db_local.json', 'data/db.json'].find(f => fs.existsSync(f)) || 'data/db_local.json');
 const db = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-const pool = new pg.Pool({ connectionString: url, max: 1 });
-await pool.query(`create table if not exists app_state (
-  key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
+const pool = new pg.Pool({ ...poolOptions(url), max: 1 });
+await prepareTable(pool);
 const { rows } = await pool.query(`select jsonb_array_length(value->'applications') as n from app_state where key = 'db'`);
 if (rows[0] && !process.argv.includes('--force')) {
   console.error(`The database already holds ${rows[0].n} applications. Re-run with --force to overwrite them.`);

@@ -8,6 +8,7 @@
     "demo": "node server.js --demo",
     "test": "node --test \"test/*.test.js\"",
     "migrate": "node --env-file-if-exists=.env scripts/migrate-to-db.js",
+    "copy-db": "node scripts/copy-db.js",
     "eval": "node scripts/eval.js"
   },
   "keywords": [],

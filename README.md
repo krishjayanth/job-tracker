@@ -72,7 +72,7 @@ flowchart LR
     end
     Gmail[("Gmail API<br/>read-only")]
     Groq[("Groq LLM<br/>gpt-oss-20b")]
-    PG[("Postgres<br/>Neon")]
+    PG[("Postgres<br/>Supabase")]
 
     UI <-- "REST + live updates" --> API
     Cron -- "/api/cron/sync" --> API
@@ -141,7 +141,7 @@ free tier awake):
 | Area | Choice |
 |---|---|
 | Server | Node.js 22+ (ES modules), Express 5 |
-| Data | PostgreSQL on Neon (`jsonb`), or local JSON files |
+| Data | PostgreSQL on Supabase (`jsonb`, row-level security on), or local JSON files |
 | Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`) |
 | Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties (light and dark, following the system) |
 | Live updates | Server-Sent Events |
@@ -157,7 +157,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 149 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 158 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
@@ -213,5 +213,5 @@ also shows how often people fix sorting across all accounts.
 
 ## Deploy your own
 
-It runs on free tiers (Render, Neon, Groq, Google Cloud). See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the
+It runs on free tiers (Render, Supabase, Groq, Google Cloud). See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the
 step-by-step setup and every configuration option.

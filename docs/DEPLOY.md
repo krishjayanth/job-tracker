@@ -1,15 +1,26 @@
 # Deploying nuj
 
-nuj runs on free tiers: **Render** for the web service, **Neon** for Postgres, **Groq** for the email
+nuj runs on free tiers: **Render** for the web service, **Supabase** for Postgres, **Groq** for the email
 classifier and a **Google Cloud** OAuth client for sign-in and read-only Gmail access. Setup takes about 15 minutes.
 
 To just look around, you don't need any of this: `npm install && npm run demo` runs it locally with sample data.
 
-## 1. Database: Neon
-1. Sign up at https://neon.tech and create a project (any name, nearest region).
-2. Copy the **connection string**. It looks like `postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require`.
+## 1. Database: Supabase
+1. Sign up at https://supabase.com and create a project. Pick the region nearest your Render service (Render's
+   default is Oregon, so **West US**). Save the database password it asks you to set.
+2. Click **Connect** at the top of the project and copy the **Session pooler** connection string. It looks like
+   `postgresql://postgres.abcdefgh:[YOUR-PASSWORD]@aws-0-us-west-1.pooler.supabase.com:5432/postgres`. Put your
+   password in place of `[YOUR-PASSWORD]`. Use the session pooler, not the direct connection: the direct one is
+   IPv6 only, which Render can't reach.
+3. In **Project Settings › Database › SSL Configuration**, download the certificate (`prod-ca-2021.crt`) and turn
+   on **Enforce SSL on incoming connections**. Supabase signs its own certificate, so nuj needs this file to check
+   it is really talking to your database (step 3 says where it goes).
 
-The app creates its one table (`app_state`) on first start.
+The app creates its one table (`app_state`) on first start, with row-level security turned on. That matters on
+Supabase: it offers every table through its public API, and with RLS on and no policies, that API can't read the
+table, which holds everyone's Gmail sign-ins. nuj connects as the table's owner, which RLS doesn't restrict.
+
+Neon works too: use its connection string (it ends in `?sslmode=require`) and leave `DATABASE_CA` unset.
 
 ## 2. Email classifier: Groq
 Each person adds their own free Groq API key in the app (Settings › AI email sorting, or when they first connect Gmail), so everyone gets their own
@@ -25,7 +36,9 @@ for the owner (the first `ALLOWED_EMAIL`), and only until they add a key of thei
 2. In Render: **New › Blueprint**, then pick the repository. It reads [`render.yaml`](../render.yaml).
 3. Fill in the values it asks for:
    - `ALLOWED_EMAIL`: the Gmail addresses allowed to sign in, comma-separated, yours first (see step 6)
-   - `DATABASE_URL`: the Neon connection string
+   - `DATABASE_URL`: the Supabase session pooler connection string
+   - `DATABASE_CA`: `/etc/secrets/supabase-ca.crt`, then under **Environment › Secret Files** add a file named
+     `supabase-ca.crt` with the contents of the certificate from step 1
    - `GROQ_API_KEY`: optional, from step 2
    - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: put `x` for now and fill them in after step 4
 
@@ -94,8 +107,42 @@ A service created under another name (e.g. `job-tracker-ab12.onrender.com`) keep
 5. Sign in again at the new address; sign-ins don't carry across addresses.
 6. Delete the old service, so two copies aren't syncing the same database.
 
+## Moving from Neon to Supabase
+nuj keeps everything in one table, so moving is a copy of that table while the site is paused. It takes about
+ten minutes, and nothing is lost: applications, edits, Gmail sign-ins, Groq keys, feedback and errors all move.
+
+1. **Set up Supabase** as in step 1 above: the project, the session pooler connection string and the certificate.
+2. **Pause the site.** In Render, open the service, then **Settings › Suspend Web Service**. It saves anything
+   waiting to be written before it stops, so the copy gets everything. The cron pinger fails while it's suspended;
+   that's fine.
+3. **Copy the data** from your computer, with the Neon string from Render's Environment tab, the Supabase string
+   and the path to the downloaded certificate. In PowerShell:
+
+   ```powershell
+   $env:SOURCE_DATABASE_URL = "postgresql://...neon.tech/neondb?sslmode=require"
+   $env:DATABASE_URL = "postgresql://postgres.abcdefgh:PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
+   $env:DATABASE_CA = "C:\Users\you\Downloads\prod-ca-2021.crt"
+   npm run copy-db
+   ```
+
+   Or in bash: `SOURCE_DATABASE_URL=... DATABASE_URL=... DATABASE_CA=~/Downloads/prod-ca-2021.crt npm run copy-db`.
+
+   It copies every row in one go, checks each one against Neon, and prints what it moved (for example
+   `Copied and checked 14 rows: 3 trackers, 3 Gmail sign-ins, 2 Groq keys, 1 backups, 5 other`). Neon is only
+   read, never changed. If Supabase already has data, it stops; add `-- --force` to replace it.
+4. **Point Render at Supabase.** In **Environment**, set `DATABASE_URL` to the Supabase string and `DATABASE_CA`
+   to `/etc/secrets/supabase-ca.crt`, and add the Secret File `supabase-ca.crt` with the certificate's contents.
+   Save, then **Resume Web Service**.
+5. **Check it.** The log should say `Storage: Postgres` with no `[storage]` warning. Sign in: your applications
+   should all be there, and the Developer page should list everyone.
+6. **Keep Neon for a week**, then delete the Neon project. To go back before then, set `DATABASE_URL` back to Neon
+   and remove `DATABASE_CA`; anything written to Supabase in the meantime stays behind.
+
+Supabase pauses free projects after a week without activity. nuj's syncs write every few minutes while the pinger
+keeps the site awake, so that shouldn't happen. If it does, restore the project from the Supabase dashboard.
+
 ## Moving local data to the database (optional)
-If you've been running it locally, copy your tracker into Neon once:
+If you've been running it locally, copy your tracker into the database once:
 
 ```bash
 DATABASE_URL="postgresql://..." npm run migrate
@@ -120,6 +167,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `ALLOWED_EMAIL` | — | Google accounts allowed to sign in, comma-separated; the first is the owner. **Required when hosted** |
 | `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`). Also encrypts saved Groq keys |
 | `DATABASE_URL` | — | Postgres connection string. Unset means local files |
+| `DATABASE_CA` | — | The database's certificate (the PEM text, or a path to the file) when a public authority doesn't sign it, as on Supabase |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth web client |
 | `GROQ_API_KEY` | — | Groq key for the owner only; everyone else adds their own in the app |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |

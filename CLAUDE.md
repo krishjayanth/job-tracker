@@ -39,7 +39,10 @@ served from `node_modules` via `/vendor/*`. No framework.
   else files in `data/`, else memory (demo/tests). Each tracker is one document `db_<userId>` held in memory by
   a `Store`; mutate `store.db` then call `store.save()` (debounced write; `flushAll()` on SIGTERM). Shared
   data (user registry, reports, access requests, calendar-feed tokens) goes through `getKv`/`setKv`, with
-  read-modify-write serialized through a promise chain (see `src/access.js`, `src/users.js`).
+  read-modify-write serialized through a promise chain (see `src/access.js`, `src/users.js`). Hosted on
+  Supabase: connect through `poolOptions()` (it applies `DATABASE_CA`, Supabase's own certificate) and keep
+  row-level security on `app_state` (`prepareTable()`), since Supabase exposes public tables through its API.
+  `npm run copy-db` copies every row between two databases (`SOURCE_DATABASE_URL` → `DATABASE_URL`).
 - **Status is derived, never stored directly.** After changing an application's events, call `refresh(app)`;
   it recomputes `status` (via `computeStatus` in `src/stages.js`), dates, deadline and `needsReview`. Manual
   edits are events with `manual: true` and always win. `stagePath` builds the Sankey path and must stay acyclic.

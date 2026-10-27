@@ -17,7 +17,9 @@ services:
         generateValue: true
       - key: CRON_SECRET
         generateValue: true
-      - key: DATABASE_URL        # Neon connection string
+      - key: DATABASE_URL        # Supabase session pooler connection string
+        sync: false
+      - key: DATABASE_CA         # /etc/secrets/supabase-ca.crt (a Secret File; see docs/DEPLOY.md)
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false

@@ -5,7 +5,7 @@ import { computeStatus } from './stages.js';
 import { buildDemoDb } from './demo.js';
 import { senderDomain } from './jobcheck.js';
 
-// Storage: Postgres when DATABASE_URL is set (hosted, e.g. Neon), otherwise JSON
+// Storage: Postgres when DATABASE_URL is set (hosted, e.g. Supabase), otherwise JSON
 // files in data/ (local). Either way it's a key-value table of JSON values, and each
 // person's tracker is one JSON document (db_<user id>) held in memory while in use;
 // writes are batched so a sync of many emails doesn't hammer the database.
@@ -21,6 +21,30 @@ let demoMode = false;
 
 export const usingDatabase = () => Boolean(pool);
 
+// How to connect to Postgres. Neon's certificate is signed by a public authority, so the
+// URL alone is enough. Supabase signs its own: set DATABASE_CA to its certificate (the PEM
+// text from the Supabase dashboard; "\n" for line breaks is fine) and the connection is
+// checked against that, rather than failing as self-signed or not being checked at all.
+// DATABASE_CA can also be the path to the certificate file (a Render Secret File, say).
+export function poolOptions(url = process.env.DATABASE_URL, ca = process.env.DATABASE_CA) {
+  if (!ca) return { connectionString: url };
+  if (!ca.includes('BEGIN CERTIFICATE')) ca = fs.readFileSync(ca.trim(), 'utf8');
+  // SSL settings in the URL would replace these (pg lets the URL win), so they come out.
+  const u = new URL(url);
+  for (const k of ['sslmode', 'sslrootcert', 'uselibpqcompat']) u.searchParams.delete(k);
+  return { connectionString: u.toString(), ssl: { ca: ca.replace(/\\n/g, '\n'), rejectUnauthorized: true } };
+}
+
+// The one table, and row-level security on it: Supabase offers every table through its
+// public API, and with RLS on and no policies, that API can't read or write it. The app
+// connects as the table's owner, which RLS doesn't apply to. Elsewhere it changes nothing.
+export async function prepareTable(db) {
+  await db.query(`create table if not exists app_state (
+    key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
+  await db.query('alter table app_state enable row level security')
+    .catch(err => console.warn(`[storage] couldn't turn on row-level security for app_state: ${err.message}`));
+}
+
 // inMemory without demo (for tests): nothing stored, no sample data.
 export async function initStorage({ demo = false, inMemory = demo } = {}) {
   if (inMemory) {
@@ -28,9 +52,12 @@ export async function initStorage({ demo = false, inMemory = demo } = {}) {
     demoMode = demo;
   } else if (process.env.DATABASE_URL) {
     const { default: pg } = await import('pg');
-    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
-    await pool.query(`create table if not exists app_state (
-      key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
+    // Without the certificate, a Supabase URL with no sslmode connects unencrypted.
+    if (/supabase\.(com|co)\b/.test(process.env.DATABASE_URL) && !process.env.DATABASE_CA) {
+      console.warn('[storage] DATABASE_URL is Supabase but DATABASE_CA isn\'t set, so the connection isn\'t checked (see docs/DEPLOY.md)');
+    }
+    pool = new pg.Pool({ ...poolOptions(), max: 3 });
+    await prepareTable(pool);
   } else {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
