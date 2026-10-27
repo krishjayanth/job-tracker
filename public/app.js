@@ -199,7 +199,8 @@ function renderGmail() {
   $('#side-user').textContent = state.user || '';
   $('#reports-link').hidden = !state.reports;
   $('#developer-link').hidden = !state.reports;
-  $('#developer-count').textContent = state.reports?.errors || '';
+  // What's waiting for you there: open errors and answers you haven't read.
+  $('#developer-count').textContent = (state.reports?.errors || 0) + (state.reports?.feedback || 0) || '';
   // The badge counts everything waiting for you there: open reports and invite requests.
   $('#reports-count').textContent = (state.reports?.open || 0) + (state.reports?.requests || 0) || '';
   $('#delete-section').hidden = state.demo;
@@ -2669,10 +2670,16 @@ function renderFeedbackResults() {
     </li>`;
   }).join('');
   const answers = asks.flatMap(a => a.answers).sort((x, y) => y.at.localeCompare(x.at));
-  const shown = fbShowAll ? answers : answers.slice(0, 12);
-  $('#fb-answers').innerHTML = answers.length ? shown.map(x => `
-    <li class="fb-answer">
+  const unread = answers.filter(x => !x.readAt);
+  $('#fb-tabs').innerHTML = [['new', 'New', unread.length], ['all', 'All', answers.length]].map(([id, label, n]) =>
+    `<button class="tab" role="tab" type="button" aria-selected="${fbFilter === id}" data-fb-filter="${id}">${label}<span class="n">${n}</span></button>`).join('');
+  $('#fb-read-all').hidden = unread.length < 2;
+  const list = fbFilter === 'new' ? unread : answers;
+  const shown = fbShowAll ? list : list.slice(0, 12);
+  $('#fb-answers').innerHTML = list.length ? shown.map(x => `
+    <li class="fb-answer${x.readAt ? '' : ' unread'}">
       <div class="report-head">
+        ${x.readAt ? '' : '<span class="sdot" style="--c:var(--oa)" role="img" aria-label="New"></span>'}
         <span class="report-from">${esc(x.email || 'An account since deleted')}</span>
         ${miniStars(x.rating)}
         <span class="report-when" title="${esc(new Date(x.at).toLocaleString())}">${timeAgo(x.at)}</span>
@@ -2682,12 +2689,49 @@ function renderFeedbackResults() {
         ${x.sorting ? `<span style="--c:var(--${SORTED[x.sorting][1]})">Sorting: ${SORTED[x.sorting][0].toLowerCase()}</span>` : ''}
       </div>
       ${x.comment ? `<p class="report-message">${esc(x.comment)}</p>` : ''}
-    </li>`).join('') + (answers.length > shown.length ? `<li><button class="btn btn-sm btn-quiet" type="button" data-fb-all>Show all ${answers.length} answers</button></li>` : '')
-    : `<li class="action-empty"><strong>No answers yet</strong>Ask everyone, or one person from their row in Accounts.</li>`;
+      <div class="report-actions">
+        <button class="btn btn-sm${x.readAt ? ' btn-quiet' : ''}" type="button" data-fb-read="${x.readAt ? 'unread' : 'read'}" data-ask="${esc(x.askId)}" data-user="${esc(x.userId)}">${x.readAt ? 'Mark unread' : `${icon('check')}Mark read`}</button>
+      </div>
+    </li>`).join('') + (list.length > shown.length ? `<li><button class="btn btn-sm btn-quiet" type="button" data-fb-all>Show all ${list.length} answers</button></li>` : '')
+    : fbFilter === 'new' && answers.length
+      ? `<li class="action-empty"><strong>All caught up</strong>You've read every answer. They're all under All.</li>`
+      : `<li class="action-empty"><strong>No answers yet</strong>Ask everyone, or one person from their row in Accounts.</li>`;
   $('#ask-everyone').disabled = !dev.accounts.some(a => a.allowed && !a.owner);
 }
-$('#fb-answers').addEventListener('click', e => {
-  if (e.target.closest('[data-fb-all]')) { fbShowAll = true; renderFeedbackResults(); }
+let fbFilter = 'new';
+async function setRead(items, read) {
+  await api('POST', '/api/dev/feedback/read', { items, read });
+  await loadDeveloper();
+}
+$('#fb-tabs').addEventListener('click', e => {
+  const t = e.target.closest('[data-fb-filter]');
+  if (t) { fbFilter = t.dataset.fbFilter; fbShowAll = false; renderFeedbackResults(); }
+});
+$('#fb-answers').addEventListener('click', async e => {
+  if (e.target.closest('[data-fb-all]')) { fbShowAll = true; renderFeedbackResults(); return; }
+  const b = e.target.closest('[data-fb-read]');
+  if (!b) return;
+  b.disabled = true;
+  const items = [{ askId: b.dataset.ask, userId: b.dataset.user }];
+  const read = b.dataset.fbRead === 'read';
+  try {
+    await setRead(items, read);
+    if (read) toast('Marked read', () => setRead(items, false));
+  } catch (err) {
+    toast(err.message);
+    b.disabled = false;
+  }
+});
+$('#fb-read-all').addEventListener('click', async () => {
+  const items = dev.feedback.asks.flatMap(a => a.answers).filter(x => !x.readAt).map(x => ({ askId: x.askId, userId: x.userId }));
+  $('#fb-read-all').disabled = true;
+  try {
+    await setRead(items, true);
+    toast(`Marked ${items.length} answers read`, () => setRead(items, false));
+  } catch (err) {
+    toast(err.message);
+  }
+  $('#fb-read-all').disabled = false;
 });
 $('#fb-asks').addEventListener('click', async e => {
   const stop = e.target.closest('[data-stop-ask]');

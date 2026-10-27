@@ -203,7 +203,7 @@ export function buildDemoFeedback(now = Date.now()) {
     userIds: ['demo-ava', 'demo-noah', 'demo-mei', 'demo-sam', 'demo-jo'],
     skipped: ['demo-jo'],
     answers: [
-      answer('demo-ava', 'ava.lindqvist@example.com', 5.6, 'yes', 5, 'right', 'The deadline list saved me twice this week.'),
+      { ...answer('demo-ava', 'ava.lindqvist@example.com', 5.6, 'yes', 5, 'right', 'The deadline list saved me twice this week.'), readAt: at(5) },
       answer('demo-noah', 'noah.okafor@example.com', 4.2, 'yes', 4, 'some', 'A recruiter newsletter got filed as an application.'),
       answer('demo-sam', 'sam.reyes@example.com', 2, 'okay', 3, 'wrong', ''),
     ],

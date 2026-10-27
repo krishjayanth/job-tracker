@@ -47,7 +47,7 @@ into memory, so you can click around, edit, filter and export without a Google a
   with sync, re-scan and delete-account actions. Counts and dates only: nobody's applications or emails.
 - **Asks how it's going.** From the Developer page, ask one person or everyone: the next time they open nuj
   they see three quick questions (enjoying it, a 1–5 rating, is sorting right) and can leave a comment. The
-  answers, averages and splits show on the Developer page.
+  answers, averages and splits show on the Developer page, where you mark them read.
 - **Keyboard first.** ⌘K (Ctrl+K elsewhere) opens a command menu that finds any application by company,
   role or job ID, jumps between pages, filters by stage, and runs actions like Sync, Export or the theme switch.
 
@@ -157,7 +157,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 147 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 148 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic

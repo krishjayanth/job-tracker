@@ -74,7 +74,7 @@
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
       <a class="side-link" href="#/calendar" data-view="calendar"><svg class="icon"><use href="#i-calendar"/></svg>Calendar<span class="side-count num" id="cal-count" title="Deadlines and interviews in the next 7 days"></span></a>
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
-      <a class="side-link" href="#/developer" data-view="developer" id="developer-link" hidden><svg class="icon"><use href="#i-terminal"/></svg>Developer<span class="side-badge num" id="developer-count" title="Open errors"></span></a>
+      <a class="side-link" href="#/developer" data-view="developer" id="developer-link" hidden><svg class="icon"><use href="#i-terminal"/></svg>Developer<span class="side-badge num" id="developer-count" title="Open errors and new feedback"></span></a>
       <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
       <div class="side-label">Coming soon</div>
       <div id="soon-links"></div>
@@ -282,6 +282,10 @@
       </div>
       <dl class="fb-summary" id="fb-summary"></dl>
       <ul class="fb-asks" id="fb-asks"></ul>
+      <div class="fb-bar">
+        <div class="stage-tabs plain-tabs" id="fb-tabs" role="tablist" aria-label="Filter answers"></div>
+        <button class="btn btn-sm" type="button" id="fb-read-all" hidden><svg class="icon"><use href="#i-check"/></svg>Mark all read</button>
+      </div>
       <ul class="fb-answers" id="fb-answers"></ul>
     </section>
 

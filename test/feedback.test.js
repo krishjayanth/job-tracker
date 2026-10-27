@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { initStorage, deleteKv } from '../src/store.js';
-import { ask, pendingFor, answer, skip, stopAsking, forgetUserFeedback, listAsks, summarize } from '../src/feedback.js';
+import { ask, pendingFor, answer, skip, stopAsking, forgetUserFeedback, listAsks, summarize, markRead, unreadCount } from '../src/feedback.js';
 
 await initStorage({ inMemory: true });
 beforeEach(() => deleteKv('feedback'));
@@ -87,4 +87,18 @@ test('the summary averages ratings and counts each answer', async () => {
   assert.deepEqual(s.enjoying, { yes: 2, okay: 1, no: 0 });
   assert.deepEqual(s.sorting, { right: 1, some: 1, wrong: 0, unsure: 0 });
   assert.equal(summarize([]).rating, null);
+});
+
+test('answers arrive unread, and can be marked read and unread again', async () => {
+  const { ask: a } = await ask({ userIds: ['a', 'b'] });
+  await answer(a.id, { userId: 'a', ...good });
+  await answer(a.id, { userId: 'b', ...good });
+  assert.equal(await unreadCount(), 2);
+  assert.equal(await markRead([{ askId: a.id, userId: 'a' }]), 1);
+  assert.equal(await unreadCount(), 1);
+  assert.ok((await listAsks())[0].answers.find(x => x.userId === 'a').readAt);
+  // Already read, or no such answer: nothing changes.
+  assert.equal(await markRead([{ askId: a.id, userId: 'a' }, { askId: 'nope', userId: 'b' }]), 0);
+  assert.equal(await markRead([{ askId: a.id, userId: 'a' }], false), 1);
+  assert.equal(await unreadCount(), 2);
 });

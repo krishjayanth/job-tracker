@@ -92,6 +92,25 @@ export function stopAsking(askId) {
   });
 }
 
+// The owner marking answers read (or unread again). items: [{ askId, userId }], since
+// each person answers an ask once. Returns how many changed.
+export function markRead(items, read = true) {
+  return update(list => {
+    let changed = 0;
+    for (const { askId, userId } of items) {
+      const x = list.find(a => a.id === askId)?.answers.find(y => y.userId === userId);
+      if (!x || Boolean(x.readAt) === read) continue;
+      if (read) x.readAt = new Date().toISOString(); else delete x.readAt;
+      changed++;
+    }
+    return changed;
+  });
+}
+
+export async function unreadCount() {
+  return (await listAsks()).reduce((n, a) => n + a.answers.filter(x => !x.readAt).length, 0);
+}
+
 // Deleting an account takes its answers with it.
 export function forgetUserFeedback(userId) {
   return update(list => {

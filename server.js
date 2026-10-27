@@ -18,7 +18,7 @@ import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID 
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback } from './src/demo.js';
-import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize } from './src/feedback.js';
+import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
@@ -181,7 +181,7 @@ const tellOwner = () => { for (const res of ownerClients) res.write('data: repor
 // --- state ----------------------------------------------------------------
 app.get('/api/state', async (req, res) => {
   const user = req.account;
-  const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount(), errors: await openErrorCount() } : null;
+  const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount(), errors: await openErrorCount(), feedback: await unreadCount() } : null;
   const db = user.store.db;
   res.json({
     applications: db.applications.map(a => ({
@@ -653,7 +653,7 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
         ...rest, asked: userIds.length, skipped: skipped.length,
         // An account without an address (running locally, or the demo) goes by its ID.
         who: userIds.length === 1 ? emails[userIds[0]] || userIds[0] : null,
-        answers: answers.map(x => ({ ...x, email: emails[x.userId] || x.email || (x.userId in emails ? x.userId : null) })),
+        answers: answers.map(x => ({ ...x, askId: rest.id, email: emails[x.userId] || x.email || (x.userId in emails ? x.userId : null) })),
       })),
     },
   });
@@ -689,6 +689,13 @@ app.post('/api/dev/feedback', ownerOnly, async (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   console.log(`[feedback] asked ${userIds.length} account(s)`);
   res.json({ asked: userIds.length });
+});
+// Mark answers read (or unread again): { items: [{ askId, userId }], read }.
+app.post('/api/dev/feedback/read', ownerOnly, async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 1000) : [];
+  const changed = await markRead(items.map(i => ({ askId: String(i?.askId), userId: String(i?.userId) })), req.body?.read !== false);
+  tellOwner();
+  res.json({ changed });
 });
 app.post('/api/dev/feedback/:id/stop', ownerOnly, async (req, res) => {
   const a = await stopAsking(req.params.id);
