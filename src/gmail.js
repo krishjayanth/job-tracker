@@ -26,8 +26,9 @@ const REDIRECT_URI = `${PUBLIC_URL}/oauth2callback`;
 // Narrow the inbox down to likely application emails before classifying: anything from
 // hiring software, or with an application-ish subject from anyone (employers often write
 // directly). The job check in classify.js then turns away non-job "applications".
-const BASE_QUERY = [
-  '-category:promotions -category:social -from:jobalerts-noreply@linkedin.com',
+// Mail you sent yourself (a reply to a recruiter) is never news about an application.
+export const BASE_QUERY = [
+  '-from:me -category:promotions -category:social -from:jobalerts-noreply@linkedin.com',
   `{subject:(application OR applying OR applied OR interview OR assessment OR offer OR candidacy OR "next steps" OR "your interest") from:(${HIRING_SENDERS.join(' OR ')})}`,
 ].join(' ');
 // Senders you've blocked are left out of the search (Gmail queries stay well under their size limit).
@@ -255,7 +256,7 @@ export class Mailbox {
         subject: header(msg, 'Subject'),
         date: new Date(Number(msg.internalDate)).toISOString(),
         body: bodyText(msg.payload),
-      }, { groq: this.user.groq(), onKeyRejected: () => this.user.keyRejected() });
+      }, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected() });
       if (!result) { notJob++; continue; }
       const before = JSON.stringify([e.stage, e.deadline, e.summary]);
       e.stage = result.stage;
@@ -352,7 +353,7 @@ export class Mailbox {
         };
         // Blocked after this search began, or beyond the search's exclusion list.
         const result = store.isBlocked(email.from) ? null
-          : await classify(email, { groq: this.user.groq(), onKeyRejected: () => this.user.keyRejected() });
+          : await classify(email, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected() });
         // Saved per message so an interrupted sync resumes where it left off.
         db.processed[msg.id] = true;
         if (!result) {

@@ -1,6 +1,6 @@
-import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, AI_INTERVIEW } from './rules.js';
+import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, rejectionWords, AI_INTERVIEW } from './rules.js';
 import { classifyWithGroq, isJobEmailWithGroq, MODEL } from './groq.js';
-import { jobSignal } from './jobcheck.js';
+import { jobSignal, senderAddress } from './jobcheck.js';
 
 export { classifyWithRules };
 
@@ -12,6 +12,7 @@ const squash = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 // Hiring software that sends on a company's behalf; never the employer itself here.
 const VENDORS = /^(workday|greenhouse|icims|lever|ashby|ashbyhq|workable|hackerrank|codesignal|linkedin|indeed|hirevue|shl|modernhire|sparkhire|smartrecruiters|jobvite|taleo|successfactors)$/;
 const UNKNOWN = 'Unknown company';
+const STAGE_WORDS = { applied: 'an application update', oa: 'an assessment', interview: 'an interview', offer: 'an offer', withdrawn: 'a withdrawal' };
 const DAY = 86_400_000;
 
 // The model's "YYYY-MM-DD" deadline, if it's a real date shortly after the email.
@@ -34,7 +35,11 @@ export function mergeWithRules(llm, rules, email) {
   const review = [];
 
   let stage = llm.stage;
-  if (rules?.stage === 'rejected') stage = 'rejected';
+  // The rules' rejection check wins, but say so: if its words were a false alarm, you'll see them.
+  if (rules?.stage === 'rejected' && stage !== 'rejected') {
+    review.push({ about: 'stage', text: `Read as a rejection because the email says "${rejectionWords(email)}", though it otherwise reads as ${STAGE_WORDS[stage] || stage}.` });
+    stage = 'rejected';
+  }
   if (stage === 'offer' && rules?.stage !== 'offer' && !/\b(offer|congratulations)\b/i.test(email.subject)) {
     stage = rules?.stage ?? 'applied';
   }
@@ -79,7 +84,9 @@ export function mergeWithRules(llm, rules, email) {
 //   2. if that's unclear and there's a key, a small model answers just that question.
 //   3. the full read (Groq, cross-checked by the rules), or the rules alone.
 // Which application it belongs to is settled afterwards, in gmail.js.
-export async function classify(email, { groq = null, onKeyRejected } = {}) {
+// `self` is your own address: an email you sent (a reply to a recruiter) is never filed.
+export async function classify(email, { groq = null, self = null, onKeyRejected } = {}) {
+  if (self && senderAddress(email.from) === self.trim().toLowerCase()) return null;
   const signal = jobSignal(email);
   if (signal.verdict === 'not_job') return null;
   let result;

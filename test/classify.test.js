@@ -94,3 +94,87 @@ test('picking an application: uses the model\'s choice only when it is sure and 
   assert.equal(await pickApplicationWithGroq(answer({ reasoning: '', choice: 1, confidence: 'low' }), mail, apps), -1);
   assert.equal(await pickApplicationWithGroq(answer({ reasoning: '', choice: 5, confidence: 'high' }), mail, apps), -1);
 });
+
+// ---- from problem reports (each failed before its fix) ------------------------------
+
+test('your own sent emails are never filed as an application', async () => {
+  const own = { from: 'Sam Rivera <Sam.Rivera@gmail.com>', subject: 'Re: Interview availability', date: '2026-09-09T12:00:00.000Z',
+    body: 'Hi Jordan, thanks for reaching out. I am free Tuesday or Wednesday afternoon for the interview. Best, Sam Rivera' };
+  assert.equal(await classify(own, { self: 'sam.rivera@gmail.com' }), null);
+  // The same email from the recruiter's side is still read.
+  assert.equal((await classify({ ...own, from: 'Jordan Lee <jordan@woodgrovebank.com>' }, { self: 'sam.rivera@gmail.com' }))?.stage, 'interview');
+});
+
+test('the Gmail search leaves out mail you sent', async () => {
+  const { BASE_QUERY } = await import('../src/gmail.js');
+  assert.match(BASE_QUERY, /(^| )-from:me( |$)/);
+});
+
+// A HireVue reminder warns what happens if you don't finish; that isn't a rejection.
+const reminder = body => ({ from: 'Air Force Civilian Service <noreply@hirevue.com>', subject: 'Interview with Air Force Civilian Service',
+  date: '2026-09-09T12:00:00.000Z', body });
+const WARNINGS = [
+  'Reminder: please complete your HireVue interview by September 12. If you do not complete it by then, unfortunately your application will not move forward.',
+  'Reminder: complete your HireVue interview by September 12, otherwise we will not be moving forward with your candidacy.',
+  'Please finish your video interview by Friday. Failure to complete the interview means we will not be moving forward with your application.',
+  'Your HireVue interview is due Friday. Unless it is completed, your application will not move forward.',
+];
+
+test('rules: a warning about not finishing an assessment is not a rejection', () => {
+  for (const body of WARNINGS) assert.equal(classifyWithRules(reminder(body)).stage, 'oa', body);
+});
+
+test('rules: a real rejection that mentions "if" elsewhere is still a rejection', () => {
+  const e = { from: 'Contoso Recruiting <no-reply@us.greenhouse-mail.io>', subject: 'Your application to Contoso', date: '2026-09-09T12:00:00.000Z',
+    body: 'Thank you for applying. Unfortunately, we have decided to move forward with other candidates. We will contact you if another role opens up.' };
+  assert.equal(classifyWithRules(e).stage, 'rejected');
+});
+
+test('merge: a warning in a reminder does not overrule the model\'s "assessment"', () => {
+  for (const body of WARNINGS) {
+    const e = reminder(body);
+    assert.equal(mergeWithRules(llm({ stage: 'oa', company: 'Air Force Civilian Service' }), classifyWithRules(e), e).stage, 'oa', body);
+  }
+});
+
+test('merge: when the rules overrule the model it is flagged, quoting the words', () => {
+  const e = { from: 'Contoso <no-reply@us.greenhouse-mail.io>', subject: 'Contoso: next steps', date: '2026-09-09T12:00:00.000Z',
+    body: 'Thanks for completing the assessment. Unfortunately, we have decided to move forward with other candidates.' };
+  const r = mergeWithRules(llm({ stage: 'oa', company: 'Contoso' }), classifyWithRules(e), e);
+  assert.equal(r.stage, 'rejected');
+  const note = r.review.find(x => x.about === 'stage');
+  assert.ok(note, 'expected a review note about the stage');
+  assert.match(note.text, /unfortunately/i);
+});
+
+test('merge: no note when the model already agreed it was a rejection', () => {
+  const e = { from: 'Contoso <no-reply@us.greenhouse-mail.io>', subject: 'Contoso update', date: '2026-09-09T12:00:00.000Z',
+    body: 'Unfortunately, we have decided to move forward with other candidates.' };
+  assert.deepEqual(mergeWithRules(llm({ stage: 'rejected', company: 'Contoso' }), classifyWithRules(e), e).review, []);
+});
+
+const club = { from: 'Horizons Finance Guild <horizonsfinance@gmail.com>', subject: 'Horizons Finance Guild - Application Update', date: '2026-08-29T12:00:00.000Z',
+  body: 'Thanks for applying to Horizons Finance Guild! We would like to interview you for an analyst position at our next general body meeting.' };
+
+test('pipeline: a club email goes to the job check, which can turn it away', async () => {
+  const groq = fakeGroq({ gate: false, read: { ...fullRead, stage: 'interview', company: 'Horizons Finance Guild' } });
+  assert.equal(await classify(club, { groq }), null);
+  assert.ok(groq.calls.includes(GATE_MODEL));
+});
+
+test('pipeline: without a key, a club email is flagged as maybe not a job', async () => {
+  const r = await classify(club);
+  assert.ok(r?.review.some(x => /not sure this is about a job/i.test(x.text)), JSON.stringify(r?.review));
+});
+
+test('both prompts tell the model student clubs are not jobs', async () => {
+  const prompts = [];
+  const groq = { chat: { completions: { create: async req => {
+    prompts.push(req.messages[0].content);
+    const content = req.model === GATE_MODEL ? JSON.stringify({ job: true, why: 'test' }) : JSON.stringify(fullRead);
+    return { choices: [{ finish_reason: 'stop', message: { content } }] };
+  } } } };
+  await classify(vague, { groq });
+  assert.equal(prompts.length, 2);
+  for (const p of prompts) assert.match(p, /student clubs/i);
+});

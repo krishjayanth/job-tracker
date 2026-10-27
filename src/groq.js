@@ -64,7 +64,7 @@ Work through the email before answering, and write that thinking in "reasoning" 
 3. Which job is it? Look for the title and any requisition/job ID anywhere in the email, including footers and links.
 
 Then fill in:
-- is_job_application_email: true only if the email is about the recipient's own application for a job (employment, an internship or a co-op): confirmation, assessment, interview, offer, rejection, withdrawal. false for any other kind of application, however it's worded: apartments and rentals, utilities and bill-splitting services, bank accounts, credit cards and loans, insurance, school or university admissions, scholarships, visas and permits, memberships. Also false for job alerts, newsletters, marketing, event invites and recruiter outreach for jobs they didn't apply to. If the email never says it's about a job, it isn't one.
+- is_job_application_email: true only if the email is about the recipient's own application for a job (employment, an internship or a co-op): confirmation, assessment, interview, offer, rejection, withdrawal. false for any other kind of application, however it's worded: apartments and rentals, utilities and bill-splitting services, bank accounts, credit cards and loans, insurance, school or university admissions, scholarships, visas and permits, memberships, and student clubs, societies, fraternities and sororities or volunteer roles, even when they hold "interviews" for "positions" like analyst or treasurer. Also false for job alerts, newsletters, marketing, event invites and recruiter outreach for jobs they didn't apply to. If the email never says it's about a job, it isn't one.
 - stage:
   - applied: application received/submitted, or a status update with no new step.
   - oa: anything the candidate completes on their own without a live person: online assessments, coding tests, take-homes, personality or game-based tests, and AI interviews or recorded one-way video interviews (HireVue, Modern Hire, Spark Hire and similar), even when the email calls them an "interview".
@@ -87,7 +87,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // for the rental and utility emails it turns away.
 export const GATE_MODEL = process.env.GROQ_GATE_MODEL || 'llama-3.1-8b-instant';
 const GATE_SYSTEM = `You decide whether an email is about the recipient's own application for a JOB (employment, internship, co-op) with an employer.
-Answer false for every other kind of application or account: apartments, rentals and housing; utilities and bill-splitting services; banks, credit cards, loans and insurance; schools, admissions and scholarships; visas and permits; memberships and subscriptions. Also false for job alerts and newsletters.
+Answer false for every other kind of application or account: apartments, rentals and housing; utilities and bill-splitting services; banks, credit cards, loans and insurance; schools, admissions and scholarships; visas and permits; memberships and subscriptions; student clubs, societies, fraternities and sororities, even when they "interview" for "positions". Also false for job alerts and newsletters.
 Reply with JSON only: {"job": true or false, "why": "a few words"}`;
 
 // true / false, or undefined when Groq can't answer now (the full read then decides).

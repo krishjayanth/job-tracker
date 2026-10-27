@@ -15,6 +15,18 @@ const RULES = [
   ['applied', /\bthank(s| you) for (your )?(applying|application|interest|submitting)\b|\bapplication (has been |was )?(received|submitted|sent)\b|\bwe('ve| have) received your (job )?application\b|\bsuccessfully (applied|submitted)\b|\byour application (to|for|was sent)\b|\b(started|complete) your (job )?application\b|\breceived your [\w .&'-]{1,40} application\b/i],
 ];
 
+// A warning about what happens if you don't act ("If you don't finish by Friday,
+// unfortunately we won't move forward") isn't a rejection, so sentences that only set a
+// condition are left out when looking for one.
+const CONDITION = /\b(if|unless|otherwise|failure to|fail(s|ing)? to)\b/i;
+const withoutConditions = text => text.split(/(?<=[.!?])\s+|\n+/).filter(s => !CONDITION.test(s)).join('\n');
+const REJECTED = RULES.find(([name]) => name === 'rejected')[1];
+
+// The words that make an email read as a rejection, or '' if none do.
+export function rejectionWords({ subject = '', body = '' }) {
+  return withoutConditions(`${subject}\n${body}`).match(REJECTED)?.[0] ?? '';
+}
+
 // Interviews with no person on the other end (an AI, or a recorded one-way video on
 // HireVue and the like) work like assessments: you complete them on your own by a deadline.
 export const AI_INTERVIEW = /\b(ai|one-way|recorded|pre-recorded|asynchronous|async|on-demand|digital) (video )?interview\b|\bhirevue\b|\bmodern ?hire\b|\bspark ?hire\b|\bharqen\b/i;
@@ -262,7 +274,7 @@ export function classifyWithRules({ from, subject: rawSubject, body }) {
   const subject = rawSubject.replace(/^\s*((re|fwd?|reminder|action required|update)\s*[:|–-]\s*)+/i, '');
   const text = `${subject}\n${body}`;
   let stage = RULES.find(([name, re]) =>
-    re.test(text) &&
+    re.test(name === 'rejected' ? withoutConditions(text) : text) &&
     // Real offers say so in the subject; offer wording buried in a body (FAQs,
     // assessment invites) is too unreliable on its own.
     (name !== 'offer' || OFFER_IN_SUBJECT.test(subject)))?.[0] ?? null;

@@ -37,3 +37,22 @@ test('only an ordinary company domain can be blocked', () => {
   assert.equal(canBlockDomain('us.greenhouse-mail.io'), false);
   assert.equal(canBlockDomain('not a domain'), false);
 });
+
+// From a problem report: club recruiting uses job words (interview, position, analyst).
+const CLUB = ['Northside Investment Club - Application Update',
+  'Hi Sam, thank you for applying to the Northside Investment Club! We would like to invite you to an interview with our executive board for the analyst position. Best, the recruitment team',
+  'Northside Investment Club <northsideinvest@gmail.com>'];
+
+test('a student club recruiting with job words is not clearly a job', () => {
+  assert.notEqual(verdict(...CLUB), 'job');
+  assert.notEqual(verdict('Horizons Finance Guild - Application Update',
+    'Thanks for applying to Horizons Finance Guild. We would like to interview you for an analyst position at our next general body meeting.',
+    'Horizons Finance Guild <horizonsfinance@gmail.com>'), 'job');
+  assert.notEqual(verdict('Officer application update',
+    'Thanks for applying to be an officer of our student organization. We would like to interview you for the treasurer position.',
+    'Latinx Engineers <latinxeng@gmail.com>'), 'job');
+});
+
+test('an employer with "club" in its name is still a job', () => {
+  assert.equal(verdict("Thank you for applying to Sam's Club", "We received your application for the Software Engineer Intern position at Sam's Club."), 'job');
+});
