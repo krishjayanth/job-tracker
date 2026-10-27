@@ -525,6 +525,12 @@ table.apps { width: 100%; border-collapse: collapse; }
 .company .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .company .sub { display: none; }
 .role { max-width: 330px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+/* Role and Latest update give up room first when the page is narrow, ending in "…", so the
+   table never runs past the screen. (A cell's max-width of 0 lets it shrink below its text;
+   the widths on their headings share out what's left.) */
+.apps td.col-role, .apps td.col-latest { max-width: 0; }
+.apps th.col-role { width: 32%; }
+.apps th.col-latest { width: 26%; }
 .jobid { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 1px; }
 .dim { color: var(--muted); }
 .date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-2); }
