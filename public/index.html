@@ -604,7 +604,7 @@
       <span class="sheet-icon"><svg class="icon"><use href="#i-file"/></svg></span>
       <div class="sheet-title">
         <h2 id="resume-dialog-title">Add a resume version</h2>
-        <p id="resume-dialog-sub">Check the text nuj read from your file and fix anything that came out wrong. Only the text is kept, not the file.</p>
+        <p id="resume-dialog-sub">Check the text nuj read from your file and fix anything that came out wrong.</p>
       </div>
       <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
         <svg class="icon"><use href="#i-x"/></svg>
@@ -618,6 +618,7 @@
           <div class="label-row">
             <label for="rv-text">Resume text</label>
             <button class="btn btn-sm" type="button" id="rv-file-btn"><svg class="icon"><use href="#i-upload"/></svg><span>Read from a file</span></button>
+            <input type="file" id="rv-pdf" accept=".pdf,application/pdf" hidden>
             <input type="file" id="rv-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
           </div>
           <textarea id="rv-text" name="text" rows="14" spellcheck="false" placeholder="Paste your resume here, or read it from a PDF or Word file"></textarea>

@@ -18,9 +18,10 @@ import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID 
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
-import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
-import { computeInsights, outcomeOf } from './src/insights.js';
-import { aiStatus, reserveRun, hashOf, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { textPdf } from './src/textpdf.js';
+import { computeInsights, outcomeOf, reviewLines, quickChecks } from './src/insights.js';
+import { aiStatus, reserveRun, hashOf, findLine, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -143,6 +144,8 @@ app.use(requireLogin);
 app.use(express.static('public'));
 app.use('/vendor/d3', express.static(path.resolve('node_modules/d3/dist')));
 app.use('/vendor/d3-sankey', express.static(path.resolve('node_modules/d3-sankey/dist')));
+// PDF.js, for showing an uploaded resume as its real pages (loaded only on that page).
+app.use('/vendor/pdfjs', express.static(path.resolve('node_modules/pdfjs-dist/build')));
 
 // Every API call works on the signed-in person's own data (req.account) and nobody else's.
 app.use('/api', async (req, res, next) => {
@@ -521,26 +524,53 @@ async function resumePicture(user) {
       role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions).name,
     })),
   });
-  return { versions, insights, input, inputHash: input ? hashOf(input) : null };
+  return { versions, insights, current, input, inputHash: input ? hashOf(input) : null };
+}
+
+// One version laid out for the preview: each line with what to highlight on it, and the
+// checks on the whole thing. Skills are marked when the postings ask for them.
+const reviewOf = (version, insights) => ({
+  versionId: version.id,
+  name: version.name,
+  lines: reviewLines(version.text, new Map(insights.keywords.matched.map(k => [k.name, k.postings]))),
+  checks: quickChecks(version.text),
+});
+
+// Saved suggestions, with the lines each one is about found in the version it was written
+// for (they move if you edit the text, and drop out if the line is gone).
+function placedSuggestions(saved, versions, inputHash) {
+  if (!saved) return null;
+  const text = versions.find(v => v.id === saved.versionId)?.text ?? '';
+  return {
+    at: saved.at, version: saved.version, versionId: saved.versionId ?? null,
+    upToDate: saved.inputHash === inputHash,
+    items: saved.items.map(s => {
+      const rewrites = (s.rewrites || []).map(r => ({ ...r, line: findLine(text, r.from) })).filter(r => r.line >= 0);
+      const lines = [...new Set([...(s.lines || []).map(l => findLine(text, l)), ...rewrites.map(r => r.line)])].filter(i => i >= 0).sort((a, b) => a - b);
+      return { ...s, lines, rewrites };
+    }),
+  };
 }
 
 app.get('/api/resume', async (req, res) => {
-  const { versions, insights, inputHash } = await resumePicture(req.account);
-  const saved = req.account.store.db.insights?.suggestions ?? null;
+  const { versions, insights, current, inputHash } = await resumePicture(req.account);
   res.json({
     versions: versions.map(versionMeta),
     insights,
     limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
     ai: aiStatus(req.account, { demo: DEMO }),
     // upToDate: nothing the suggestions were based on has changed since.
-    suggestions: saved && { at: saved.at, version: saved.version, items: saved.items, upToDate: saved.inputHash === inputHash },
+    suggestions: placedSuggestions(req.account.store.db.insights?.suggestions, versions, inputHash),
+    review: current ? reviewOf(current, insights) : null,
   });
 });
 
+// One version with its text; ?review=1 lays it out for the preview instead.
 app.get('/api/resume/:id', async (req, res) => {
-  const version = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
+  const { versions, insights } = req.query.review ? await resumePicture(req.account) : { versions: await listVersions(req.account.id) };
+  const version = versions.find(v => v.id === req.params.id);
   if (!version) return res.status(404).json({ error: 'That version was deleted' });
-  res.json(version);
+  res.json(req.query.review ? reviewOf(version, insights) : version);
 });
 
 // Read the text out of a PDF or Word file, for you to check before saving. The file
@@ -567,12 +597,36 @@ app.patch('/api/resume/:id', async (req, res) => {
   res.json(versionMeta(version));
 });
 
-// Deleting returns the version, so the page's Undo can add it back as it was.
+// Deleting returns the version, so the page's Undo can add it back as it was (its PDF
+// is kept until the Undo has passed).
 app.delete('/api/resume/:id', async (req, res) => {
   const { removed, error, status } = await deleteVersion(req.account.id, req.params.id);
   if (error) return res.status(status || 400).json({ error });
+  if (removed.pdf) dropPdfLater(req.account.id, removed.id);
   broadcast(req.account.id);
   res.json({ removed });
+});
+
+// A version's PDF: shown on the page as its real pages. Only a PDF is kept.
+app.get('/api/resume/:id/pdf', async (req, res) => {
+  const pdf = await loadPdf(req.account.id, req.params.id);
+  if (!pdf) return res.status(404).json({ error: 'This version has no PDF' });
+  res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-cache', 'Content-Disposition': 'inline' });
+  res.send(pdf);
+});
+
+app.put('/api/resume/:id/pdf', express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a PDF to upload' });
+  const { version, error, status } = await savePdf(req.account.id, req.params.id, req.body);
+  if (error) return res.status(status || 400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+app.delete('/api/resume/:id/pdf', async (req, res) => {
+  await removePdf(req.account.id, req.params.id);
+  broadcast(req.account.id);
+  res.json({ ok: true });
 });
 
 // --- AI for resume insights (src/ai.js) -------------------------------------------
@@ -598,7 +652,7 @@ app.post('/api/insights/suggestions', async (req, res) => {
   const user = req.account;
   const blocked = aiBlocked(user);
   if (blocked) return res.status(blocked.status).json(blocked.body);
-  const { input, inputHash } = await resumePicture(user);
+  const { input, inputHash, current } = await resumePicture(user);
   if (!input) return res.status(400).json({ error: 'Add your resume first' });
   const db = user.store.db;
   const saved = db.insights.suggestions;
@@ -616,7 +670,7 @@ app.post('/api/insights/suggestions', async (req, res) => {
   }
   // New suggestions replace the open ones; the ones you acted on or set aside stay listed.
   const kept = (saved?.items || []).filter(s => s.state !== 'open').slice(0, 20);
-  db.insights.suggestions = { inputHash, at: new Date().toISOString(), version: input.currentVersion, items: [...items, ...kept] };
+  db.insights.suggestions = { inputHash, at: new Date().toISOString(), version: input.currentVersion, versionId: current.id, items: [...items, ...kept] };
   changed(user);
   res.json({ ai: aiStatus(user, { demo: DEMO }) });
 });
@@ -1009,7 +1063,14 @@ await initStorage({ demo: DEMO });
 if (DEMO) {
   await setKv('errors', buildDemoErrors());
   await setKv('feedback', buildDemoFeedback());
-  await setKv(`resumes_${DEMO_ID}`, buildDemoResumes());
+  // The demo's resumes as real PDFs, so the preview shows pages like an upload would.
+  const resumes = buildDemoResumes();
+  for (const v of resumes) {
+    const pdf = textPdf(v.text);
+    await setKv(`resume_pdf_${DEMO_ID}_${v.id}`, pdf.toString('base64'));
+    v.pdf = { size: pdf.length, at: v.updatedAt };
+  }
+  await setKv(`resumes_${DEMO_ID}`, resumes);
 }
 await initSecrets();
 

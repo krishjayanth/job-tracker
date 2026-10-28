@@ -134,6 +134,17 @@ const clip = (s, n) => String(s ?? '').trim().slice(0, n);
 // Text compared loosely: case, punctuation and spacing don't matter.
 const loose = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, ' ').trim();
 
+// Which line of the resume a quote from it is (-1 when it isn't one), so the preview can
+// highlight it. The model's copy may differ in case, punctuation or a cut-off end.
+export function findLine(text, quote) {
+  const q = loose(quote);
+  if (q.length < 12) return -1;
+  return String(text).split('\n').findIndex(line => {
+    const l = loose(line.replace(/^\s*[•●▪◦‣■□*–-]\s*/, ''));
+    return l.length >= 12 && (l.includes(q) || q.includes(l));
+  });
+}
+
 // ---- suggestions for the resume -------------------------------------------------------
 
 export const SECTIONS = ['Summary', 'Experience', 'Projects', 'Skills', 'Education', 'Layout', 'Overall'];
@@ -144,19 +155,27 @@ const SUGGESTIONS_SCHEMA = {
       type: 'array',
       items: {
         type: 'object', additionalProperties: false,
-        required: ['title', 'why', 'change', 'section', 'keywords'],
+        required: ['title', 'why', 'change', 'section', 'keywords', 'lines', 'rewrites'],
         properties: {
           title: { type: 'string', description: 'The change in a few words, like "Lead with your projects".' },
           why: { type: 'string', description: 'One or two sentences on why, pointing at a number or skill from the data given.' },
           change: { type: 'string', description: 'Exactly what to change in the resume, concrete enough to do in ten minutes.' },
           section: { type: 'string', enum: SECTIONS },
           keywords: { type: 'array', items: { type: 'string' }, description: 'Skills from the given lists this suggestion is about, spelled as given. Empty if none.' },
+          lines: { type: 'array', items: { type: 'string' }, description: 'Lines copied exactly from the resume that this suggestion is about, so they can be highlighted. Empty if it is about something the resume lacks.' },
+          rewrites: {
+            type: 'array', description: 'Up to 2 of those lines rewritten as suggested, keeping them true. Empty if the change is not a rewording.',
+            items: {
+              type: 'object', additionalProperties: false, required: ['from', 'to'],
+              properties: { from: { type: 'string', description: 'A line copied exactly from the resume.' }, to: { type: 'string' } },
+            },
+          },
         },
       },
     },
   },
 };
-const SUGGESTIONS_SYSTEM = `You help a job seeker improve their resume. You get their current resume, how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and the skills named in the postings they applied to, with whether their resume mentions each one.
+const SUGGESTIONS_SYSTEM = `You help a job seeker improve their resume. Each suggestion is shown beside their resume with the lines it's about highlighted, so name those lines (copied exactly) whenever a suggestion is about particular lines, and give a rewrite when the change is a rewording. You get their current resume, how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and the skills named in the postings they applied to, with whether their resume mentions each one.
 
 Give 3 to 6 suggestions, most useful first. Each must be specific to this person's resume and backed by the data given: name the number or skill it rests on. Prefer changes with evidence behind them (a skill many postings ask for that the resume never mentions, a version or kind of role that does better). Don't suggest adding skills the person may not have; suggest showing skills they plausibly have but don't mention, and say to add them only if true. Don't invent facts about the person. Write plainly, in the second person, without jargon.`;
 
@@ -179,8 +198,10 @@ export function suggestionsInput({ resumeText, versionName, insights, apps }) {
 }
 
 // Only what holds up: known sections, keywords that were in the lists given, sane lengths.
+// Lines and rewrites only count when they really are lines of the resume.
 export function checkSuggestions(out, input) {
   const known = new Map([...input.skillsMissingFromResume, ...input.skillsInResume].map(k => [k.skill.toLowerCase(), k.skill]));
+  const inResume = q => findLine(input.resume ?? '', q) >= 0;
   return (Array.isArray(out?.suggestions) ? out.suggestions : [])
     .map(s => ({
       id: crypto.randomUUID(),
@@ -189,6 +210,11 @@ export function checkSuggestions(out, input) {
       change: clip(s.change, 600),
       section: SECTIONS.includes(s.section) ? s.section : 'Overall',
       keywords: [...new Set((s.keywords || []).map(k => known.get(String(k).toLowerCase())).filter(Boolean))].slice(0, 6),
+      lines: [...new Set((Array.isArray(s.lines) ? s.lines : []).map(l => clip(l, 400)).filter(inResume))].slice(0, 6),
+      rewrites: (Array.isArray(s.rewrites) ? s.rewrites : [])
+        .filter(r => inResume(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from))
+        .map(r => ({ from: clip(r.from, 400), to: clip(r.to, 400) }))
+        .slice(0, 2),
       state: 'open',
     }))
     .filter(s => s.title && s.change)
@@ -233,9 +259,8 @@ const FIT_SYSTEM = `You compare a job seeker's resume with one job description. 
 // Keep what can be checked: requirements quoted from the posting, rewrites of real lines.
 export function checkFit(out, { resumeText, posting }) {
   const postingLoose = loose(posting);
-  const resumeLines = new Set(resumeText.split('\n').map(l => loose(l.replace(/^\s*[•*–-]\s*/, ''))).filter(l => l.length >= 12));
   const fromPosting = list => [...new Set((Array.isArray(list) ? list : []).map(x => clip(x, 80)).filter(x => x && postingLoose.includes(loose(x))))].slice(0, 8);
-  const resumeHasLine = from => { const l = loose(from); return l.length >= 12 && [...resumeLines].some(line => line.includes(l) || l.includes(line)); };
+  const resumeHasLine = from => findLine(resumeText, from) >= 0;
   return {
     match: ['strong', 'partial', 'weak'].includes(out?.match) ? out.match : 'partial',
     summary: clip(out?.summary, 400),
@@ -259,6 +284,14 @@ export async function checkApplicationFit({ resumeText, posting, role }, { clien
 // ---- demo mode: no key, so answers are put together from the same data -----------------
 
 export function demoSuggestions(input) {
+  const bullets = (input.resume ?? '').split('\n').filter(l => /^\s*•/.test(l)).map(l => l.replace(/^\s*•\s*/, ''));
+  const noNumber = bullets.filter(b => !/\d/.test(b));
+  // Bullets whose result comes at the end ("…, raising sign-ups by 18%"), and the line
+  // under the Skills heading.
+  const resultLast = bullets.filter(b => frontResult(b));
+  const lines = (input.resume ?? '').split('\n');
+  const skillsAt = lines.findIndex(l => /^\s*(technical )?skills\s*:?\s*$/i.test(l));
+  const skillsLine = skillsAt >= 0 ? lines[skillsAt + 1] ?? '' : '';
   const missing = input.skillsMissingFromResume.filter(k => k.movedForward).slice(0, 3);
   // Only groups with enough finished applications to mean something, as on the page.
   const rate = g => g.movedForward / g.finished;
@@ -270,28 +303,50 @@ export function demoSuggestions(input) {
       title: `Show ${missing.map(k => k.skill).join(', ')} if you've used ${missing.length > 1 ? 'them' : 'it'}`,
       why: `${missing[0].skill} is in ${missing[0].postings} of your postings, and ${missing[0].movedForward} of those moved forward, but your resume never names it.`,
       change: `If you've used ${missing.length > 1 ? 'these' : 'it'} in a project or job, name ${missing.length > 1 ? 'them' : 'it'} in that bullet and add ${missing.length > 1 ? 'them' : 'it'} to your Skills line. If not, leave ${missing.length > 1 ? 'them' : 'it'} out.`,
-      section: 'Skills', keywords: missing.map(k => k.skill),
+      section: 'Skills', keywords: missing.map(k => k.skill), lines: [skillsLine], rewrites: [],
     },
     current?.finished >= 5 && older.length && rate(current) > rate(older[0]) && {
       title: `Keep the shape of ${current.version}`,
       why: `${current.version} moved forward ${current.movedForward} of ${current.finished} times, against ${older[0].movedForward} of ${older[0].finished} for ${older[0].version}.`,
       change: 'When you write your next version, start from this one: keep its order of sections and its bullets with numbers, and change one thing at a time so you can see what helps.',
-      section: 'Overall', keywords: [],
+      section: 'Overall', keywords: [], lines: [], rewrites: [],
     },
     best && {
       title: `Aim more applications at ${best.kind.toLowerCase()} roles`,
       why: `${best.kind} roles moved forward ${best.movedForward} of ${best.finished} times, your best kind of role so far.`,
       change: `Put the bullet most relevant to ${best.kind.toLowerCase()} work first under each job, so it's the first thing read.`,
-      section: 'Experience', keywords: [],
+      section: 'Experience', keywords: [], lines: [], rewrites: [],
     },
-    {
-      title: 'Open each bullet with a result',
-      why: 'Bullets that start with the outcome ("Cut load time by 45%") are easier to skim than ones that end with it.',
-      change: 'Take your three strongest bullets and move the number to the front.',
-      section: 'Experience', keywords: [],
+    noNumber.length && {
+      title: 'Give these bullets a result',
+      why: `${noNumber.length} of your ${bullets.length} bullets have no number in them, so they say what you did but not how it went.`,
+      change: 'Add how many, how much or how fast, where you know it. A rough number ("about 20 users") still helps.',
+      section: 'Experience', keywords: [], lines: noNumber, rewrites: [],
+    },
+    resultLast.length && {
+      title: 'Open these bullets with the result',
+      why: 'Bullets that start with the outcome ("Raised sign-ups by 18%") are easier to skim than ones that end with it.',
+      change: 'Move the result to the front of these bullets, then say how you got it.',
+      section: 'Experience', keywords: [], lines: resultLast.slice(0, 3),
+      rewrites: resultLast.slice(0, 2).map(b => ({ from: b, to: frontResult(b) })),
     },
   ].filter(Boolean);
   return checkSuggestions({ suggestions: items }, input);
+}
+
+// "Rebuilt 6 member pages in JavaScript, raising mobile sign-ups by 18%" ->
+// "Raised mobile sign-ups by 18% by rebuilding…": only for the demo, and only that shape.
+function frontResult(bullet) {
+  const m = bullet.match(/^(.+?),\s+(raising|cutting|saving|reducing|increasing|growing)\s+(.+)$/i);
+  if (!m) return '';
+  const verb = { raising: 'Raised', cutting: 'Cut', saving: 'Saved', reducing: 'Reduced', increasing: 'Increased', growing: 'Grew' }[m[2].toLowerCase()];
+  // "Rebuilt 6 pages" -> "rebuilding 6 pages"
+  const IRREGULAR = { rebuilt: 'rebuilding', built: 'building', led: 'leading', wrote: 'writing', ran: 'running', made: 'making', cut: 'cutting' };
+  const [first, ...rest] = m[1].split(' ');
+  const lower = first.toLowerCase();
+  const doing = IRREGULAR[lower] ?? (lower.endsWith('ed') ? `${lower.slice(0, -2)}ing` : '');
+  if (!doing) return '';
+  return `${verb} ${m[3].replace(/\.$/, '')} by ${[doing, ...rest].join(' ')}`;
 }
 
 export function demoFit({ resumeText, posting }) {

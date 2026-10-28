@@ -76,7 +76,8 @@ const pattern = words => new RegExp(`(?<![\\w+#.])(?:${words.map(escapeRe).join(
 export const SKILLS = SKILL_LIST.map(([name, ...aliases]) => {
   const aliasOnly = name.startsWith('!');
   name = name.replace(/^!/, '');
-  return { name, re: pattern((aliasOnly ? aliases : [name, ...aliases]).map(w => w.toLowerCase())) };
+  const re = pattern((aliasOnly ? aliases : [name, ...aliases]).map(w => w.toLowerCase()));
+  return { name, re, every: new RegExp(re.source, 'gi') };
 });
 
 // Every skill named somewhere in the text, by its display name.
@@ -85,6 +86,17 @@ export function findSkills(text) {
   if (!text) return found;
   for (const s of SKILLS) if (s.re.test(text)) found.add(s.name);
   return found;
+}
+
+// Where skills are named in one line, as [start, end) positions. Where two overlap
+// ("React Native" and "React"), the longer one wins.
+export function skillPositions(line) {
+  const found = [];
+  for (const s of SKILLS) for (const m of line.matchAll(s.every)) found.push({ name: s.name, start: m.index, end: m.index + m[0].length });
+  found.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  const kept = [];
+  for (const f of found) if (!kept.some(k => f.start < k.end && k.start < f.end)) kept.push(f);
+  return kept.sort((a, b) => a.start - b.start);
 }
 
 // ---- role types -------------------------------------------------------------------

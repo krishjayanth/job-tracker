@@ -32,6 +32,11 @@
   --no_response: #6b6b6b;
   --in_progress: #e5e5e5;
   --flow: rgba(255, 255, 255, .11);
+  /* The resume preview's highlighter: a green wash with a solid line under it marks
+     every line to change. The one colour here that isn't a stage. */
+  --mark: rgba(34, 197, 94, .3);
+  --mark-soft: rgba(34, 197, 94, .13);
+  --mark-line: rgba(74, 222, 128, .9);
 
   --radius: 14px;
   --radius-sm: 9px;
@@ -85,6 +90,9 @@
   --no_response: #8f8f8f;
   --in_progress: #262626;
   --flow: rgba(0, 0, 0, .09);
+  --mark: rgba(34, 197, 94, .3);
+  --mark-soft: rgba(34, 197, 94, .14);
+  --mark-line: rgba(21, 128, 61, .9);
   --withdrawn: #5c5c5c;
 
   --shadow: 0 1px 2px rgba(16, 24, 40, .06);
@@ -1619,4 +1627,160 @@ table.apps { width: 100%; border-collapse: collapse; }
 @media (max-width: 760px) {
   .suggestions { grid-template-columns: 1fr; }
   .panel-head:has(.ai-run) { flex-wrap: wrap; }
+}
+
+/* The resume preview: the resume as a page beside what to change. Lines that need work
+   are highlighted; selecting one opens its notes beneath it. */
+.review-tools { display: flex; align-items: center; gap: 8px; flex: none; }
+.review-tools .select-wrap { height: 28px; }
+.review-tools .select-wrap select { max-width: 220px; padding-left: 10px; font-size: 12.5px; } /* no icon on its left */
+.review-layers { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 16px; }
+.layer {
+  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border: 0; border-radius: 999px;
+  background: none; box-shadow: inset 0 0 0 1px var(--border); color: var(--muted);
+  font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: color var(--fast), box-shadow var(--fast), background var(--fast);
+}
+.layer[aria-pressed="true"] { color: var(--text); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.layer:hover { color: var(--text); }
+.layer:focus-visible { outline: none; box-shadow: var(--focus); }
+.layer .num { color: var(--muted); font-weight: 400; }
+/* Each switch shows the mark it controls. */
+.layer i { width: 18px; height: 12px; border-radius: 3px; flex: none; }
+.layer-suggestion i, .layer-number i { border-radius: 2px 2px 0 0; background: var(--mark-soft); box-shadow: inset 0 -2px var(--mark-line); }
+.layer-weak i { border-radius: 2px 2px 0 0; background: var(--mark); box-shadow: inset 0 -2px var(--mark-line); }
+.layer-skill i { height: 2px; border-radius: 0; background: var(--text-2); }
+.layer[aria-pressed="false"] i { opacity: .35; }
+
+.review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; align-items: start; }
+.paper {
+  position: relative; padding: 36px 44px 40px; border-radius: 12px; background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border), 0 18px 40px -28px rgba(0, 0, 0, .5);
+  font-size: 13.5px; line-height: 1.55; color: var(--text-2); min-width: 0;
+}
+.ln { position: relative; display: flex; gap: 10px; padding: 2px 30px 2px 8px; margin: 0 -8px; border-radius: 6px; overflow-wrap: anywhere; }
+.ln.gap { margin-top: 12px; }
+.ln.name { font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: var(--text); line-height: 1.25; }
+.ln.contact { font-size: 12.5px; color: var(--muted); }
+.ln.heading {
+  margin-top: 20px; margin-bottom: 4px; padding-bottom: 4px; border-radius: 0; box-shadow: inset 0 -1px var(--border);
+  font-size: 11.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text);
+}
+.ln.text { color: var(--text); font-weight: 500; }
+.ln.bullet { padding-left: 22px; }
+.ln-dot { position: absolute; left: 10px; top: calc(.775em + 1px); width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
+.ln-text { min-width: 0; }
+
+/* The marks */
+.hl-weak { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 2px; margin: 0 -2px; }
+.hl-skill { text-decoration: underline; text-decoration-color: var(--text-2); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.ln.flagged { background: var(--mark-soft); }
+.ln.flagged .ln-text { text-decoration: underline solid var(--mark-line); text-decoration-thickness: 1.5px; text-underline-offset: 4px; text-decoration-skip-ink: none; }
+.ln.flagged.lit { background: var(--mark); }
+
+/* Lines you can select */
+.ln.flagged { cursor: pointer; transition: background var(--fast); }
+.ln.flagged:hover { background: var(--mark); }
+.ln.flagged:focus-visible { outline: none; box-shadow: var(--focus); }
+.ln.flagged.open { background: var(--mark); }
+.ln-flag { position: absolute; right: 8px; top: 4px; display: grid; place-items: center; color: var(--mark-line); }
+.ln-flag .icon { width: 14px; height: 14px; }
+.ln.flash, .suggestion.flash { animation: flash 1.2s var(--ease); }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--mark-line); } 100% { box-shadow: 0 0 0 3px transparent; } }
+
+/* A selected line's notes, right under it */
+.ln-note { margin: 4px 0 8px 14px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-strong); animation: note-in .22s var(--ease); }
+@keyframes note-in { from { opacity: 0; transform: translateY(-4px); } }
+.ln-note ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.ln-note li { font-size: 13px; line-height: 1.5; color: var(--muted); }
+.ln-note strong { display: block; color: var(--text); font-weight: 600; }
+.ln-note .ln-sg { display: grid; grid-template-columns: auto 1fr; gap: 10px; }
+.ln-note .ln-sg > .icon { width: 15px; height: 15px; margin-top: 2px; color: var(--mark-line); }
+.ln-try { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 10px; margin: 8px 0 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface); color: var(--text); }
+.ln-try-label { font-size: 11.5px; font-weight: 600; color: var(--muted); line-height: 1.7; }
+.ln-try .btn .copied { display: none; }
+.ln-try .btn.done .copied { display: block; }
+.ln-note .meta-link { margin: 4px 0 0; }
+
+/* Beside the page */
+.review-side { display: grid; gap: 24px; min-width: 0; }
+.review-side .checks { grid-template-columns: 1fr; gap: 12px; }
+.review-sg { display: grid; gap: 10px; }
+.sg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sg-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.sg-intro { margin: 0; line-height: 1.5; }
+.review-sg .sg-note { margin: 0; }
+.review-sg .suggestions { grid-template-columns: 1fr; gap: 10px; }
+.review-sg .sg-decided { margin-top: 4px; }
+.review-sg .sg-revoke { margin-top: 4px; }
+.sg-locate { display: inline-flex; align-items: center; gap: 6px; justify-self: start; }
+.sg-locate .icon { width: 13px; height: 13px; }
+
+@media (min-width: 1021px) {
+  /* The notes stay in view beside a long resume. */
+  .review-side { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; padding-right: 4px; margin-right: -4px; overscroll-behavior: contain; }
+}
+@media (max-width: 1020px) {
+  .review-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .paper { padding: 22px 18px 26px; margin: 0 -4px; }
+  .ln { padding-right: 24px; }
+  .review-tools { flex-wrap: wrap; }
+  .panel-head:has(.review-tools) { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* A fading outline, not movement: it keeps its length so you can find the line. */
+  .ln.flash, .suggestion.flash { animation-duration: 1.2s !important; }
+}
+
+/* The PDF itself: real pages (always white, like paper), with the highlights laid over
+   the lines. Highlights multiply into the page so the text under them stays crisp. */
+.review-page { display: grid; gap: 12px; min-width: 0; }
+.review-mode { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.review-mode button { height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.review-mode button[aria-pressed="true"] { background: var(--surface-hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.review-mode button:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.pdf-view { display: grid; gap: 16px; }
+.pdf-page {
+  position: relative; width: 100%; border-radius: 4px; background: #fff;
+  box-shadow: 0 0 0 1px var(--border), 0 24px 48px -28px rgba(0, 0, 0, .6);
+}
+.pdf-slot { position: absolute; inset: 0; overflow: hidden; border-radius: 4px; }
+.pdf-canvas { display: block; width: 100%; height: 100%; }
+.pdf-marks { position: absolute; inset: 0; }
+.pdf-marks > * { position: absolute; }
+.pdf-line, .pdf-weak, .pdf-skill { pointer-events: none; border-radius: 2px; mix-blend-mode: multiply; }
+.pdf-line { border-radius: 2px 2px 0 0; background: rgba(34, 197, 94, .16); box-shadow: inset 0 -1.5px rgba(21, 128, 61, .9); }
+.pdf-line.lit, .pdf-line.open { background: rgba(34, 197, 94, .34); }
+.pdf-weak { border-radius: 2px 2px 0 0; background: rgba(34, 197, 94, .38); }
+.pdf-skill { box-shadow: inset 0 -1.5px rgba(23, 23, 23, .6); }
+.pdf-hit { padding: 0; border: 0; border-radius: 3px; background: none; cursor: pointer; margin: -2px -4px; box-sizing: content-box; padding: 2px 4px; }
+.pdf-hit:hover { background: rgba(34, 197, 94, .12); }
+.pdf-hit:focus-visible { outline: none; box-shadow: 0 0 0 2px #111, 0 0 0 4px rgba(34, 197, 94, .5); }
+.pdf-line.flash { animation: flash 1.2s var(--ease); }
+.pdf-note { position: absolute; left: 4%; right: 4%; z-index: 2; }
+.pdf-note .ln-note { margin: 0; padding-right: 40px; box-shadow: inset 0 0 0 1px var(--border-strong), 0 18px 40px -16px rgba(0, 0, 0, .55); }
+.pdf-note-close { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; z-index: 1; }
+.pdf-skeleton { background: var(--surface-2); animation: pdf-wait 1.4s ease-in-out infinite alternate; }
+@keyframes pdf-wait { to { opacity: .55; } }
+.pdf-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; color: var(--muted); font-size: 12.5px; }
+.pdf-foot > .icon { width: 14px; height: 14px; flex: none; }
+.pdf-foot .meta-link { margin: 0; }
+
+/* A version with no PDF yet: ask for it, above the text view. */
+.pdf-ask { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; border: 1px dashed var(--border-strong); }
+.pdf-ask .drop-icon { width: 38px; height: 38px; border-radius: 10px; }
+.pdf-ask .drop-icon .icon { width: 18px; height: 18px; }
+.pdf-ask strong { display: block; font-weight: 600; }
+.pdf-ask span:not(.drop-icon) { display: block; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .pdf-ask { grid-template-columns: auto 1fr; }
+  .pdf-ask .btn { grid-column: 1 / -1; justify-self: start; }
+  .pdf-note { left: 2%; right: 2%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pdf-skeleton { animation: none; }
+  .pdf-line.flash { animation-duration: 1.2s !important; }
 }

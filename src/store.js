@@ -98,6 +98,18 @@ export async function deleteKv(key) {
   else fs.rmSync(kvFile(key), { force: true });
 }
 
+// Every key starting with `prefix` (a person's resume PDFs, when their account goes).
+export async function deleteKvPrefix(prefix) {
+  if (memory) {
+    for (const k of [...memory.keys()]) if (k.startsWith(prefix)) memory.delete(k);
+  } else if (pool) {
+    // Compared as text, not LIKE: an id's "_" would be a wildcard there.
+    await pool.query('delete from app_state where left(key, length($1)) = $1', [prefix]);
+  } else {
+    for (const f of fs.readdirSync(DATA_DIR)) if (f.startsWith(prefix) && f.endsWith('.json')) fs.rmSync(path.join(DATA_DIR, f), { force: true });
+  }
+}
+
 export const newId = () => crypto.randomUUID();
 
 // ---- one tracker per person ---------------------------------------------------------

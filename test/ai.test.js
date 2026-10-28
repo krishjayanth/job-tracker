@@ -122,3 +122,19 @@ test('demo answers pass the same checks', () => {
   assert.ok(items.length >= 2);
   assert.deepEqual(items[0].keywords, ['Kubernetes']);
 });
+
+test('suggestions keep the resume lines they point at, and drop lines that are not there', () => {
+  const resume = 'Experience\n• Rebuilt 6 member pages in JavaScript, raising sign-ups by 18%\n• Fixed bugs';
+  const [s] = ai.checkSuggestions({ suggestions: [{
+    title: 'Lead with results', why: 'Easier to skim', change: 'Put the result first', section: 'Experience', keywords: [],
+    lines: ['rebuilt 6 member pages in javascript, raising sign-ups by 18%', 'Led a team of 40 engineers'],
+    rewrites: [
+      { from: 'Rebuilt 6 member pages in JavaScript, raising sign-ups by 18%', to: 'Raised sign-ups by 18% by rebuilding 6 pages' },
+      { from: 'Invented the internet in a weekend', to: 'Invented it' },
+    ],
+  }] }, { ...input, resume });
+  assert.equal(s.lines.length, 1);
+  assert.equal(s.rewrites.length, 1);
+  assert.equal(ai.findLine(resume, s.lines[0]), 1);
+  assert.equal(ai.findLine(resume, 'Fixed bugs'), -1); // too short to tell apart
+});

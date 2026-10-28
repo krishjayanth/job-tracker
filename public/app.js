@@ -2194,6 +2194,11 @@ async function loadResume() {
   let data;
   try {
     data = await api('GET', '/api/resume');
+    // Showing an older version in the preview: lay that one out instead.
+    if (reviewId && reviewId !== data.review?.versionId) {
+      if (data.versions.some(v => v.id === reviewId)) data.review = await api('GET', `/api/resume/${reviewId}?review=1`);
+      else reviewId = null;
+    }
   } catch (err) {
     resumeJson = '';
     $('#resume-body').innerHTML = `<p class="resume-error">${icon('alert')}${esc(err.message)}</p>`;
@@ -2226,7 +2231,8 @@ function renderResume() {
   since.textContent = !ins.total ? 'Add applications to see how your resume is doing.'
     : `Based on ${appCount(ins.counted)} with an outcome${ins.pending ? `. ${ins.pending} more ${ins.pending === 1 ? 'is' : 'are'} too new to count yet` : ''}.`;
   const key = focusKey();
-  $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + workingHtml() + keywordsHtml() + suggestionsHtml() + checksHtml();
+  $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + resumeReviewHtml() + workingHtml() + keywordsHtml();
+  attachPdfPages();
   if (key) $('#resume-body').querySelector(key)?.focus();
 }
 // "Acted on or set aside" stays open across redraws once you open it.
@@ -2244,7 +2250,7 @@ function resumeEmptyHtml() {
         <button class="btn btn-primary" type="button" data-resume-file>${icon('upload')}Choose a file</button>
         <button class="btn" type="button" data-resume-paste>Paste text instead</button>
       </div>
-      <span class="fine">${icon('shield')}nuj keeps the text only, not the file. Only you can see it.</span>
+      <span class="fine">${icon('shield')}nuj keeps the text, and a PDF so it can show you its pages. Only you can see them.</span>
     </section>
     <ul class="resume-promises">
       <li>${icon('chart')}<span><strong>What's working</strong>How often applications move forward, by resume version and by kind of role.</span></li>
@@ -2375,20 +2381,6 @@ function keywordsHtml() {
     </section>`;
 }
 
-function checksHtml() {
-  const { checks, currentId } = resume.insights;
-  if (!checks.length) return '';
-  const current = resume.versions.find(v => v.id === currentId);
-  return `
-    <section class="panel" aria-labelledby="checks-title">
-      <div class="panel-head"><div class="head-text"><h2 id="checks-title">Quick checks</h2>
-        <span class="hint">On ${esc(current.name)}, your current version.</span></div></div>
-      <ul class="checks">${checks.map(c => `
-        <li class="${c.ok ? 'ok' : 'warn'}">${icon(c.ok ? 'check' : 'alert')}<span><strong>${esc(c.title)}</strong>${esc(c.detail)}</span></li>`).join('')}
-      </ul>
-    </section>`;
-}
-
 // "Show applications" on any group: the table, filtered to just those.
 function showOnly(spec) {
   const [kind, ...rest] = spec.split(':');
@@ -2469,7 +2461,9 @@ function countResumeText() {
 }
 $('#rv-text').addEventListener('input', countResumeText);
 
-async function openVersionDialog({ id = null, text = '', note = '' } = {}) {
+let sheetFile = null; // { file, kind } read into the sheet, kept with the version on save
+async function openVersionDialog({ id = null, text = '', note = '', file = null } = {}) {
+  sheetFile = file;
   if (!id && resume && resume.versions.length >= resume.limits.versions) {
     return toast(`You can keep up to ${resume.limits.versions} versions. Delete one to add another`);
   }
@@ -2481,8 +2475,9 @@ async function openVersionDialog({ id = null, text = '', note = '' } = {}) {
   $('#resume-dialog-title').textContent = v ? `Edit ${v.name}` : 'Add a resume version';
   $('#resume-dialog-sub').textContent = v
     ? 'Change its name, the date you started sending it, or its text. Read a new file to replace the text.'
-    : text ? 'Check the text nuj read from your file and fix anything that came out wrong. Only the text is kept, not the file.'
-      : 'Paste your resume, or read it from a PDF or Word file. Only the text is kept, not the file.';
+    : text ? 'Check the text nuj read from your file and fix anything that came out wrong.'
+      + (file?.kind === 'pdf' ? ' The PDF is kept too, so you can see its pages here.' : '')
+      : 'Paste your resume, or read it from a PDF or Word file. A PDF is kept so you can see its pages here.';
   $('#rv-name').value = v?.name ?? (resume?.versions.length ? '' : defaultVersionName());
   $('#rv-name').placeholder = defaultVersionName();
   $('#rv-from').value = v?.usedFrom ?? isoDate(new Date().toISOString());
@@ -2514,14 +2509,15 @@ async function takeResumeFile(file) {
   const drop = $('#resume-drop');
   if (inSheet) resumeMsg(`Reading ${file.name}…`); else drop?.classList.add('busy');
   try {
-    const { text, cut } = await readResumeFile(file);
+    const { text, cut, kind } = await readResumeFile(file);
     const note = cut ? 'Only the first 40,000 characters fit, so the end was left out.' : '';
     if (inSheet) {
+      sheetFile = { file, kind };
       $('#rv-text').value = text;
       countResumeText();
       resumeMsg(note || `Read ${file.name}. Check the text below.`, note ? '' : 'ok');
     } else {
-      await openVersionDialog({ text, note });
+      await openVersionDialog({ text, note, file: { file, kind } });
     }
   } catch (err) {
     if (inSheet) resumeMsg(err.message, 'err'); else toast(err.message);
@@ -2547,8 +2543,13 @@ $('#resume-form').addEventListener('submit', async e => {
     const saved = editingVersion
       ? await api('PATCH', `/api/resume/${editingVersion}`, body)
       : await api('POST', '/api/resume', body);
+    // A PDF is kept to show its pages; text from a Word file means an old PDF no longer matches.
+    let pdfProblem = '';
+    if (sheetFile?.kind === 'pdf') await uploadPdf(saved.id, sheetFile.file).catch(err => { pdfProblem = err.message; });
+    else if (sheetFile?.kind === 'docx' && saved.pdf) await api('DELETE', `/api/resume/${saved.id}/pdf`).catch(() => {});
     resumeDialog.close();
-    toast(editingVersion ? `Saved ${saved.name}` : `Added ${saved.name}`);
+    toast(pdfProblem || (editingVersion ? `Saved ${saved.name}` : `Added ${saved.name}`));
+    resumeJson = '';
     await loadResume();
   } catch (err) {
     btn.disabled = false;
@@ -2572,13 +2573,16 @@ const resetTime = iso => {
 };
 const SG_STATE = { done: 'Done', dismissed: 'Not for me' };
 
-function suggestionHtml(s) {
+// `here`: the preview shows the version it was written for, so its lines can be found.
+function suggestionHtml(s, here) {
+  const n = here ? s.lines.length : 0;
   return `
-    <li class="suggestion ${s.state}">
+    <li class="suggestion ${s.state}" data-sg-card="${esc(s.id)}">
       <strong class="sg-title">${esc(s.title)}</strong>
       <p class="sg-why">${esc(s.why)}</p>
       <p class="sg-change">${esc(s.change)}</p>
       ${s.keywords.length ? `<div class="kw-list">${s.keywords.map(k => `<button type="button" class="kw" data-only="skill:${esc(k)}" title="Show the applications that ask for it">${esc(k)}</button>`).join('')}</div>` : ''}
+      ${n && s.state === 'open' ? `<button class="meta-link sg-locate" type="button" data-sg-locate="${esc(s.id)}">${icon('search')}Show ${n === 1 ? 'the line' : `the ${n} lines`} in your resume</button>` : ''}
       <div class="sg-actions">${s.state === 'open'
         ? `<button class="btn btn-sm" type="button" data-sg="${esc(s.id)}" data-sg-state="done" aria-label="Done: ${esc(s.title)}">${icon('check')}Done</button>
            <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="dismissed" aria-label="Not for me: ${esc(s.title)}">Not for me</button>`
@@ -2589,33 +2593,32 @@ function suggestionHtml(s) {
     </li>`;
 }
 
-function suggestionsHtml() {
+function suggestionsHtml(r) {
   const { ai, suggestions: sg } = resume;
   if (!ai?.available || !resume.insights.total) return '';
+  const here = sg?.versionId === r.versionId;
   const open = sg?.items.filter(s => s.state === 'open') ?? [];
   const decided = sg?.items.filter(s => s.state !== 'open') ?? [];
   const fresh = Boolean(sg?.upToDate && open.length);
   const noneLeft = !ai.unlimited && !ai.left;
   const label = !sg ? 'Get suggestions' : fresh ? 'Up to date' : 'Get new suggestions';
   return `
-    <section class="panel" aria-labelledby="sg-title">
-      <div class="panel-head">
-        <div class="head-text"><h2 id="sg-title">Suggestions</h2>
-          <span class="hint">Written by AI from your current resume, how your applications went and the keywords above. You choose which to act on.</span></div>
-        <div class="ai-run">
-          <span class="hint" id="ai-left">${aiLeftText(ai)}</span>
-          <button class="btn btn-sm${sg ? '' : ' btn-primary'}" type="button" data-suggest ${fresh || noneLeft ? 'disabled' : ''}
-            ${fresh ? 'title="Nothing has changed since these were written"' : ''}>${icon('sparkles')}<span>${label}</span></button>
-        </div>
+    <div class="review-sg">
+      <div class="sg-head">
+        <h3 id="sg-title">Suggestions</h3>
+        <button class="btn btn-sm${sg ? '' : ' btn-primary'}" type="button" data-suggest ${fresh || noneLeft ? 'disabled' : ''}
+          ${fresh ? 'title="Nothing has changed since these were written"' : ''}>${icon('sparkles')}<span>${label}</span></button>
       </div>
+      <p class="hint sg-intro">Written by AI from your current resume, how your applications went and the skills your postings ask for. You choose which to act on.${aiLeftText(ai) ? ` <span id="ai-left">${aiLeftText(ai)}.</span>` : ''}</p>
+      ${sg && !here && open.length ? `<p class="sg-note">${icon('alert')}Written for ${esc(sg.version)}. Show that version to see their lines highlighted.</p>` : ''}
       ${sg && !sg.upToDate && open.length ? `<p class="sg-note">${icon('alert')}Your resume or applications have changed since these were written ${timeAgo(sg.at)}.</p>` : ''}
-      ${open.length ? `<ul class="suggestions">${open.map(suggestionHtml).join('')}</ul>`
+      ${open.length ? `<ul class="suggestions">${open.map(s => suggestionHtml(s, here)).join('')}</ul>`
         : `<p class="dim sg-empty">${sg ? "You've gone through every suggestion. Get new ones after you change your resume or apply to more jobs."
           : 'Get 3 to 6 changes to make, each based on your own numbers and the postings you applied to.'}</p>`}
       ${decided.length ? `<details class="sg-decided" ${resumeShowAll.decided ? 'open' : ''}><summary>Acted on or set aside <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
-        <ul class="suggestions">${decided.map(suggestionHtml).join('')}</ul></details>` : ''}
+        <ul class="suggestions">${decided.map(s => suggestionHtml(s, here)).join('')}</ul></details>` : ''}
       ${ai.consent ? '<button class="meta-link sg-revoke" type="button" data-ai-revoke>Stop sending my resume to OpenAI</button>' : ''}
-    </section>`;
+    </div>`;
 }
 
 // Before the first AI run: say what goes to OpenAI and ask. `then` runs once allowed.
@@ -2683,6 +2686,430 @@ $('#view-resume').addEventListener('click', async e => {
     toast("nuj won't send your resume to OpenAI. Your suggestions stay here");
     return loadResume();
   }
+});
+
+// ---- the PDF itself: real pages, with the same highlights drawn on top ----
+// PDF.js draws each page once (kept per version and upload); the highlights are placed by
+// finding each line's words in the PDF's own text, so they sit on the real lines.
+let pdfLibrary = null;
+const pdfDocs = new Map(); // "<version id>:<uploaded at>" -> Promise<{ pages, total }>
+let reviewMode = 'pdf'; // 'pdf' or 'text' when the version has a PDF
+const PDF_MAX_PAGES = 6;
+
+function pdfLib() {
+  pdfLibrary ??= import('/vendor/pdfjs/pdf.min.mjs').then(lib => {
+    lib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+    return lib;
+  });
+  return pdfLibrary;
+}
+
+function pdfDoc(versionId, at) {
+  const key = `${versionId}:${at}`;
+  if (!pdfDocs.has(key)) {
+    pdfDocs.set(key, (async () => {
+      const lib = await pdfLib();
+      const doc = await lib.getDocument({ url: `/api/resume/${versionId}/pdf`, isEvalSupported: false }).promise;
+      const pages = [];
+      for (let n = 1; n <= Math.min(doc.numPages, PDF_MAX_PAGES); n++) {
+        const page = await doc.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        // Sharp at the width it's shown, on high-density screens too.
+        const vp = page.getViewport({ scale: Math.min(3, (820 * Math.min(devicePixelRatio || 1, 2)) / base.width) });
+        const canvas = Object.assign(document.createElement('canvas'), { width: Math.ceil(vp.width), height: Math.ceil(vp.height), className: 'pdf-canvas' });
+        canvas.setAttribute('aria-hidden', 'true');
+        await page.render({ canvas, viewport: vp }).promise;
+        // Each run of text, as a share of the page, so the highlights scale with it.
+        const items = (await page.getTextContent()).items.filter(i => i.str?.trim()).map(i => {
+          const tx = lib.Util.transform(vp.transform, i.transform);
+          const size = Math.hypot(tx[2], tx[3]);
+          return { text: i.str, l: tx[4] / vp.width, t: (tx[5] - size * 0.95) / vp.height, w: (i.width * vp.scale) / vp.width, h: (size * 1.25) / vp.height };
+        });
+        pages.push({ canvas, ratio: vp.height / vp.width, items });
+      }
+      return { pages, total: doc.numPages };
+    })().catch(err => {
+      pdfDocs.delete(key);
+      throw err;
+    }));
+  }
+  return pdfDocs.get(key);
+}
+
+const looseText = s => String(s).toLowerCase().replace(/[^\p{L}\p{N}+#%]+/gu, ' ').trim();
+const measurer = document.createElement('canvas').getContext('2d');
+measurer.font = '100px Helvetica, Arial, sans-serif';
+const measure = s => measurer.measureText(s).width || 1;
+
+// Where each line of the version's text sits in the PDF: boxes (shares of the page) for the
+// whole line, its weak start and its skills. Lines are looked for in reading order, so a
+// repeated line ("Responsible for grading") finds its own place.
+function placeLines(doc, lines) {
+  let all = '';
+  const parts = [];
+  doc.pages.forEach((p, page) => p.items.forEach(item => {
+    const t = looseText(item.text);
+    if (!t) return;
+    if (all) all += ' ';
+    // Measured in its own letters (capitals are wider); same positions as the lowercase form.
+    parts.push({ page, item, text: item.text.replace(/[^\p{L}\p{N}+#%]+/gu, ' ').trim(), start: all.length, end: all.length + t.length });
+    all += t;
+  }));
+  // How far into a run some text reaches, by its width rather than its letter count ("W"
+  // is wider than "i"), measured in a sans-serif like most resumes use.
+  const share = (p, n) => n <= 0 ? 0 : n >= p.end - p.start ? 1 : measure(p.text.slice(0, n)) / measure(p.text);
+  const boxes = (from, to) => {
+    const found = parts.filter(p => p.start < to && from < p.end).map(p => {
+      const a = share(p, from - p.start), b = share(p, to - p.start);
+      return { page: p.page, l: p.item.l + p.item.w * a, t: p.item.t, w: p.item.w * (b - a), h: p.item.h };
+    });
+    // Runs on the same printed line become one box.
+    const merged = [];
+    for (const r of found) {
+      const last = merged.at(-1);
+      if (last && last.page === r.page && Math.abs(last.t - r.t) < last.h * 0.5) {
+        const right = Math.max(last.l + last.w, r.l + r.w);
+        last.l = Math.min(last.l, r.l);
+        last.w = right - last.l;
+      } else merged.push({ ...r });
+    }
+    return merged;
+  };
+  const placed = new Map();
+  let cursor = 0;
+  lines.forEach((l, i) => {
+    if (l.kind === 'blank') return;
+    let body = looseText(l.text.slice(l.at));
+    if (body.length < 3) return;
+    let at = all.indexOf(body, cursor);
+    if (at < 0) at = all.indexOf(body);
+    if (at < 0) { // laid out differently in the PDF: settle for its start
+      body = body.slice(0, 40);
+      at = all.indexOf(body, cursor);
+    }
+    if (at < 0) return;
+    cursor = at + body.length;
+    const weak = l.marks.find(m => m.type === 'weak');
+    placed.set(i, {
+      line: boxes(at, at + body.length),
+      weak: weak ? boxes(at, at + looseText(weak.phrase).length) : [],
+      skills: l.marks.filter(m => m.type === 'skill').flatMap(m => {
+        const name = looseText(l.text.slice(m.start, m.end));
+        const s = all.indexOf(name, at);
+        return s >= 0 && s < at + body.length ? boxes(s, s + name.length).map(b => ({ ...b, name: m.name })) : [];
+      }),
+    });
+  });
+  return placed;
+}
+
+const boxStyle = b => `left:${(b.l * 100).toFixed(2)}%;top:${(b.t * 100).toFixed(2)}%;width:${(b.w * 100).toFixed(2)}%;height:${(b.h * 100).toFixed(2)}%`;
+
+function pdfPagesHtml(r, doc) {
+  const placed = placeLines(doc, r.lines);
+  const bySg = suggestionsByLine(r);
+  const marks = doc.pages.map(() => []);
+  const notes = doc.pages.map(() => '');
+  let missing = 0;
+  r.lines.forEach((l, i) => {
+    const sgs = bySg.get(i) || [];
+    const weak = layers.weak && l.marks.some(m => m.type === 'weak');
+    const number = layers.number && l.marks.some(m => m.type === 'number');
+    const sg = layers.suggestion && sgs.length > 0;
+    const spot = placed.get(i);
+    if ((weak || number || sg) && !spot?.line.length) { missing++; return; }
+    if (!spot) return;
+    if (layers.skill) for (const b of spot.skills) marks[b.page].push(`<span class="pdf-skill" style="${boxStyle(b)}" title="${esc(b.name)} is in your postings"></span>`);
+    if (!(weak || number || sg)) return;
+    const ids = sg ? ` data-sg-ids="${sgs.map(s => esc(s.id)).join(' ')}"` : '';
+    for (const b of spot.line) marks[b.page].push(`<span class="pdf-line${number ? ' is-number' : ''}${sg ? ' is-sg' : ''}${reviewOpen === i ? ' open' : ''}"${ids} style="${boxStyle(b)}"></span>`);
+    if (weak) for (const b of spot.weak) marks[b.page].push(`<span class="pdf-weak" style="${boxStyle(b)}"></span>`);
+    // One button over the whole line, so it can be clicked or reached with Tab.
+    const first = spot.line[0];
+    const lastBox = spot.line.filter(b => b.page === first.page).at(-1);
+    const hit = { ...first, h: lastBox.t + lastBox.h - first.t, w: Math.max(...spot.line.filter(b => b.page === first.page).map(b => b.l + b.w)) - first.l };
+    const why = [weak && 'weak start', number && 'no result number', sg && `${sgs.length} ${sgs.length === 1 ? 'suggestion' : 'suggestions'}`].filter(Boolean).join(', ');
+    marks[first.page].push(`<button type="button" class="pdf-hit" data-ln="${i}"${ids} aria-expanded="${reviewOpen === i}" style="${boxStyle(hit)}"
+      aria-label="${esc(l.text.slice(l.at).slice(0, 80))}: ${why}"></button>`);
+    if (reviewOpen === i) {
+      notes[first.page] = `<div class="pdf-note" style="top:calc(${((hit.t + hit.h) * 100).toFixed(2)}% + 6px)">
+        <button class="icon-btn pdf-note-close" type="button" data-ln="${i}" aria-label="Close">${icon('x')}</button>${lineNoteHtml(l, i, sgs)}</div>`;
+    }
+  });
+  const pages = doc.pages.map((p, n) => `
+    <div class="pdf-page" data-page="${n}" style="aspect-ratio:1/${p.ratio.toFixed(4)}">
+      <div class="pdf-slot"></div><div class="pdf-marks">${marks[n].join('')}</div>${notes[n]}
+    </div>`).join('');
+  return `${pages}
+    ${doc.total > doc.pages.length ? `<p class="pdf-foot">Showing the first ${doc.pages.length} of ${doc.total} pages.</p>` : ''}
+    ${missing ? `<p class="pdf-foot">${icon('alert')}${missing} highlighted ${missing === 1 ? 'line isn\'t' : 'lines aren\'t'} where nuj expected in this PDF. <button class="meta-link" type="button" data-review-mode="text">See them in the text view</button></p>` : ''}`;
+}
+
+// The page area for a version: its PDF when it has one (drawn once loaded), else the text
+// with a prompt to add the PDF.
+function previewHtml(r) {
+  const v = resume.versions.find(x => x.id === r.versionId);
+  if (v?.pdf && reviewMode === 'pdf') {
+    const key = `${v.id}:${v.pdf.at}`;
+    const ready = pdfReady.get(key);
+    if (!ready) {
+      pdfDoc(v.id, v.pdf.at).then(doc => { pdfReady.set(key, doc); renderResume(); })
+        .catch(() => { pdfFailed.add(key); reviewMode = 'text'; renderResume(); });
+      return '<div class="pdf-view loading" aria-busy="true"><div class="pdf-page pdf-skeleton" style="aspect-ratio:1/1.294"></div><span class="sr-only">Loading your PDF</span></div>';
+    }
+    return `<div class="pdf-view" data-pdf-key="${esc(key)}">${pdfPagesHtml(r, ready)}</div>`;
+  }
+  const failed = v?.pdf && pdfFailed.has(`${v.id}:${v.pdf.at}`);
+  return `${!v?.pdf ? `
+    <div class="pdf-ask">
+      <span class="drop-icon">${icon('file')}</span>
+      <div><strong>See your real resume here</strong><span>Upload the PDF of ${esc(r.name)} and nuj shows its pages, with the same highlights.</span></div>
+      <button class="btn btn-sm" type="button" data-pdf-upload="${esc(r.versionId)}">${icon('upload')}<span>Upload PDF</span></button>
+    </div>` : failed ? `<p class="pdf-foot">${icon('alert')}nuj couldn't open this PDF, so here's its text.</p>` : ''}
+    <article class="paper" aria-label="${esc(r.name)}">${paperHtml(r)}</article>`;
+}
+const pdfReady = new Map(); // key -> drawn document, once loaded
+const pdfFailed = new Set();
+
+// After a redraw, put each page's drawing back in its place (the canvases are kept, not redrawn).
+function attachPdfPages() {
+  const view = $('#resume-body .pdf-view[data-pdf-key]');
+  const doc = view && pdfReady.get(view.dataset.pdfKey);
+  if (!doc) return;
+  view.querySelectorAll('.pdf-page').forEach(el => el.querySelector('.pdf-slot').append(doc.pages[Number(el.dataset.page)].canvas));
+}
+
+// Upload the PDF for a version that came from Word or was pasted.
+let pdfFor = null;
+$('#rv-pdf').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !pdfFor) return;
+  try {
+    await uploadPdf(pdfFor, file);
+    reviewMode = 'pdf';
+    toast('Added the PDF');
+  } catch (err) {
+    toast(err.message);
+  }
+  resumeJson = '';
+  loadResume();
+});
+async function uploadPdf(versionId, file) {
+  if (file.size > 5 * 1024 * 1024) throw new Error('That file is too big. nuj takes resumes up to 5 MB');
+  const res = await fetch(`/api/resume/${versionId}/pdf`, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: file });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    noteError(`PUT /api/resume/${versionId}/pdf → ${res.status} ${data.error || res.statusText}`);
+    throw new ApiError(data.error || "nuj couldn't save that PDF. Try again");
+  }
+  return data;
+}
+
+// ---- the resume preview: your resume as a page, with what to change highlighted ----
+// Lines come laid out from the server (src/insights.js reviewLines), each with its marks:
+// a weak start, a bullet with no number, a skill your postings ask for. AI suggestions add
+// the lines they're about. Select a highlighted line to read why, under it.
+let reviewId = null;     // the version shown; null means the current one
+let reviewOpen = null;   // the line whose notes are open
+// Skills start hidden: they're what's right, and the page should first show what to change.
+const layers = { weak: true, number: true, skill: false, suggestion: true };
+const LAYERS = [
+  ['suggestion', 'AI suggestions'],
+  ['weak', 'Weak starts'],
+  ['number', 'No result number'],
+  ['skill', 'Skills postings ask for'],
+];
+
+// Open suggestions about the version on show, by line.
+function suggestionsByLine(r) {
+  const sg = resume.suggestions;
+  const byLine = new Map();
+  if (sg?.versionId !== r.versionId) return byLine;
+  for (const s of sg.items) {
+    if (s.state !== 'open') continue;
+    for (const i of s.lines) byLine.set(i, [...(byLine.get(i) || []), s]);
+  }
+  return byLine;
+}
+
+// A line's own text with its weak start and skills marked, as the layers allow.
+function markedText(l) {
+  const spans = l.marks.filter(m => m.start != null && layers[m.type]).sort((a, b) => a.start - b.start);
+  let out = '', pos = l.at;
+  for (const m of spans) {
+    if (m.start < pos) continue;
+    out += esc(l.text.slice(pos, m.start));
+    const inner = esc(l.text.slice(m.start, m.end));
+    out += m.type === 'weak'
+      ? `<mark class="hl-weak">${inner}</mark>`
+      : `<span class="hl-skill" title="${esc(m.name)} is in ${m.postings} of your postings">${inner}</span>`;
+    pos = m.end;
+  }
+  return out + esc(l.text.slice(pos));
+}
+
+function lineNoteHtml(l, i, sgs) {
+  const notes = [];
+  const weak = l.marks.find(m => m.type === 'weak');
+  if (weak && layers.weak) notes.push(`<li><strong>Starts with “${esc(weak.phrase)}”</strong>Lead with what you did instead, like “Built”, “Led” or “Cut”.</li>`);
+  if (l.marks.some(m => m.type === 'number') && layers.number) notes.push('<li><strong>No result number</strong>If you know it, add how many, how much or how fast. A rough number still helps.</li>');
+  if (layers.suggestion) {
+    for (const s of sgs) {
+      const rewrite = s.rewrites.find(r => r.line === i);
+      notes.push(`<li class="ln-sg">${icon('sparkles')}<div><strong>${esc(s.title)}</strong>${esc(s.change)}
+        ${rewrite ? `<div class="ln-try"><span class="ln-try-label">Try</span><span>${esc(rewrite.to)}</span>
+          <button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(rewrite.to)}">${icon('check', 'icon copied')}<span>Copy</span></button></div>` : ''}
+        <button class="meta-link" type="button" data-sg-show="${esc(s.id)}">Go to this suggestion</button></div></li>`);
+    }
+  }
+  return `<div class="ln-note" id="ln-note-${i}"><ul>${notes.join('')}</ul></div>`;
+}
+
+function paperHtml(r) {
+  const bySg = suggestionsByLine(r);
+  return r.lines.map((l, i) => {
+    if (l.kind === 'blank') return '';
+    const sgs = bySg.get(i) || [];
+    const weak = layers.weak && l.marks.some(m => m.type === 'weak');
+    const number = layers.number && l.marks.some(m => m.type === 'number');
+    const sg = layers.suggestion && sgs.length > 0;
+    const flagged = weak || number || sg;
+    const open = flagged && reviewOpen === i;
+    const gap = i > 0 && r.lines[i - 1].kind === 'blank' && l.kind !== 'heading' ? ' gap' : '';
+    const cls = `ln ${l.kind}${gap}${flagged ? ' flagged' : ''}${number ? ' is-number' : ''}${sg ? ' is-sg' : ''}${open ? ' open' : ''}`;
+    const attrs = flagged
+      ? ` role="button" tabindex="0" data-ln="${i}" aria-expanded="${open}" ${open ? `aria-controls="ln-note-${i}"` : ''} ${sg ? `data-sg-ids="${sgs.map(s => esc(s.id)).join(' ')}"` : ''}`
+      : '';
+    const why = [weak && 'weak start', number && 'no result number', sg && `${sgs.length} ${sgs.length === 1 ? 'suggestion' : 'suggestions'}`].filter(Boolean).join(', ');
+    return `<div class="${cls}"${attrs}>${l.kind === 'bullet' ? '<span class="ln-dot" aria-hidden="true"></span>' : ''}<span class="ln-text">${markedText(l)}</span>${
+      flagged ? `<span class="ln-flag">${icon(sg ? 'sparkles' : 'alert')}<span class="sr-only">: ${why}</span></span>` : ''}</div>${open ? lineNoteHtml(l, i, sgs) : ''}`;
+  }).join('');
+}
+
+function resumeReviewHtml() {
+  const r = resume.review;
+  if (!r) return '';
+  const bySg = suggestionsByLine(r);
+  const counts = {
+    weak: r.lines.filter(l => l.marks.some(m => m.type === 'weak')).length,
+    number: r.lines.filter(l => l.marks.some(m => m.type === 'number')).length,
+    skill: new Set(r.lines.flatMap(l => l.marks.filter(m => m.type === 'skill').map(m => m.name))).size,
+    suggestion: bySg.size,
+  };
+  const shown = LAYERS.filter(([k]) => counts[k] || (k === 'suggestion' && resume.ai?.available));
+  const whole = r.checks.filter(c => c.id === 'length' || c.id === 'sections');
+  return `
+    <section class="panel review" aria-labelledby="review-title">
+      <div class="panel-head">
+        <div class="head-text"><h2 id="review-title">Your resume</h2>
+          <span class="hint">Highlights show what to change. Select a highlighted line to see why.</span></div>
+        <div class="review-tools">
+          ${resume.versions.length > 1 ? `<label class="select-wrap"><select data-review-version aria-label="Version to show">
+            ${[...resume.versions].reverse().map(v => `<option value="${esc(v.id)}" ${v.id === r.versionId ? 'selected' : ''}>${esc(v.name)}${v.id === resume.insights.currentId ? ' (current)' : ''}</option>`).join('')}
+          </select>${icon('chevron', 'icon chev')}</label>` : ''}
+          ${resume.versions.find(v => v.id === r.versionId)?.pdf ? `<div class="review-mode" role="group" aria-label="Show">
+            ${[['pdf', 'PDF'], ['text', 'Text']].map(([m, label]) => `<button type="button" data-review-mode="${m}" aria-pressed="${reviewMode === m}">${label}</button>`).join('')}
+          </div>` : ''}
+          <button class="btn btn-sm" type="button" data-version-edit="${esc(r.versionId)}" aria-label="Edit the text of ${esc(r.name)}">Edit text</button>
+        </div>
+      </div>
+      <div class="review-layers" role="group" aria-label="What to highlight">
+        ${shown.map(([k, label]) => `<button type="button" class="layer layer-${k}" data-layer="${k}" aria-pressed="${layers[k]}">
+          <i aria-hidden="true"></i>${label}<span class="num">${counts[k]}</span></button>`).join('')}
+      </div>
+      <div class="review-grid">
+        <div class="review-page">${previewHtml(r)}</div>
+        <aside class="review-side" aria-label="What to change">
+          <ul class="checks">${whole.map(c => `
+            <li class="${c.ok ? 'ok' : 'warn'}">${icon(c.ok ? 'check' : 'alert')}<span><strong>${esc(c.title)}</strong>${esc(c.detail)}</span></li>`).join('')}
+          </ul>
+          ${suggestionsHtml(r)}
+        </aside>
+      </div>
+    </section>`;
+}
+
+// Light up the lines a suggestion is about while you point at it or tab to it.
+function lightLines(id, on) {
+  for (const el of document.querySelectorAll(`#resume-body [data-sg-ids~="${CSS.escape(id)}"]`)) el.classList.toggle('lit', on);
+}
+$('#view-resume').addEventListener('mouseover', e => {
+  const card = e.target.closest('[data-sg-card]');
+  if (card && !card.contains(e.relatedTarget)) lightLines(card.dataset.sgCard, true);
+});
+$('#view-resume').addEventListener('mouseout', e => {
+  const card = e.target.closest('[data-sg-card]');
+  if (card && !card.contains(e.relatedTarget)) lightLines(card.dataset.sgCard, false);
+});
+$('#view-resume').addEventListener('focusin', e => {
+  const card = e.target.closest('[data-sg-card]');
+  if (card) lightLines(card.dataset.sgCard, true);
+});
+$('#view-resume').addEventListener('focusout', e => {
+  const card = e.target.closest('[data-sg-card]');
+  if (card && !card.contains(e.relatedTarget)) lightLines(card.dataset.sgCard, false);
+});
+
+// Scroll something into view and give it a brief pulse, so the eye finds it.
+function flash(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+  el.classList.remove('flash');
+  requestAnimationFrame(() => el.classList.add('flash'));
+}
+
+function toggleLine(i) {
+  reviewOpen = reviewOpen === i ? null : i;
+  renderResume();
+  $(`#resume-body [data-ln="${i}"]`)?.focus();
+}
+
+$('#view-resume').addEventListener('click', async e => {
+  const t = e.target;
+  const layer = t.closest('[data-layer]');
+  if (layer) { layers[layer.dataset.layer] = !layers[layer.dataset.layer]; return renderResume(); }
+  const mode = t.closest('[data-review-mode]');
+  if (mode) { reviewMode = mode.dataset.reviewMode; reviewOpen = null; return renderResume(); }
+  const upload = t.closest('[data-pdf-upload]');
+  if (upload) { pdfFor = upload.dataset.pdfUpload; return $('#rv-pdf').click(); }
+  const ln = t.closest('[data-ln]');
+  if (ln) return toggleLine(Number(ln.dataset.ln));
+  const copy = t.closest('[data-copy]');
+  if (copy) {
+    try {
+      await navigator.clipboard.writeText(copy.dataset.copy);
+      copy.classList.add('done');
+      copy.querySelector('span').textContent = 'Copied';
+    } catch {
+      toast("Couldn't copy. Select the text and copy it yourself");
+    }
+    return;
+  }
+  const show = t.closest('[data-sg-show]');
+  if (show) return flash($(`#resume-body [data-sg-card="${CSS.escape(show.dataset.sgShow)}"]`));
+  const locate = t.closest('[data-sg-locate]');
+  if (locate) {
+    const id = locate.dataset.sgLocate;
+    const first = $(`#resume-body .ln[data-sg-ids~="${CSS.escape(id)}"], #resume-body .pdf-line[data-sg-ids~="${CSS.escape(id)}"]`);
+    lightLines(id, true);
+    return flash(first);
+  }
+});
+$('#view-resume').addEventListener('keydown', e => {
+  if (e.key === 'Escape' && reviewOpen != null && !document.querySelector('dialog[open]')) return toggleLine(reviewOpen);
+  const ln = e.target.closest('[data-ln]');
+  if (!ln || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  toggleLine(Number(ln.dataset.ln));
+});
+$('#view-resume').addEventListener('change', async e => {
+  if (!e.target.matches('[data-review-version]')) return;
+  reviewId = e.target.value === resume.insights.currentId ? null : e.target.value;
+  reviewOpen = null;
+  reviewMode = 'pdf';
+  resumeJson = '';
+  await loadResume();
 });
 
 // ---- Check fit, in an application's panel ----

@@ -2,7 +2,8 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { initStorage, getKv } from '../src/store.js';
-import { extractText, cleanText, addVersion, updateVersion, deleteVersion, listVersions, forgetResumes, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
+import { extractText, cleanText, addVersion, updateVersion, deleteVersion, listVersions, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
+import { textPdf } from '../src/textpdf.js';
 
 before(() => initStorage({ inMemory: true }));
 const fixture = name => fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
@@ -58,4 +59,36 @@ test('forgetting a user removes their resumes', async () => {
   await forgetResumes('u-gone');
   assert.equal(await getKv('resumes_u-gone'), null);
   assert.deepEqual(await listVersions('u-gone'), []);
+});
+
+test('a version keeps its PDF; anything else is refused; deleting the account removes them all', async () => {
+  const user = 'u-pdf';
+  const { version } = await addVersion(user, { text });
+  assert.match((await savePdf(user, version.id, fixture('resume.docx'))).error, /Only a PDF/);
+  assert.equal((await savePdf(user, 'gone', fixture('resume.pdf'))).status, 404);
+
+  const saved = await savePdf(user, version.id, fixture('resume.pdf'));
+  assert.equal(saved.version.pdf.size, fixture('resume.pdf').length);
+  assert.ok((await loadPdf(user, version.id)).equals(fixture('resume.pdf')));
+
+  // Undo after a delete brings the PDF back with the version.
+  const { removed } = await deleteVersion(user, version.id);
+  const back = await addVersion(user, removed);
+  assert.equal(back.version.pdf.size, saved.version.pdf.size);
+
+  await removePdf(user, version.id);
+  assert.equal(await loadPdf(user, version.id), null);
+  assert.equal((await listVersions(user))[0].pdf, undefined);
+
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  await forgetResumes(user);
+  assert.equal(await loadPdf(user, version.id), null);
+});
+
+test('the demo writes a real PDF whose text reads back', async () => {
+  const pdf = textPdf('Sam Example\nsam@example.com\n\nExperience\n• Built a dashboard used by 300 people\nSkills\nPython, SQL');
+  const { text: back, error } = await extractText(pdf);
+  assert.equal(error, undefined);
+  assert.match(back, /Built a dashboard used by 300 people/);
+  assert.match(back, /EXPERIENCE/); // headings are set in capitals
 });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findSkills, roleFunction, roleLevel } from '../src/skills.js';
-import { outcomeOf, computeInsights, quickChecks, MIN_GROUP } from '../src/insights.js';
+import { findSkills, skillPositions, roleFunction, roleLevel } from '../src/skills.js';
+import { outcomeOf, computeInsights, quickChecks, reviewLines, MIN_GROUP } from '../src/insights.js';
 import { versionFor } from '../src/resume.js';
 import { refresh, newId } from '../src/store.js';
 
@@ -109,4 +109,21 @@ test('quick checks flag weak bullets, few numbers and missing headings', () => {
 
   const strong = quickChecks(`Experience\n${'• Cut load time by 40% across 3 pages\n'.repeat(5)}Education\nSkills\n${'word '.repeat(300)}`);
   assert.ok(strong.every(c => c.ok), JSON.stringify(strong));
+});
+
+test('the preview lays out each line and marks weak starts, missing numbers and wanted skills', () => {
+  const text = 'Sam Example\nsam@example.com · github.com/sam\n\nExperience\n• Responsible for the React website\n• Cut load time by 40% with Redis\nSkills\nReact, Redis, Kubernetes';
+  const lines = reviewLines(text, new Map([['React', 3], ['Kubernetes', 2]]));
+  assert.deepEqual(lines.map(l => l.kind), ['name', 'contact', 'blank', 'heading', 'bullet', 'bullet', 'heading', 'text']);
+  const weakLine = lines[4];
+  const weak = weakLine.marks.find(m => m.type === 'weak');
+  assert.equal(weakLine.text.slice(weak.start, weak.end), 'Responsible for');
+  assert.ok(weakLine.marks.some(m => m.type === 'number'));
+  assert.deepEqual(weakLine.marks.filter(m => m.type === 'skill').map(m => [m.name, weakLine.text.slice(m.start, m.end)]), [['React', 'React']]);
+  assert.ok(!lines[5].marks.some(m => m.type === 'number' || m.type === 'weak')); // has a number, starts well
+  assert.deepEqual(lines[7].marks.map(m => m.name), ['React', 'Kubernetes']); // Redis isn't asked for
+});
+
+test('a longer skill name wins over a shorter one inside it', () => {
+  assert.deepEqual(skillPositions('React Native and React').map(s => s.name), ['React Native', 'React']);
 });

@@ -1,15 +1,17 @@
 // Resumes for Resume insights: reading the text out of an uploaded PDF or Word file, and
-// keeping each person's versions. Only the text is kept, never the file. Versions live
-// under their own key (resumes_<user id>) rather than in the tracker, so the long text
-// isn't sent with every page update.
+// keeping each person's versions. Versions live under their own key (resumes_<user id>)
+// rather than in the tracker, so the long text isn't sent with every page update. A PDF is
+// also kept, under resume_pdf_<user id>_<version id>, so the page can show the real thing;
+// a Word file never is (there'd be nothing to show it with).
 import crypto from 'node:crypto';
-import { getKv, setKv, deleteKv } from './store.js';
+import { getKv, setKv, deleteKv, deleteKvPrefix } from './store.js';
 
 export const MAX_VERSIONS = 5;
 export const MAX_TEXT = 40_000;
 const MIN_TEXT = 80; // less than this from a PDF means it's a scan, or text nuj can't read
 
 const key = userId => `resumes_${userId}`;
+const pdfKey = (userId, versionId) => `resume_pdf_${userId}_${versionId}`;
 
 // ---- reading an upload ------------------------------------------------------------
 
@@ -116,6 +118,8 @@ export function addVersion(userId, body) {
     const id = typeof body.id === 'string' && /^[\w-]{8,64}$/.test(body.id) && !versions.some(v => v.id === body.id) ? body.id : crypto.randomUUID();
     const now = new Date().toISOString();
     const version = { id, ...fields, createdAt: body.createdAt && !Number.isNaN(Date.parse(body.createdAt)) ? body.createdAt : now, updatedAt: now };
+    // Undo: its PDF is kept for a while after a delete (see dropPdfLater), so it comes back too.
+    if (id === body.id && body.pdf?.at) version.pdf = { size: Number(body.pdf.size) || 0, at: String(body.pdf.at) };
     versions.push(version);
     return { version };
   });
@@ -141,12 +145,50 @@ export function deleteVersion(userId, id) {
   });
 }
 
+// ---- a version's PDF -----------------------------------------------------------------
+export async function savePdf(userId, versionId, buffer) {
+  if (fileKind(buffer) !== 'pdf') return { error: 'Only a PDF can be shown here. Save your resume as a PDF and try again' };
+  const found = (await listVersions(userId)).some(v => v.id === versionId);
+  if (!found) return { error: 'That version was deleted', status: 404 };
+  await setKv(pdfKey(userId, versionId), buffer.toString('base64'));
+  return update(userId, versions => {
+    const version = versions.find(v => v.id === versionId);
+    if (!version) return { error: 'That version was deleted', status: 404 };
+    version.pdf = { size: buffer.length, at: new Date().toISOString() };
+    return { version };
+  });
+}
+
+export async function loadPdf(userId, versionId) {
+  const data = await getKv(pdfKey(userId, versionId));
+  return data ? Buffer.from(data, 'base64') : null;
+}
+
+// The PDF no longer matches the version (its text came from another file): stop showing it.
+export async function removePdf(userId, versionId) {
+  await deleteKv(pdfKey(userId, versionId));
+  return update(userId, versions => {
+    const version = versions.find(v => v.id === versionId);
+    if (version) delete version.pdf;
+    return { version };
+  });
+}
+
+// After a version is deleted its PDF waits out the Undo, then goes unless the version came
+// back. A restart in between leaves it until the account is deleted, which removes them all.
+export function dropPdfLater(userId, versionId, ms = 10 * 60_000) {
+  setTimeout(async () => {
+    if (!(await listVersions(userId)).some(v => v.id === versionId)) await deleteKv(pdfKey(userId, versionId));
+  }, ms).unref?.();
+}
+
 // For an account being deleted.
 export async function forgetResumes(userId) {
   await chains.get(userId);
   cache.delete(userId);
   chains.delete(userId);
   await deleteKv(key(userId));
+  await deleteKvPrefix(`resume_pdf_${userId}_`);
 }
 
 // What the page lists: everything but the text.

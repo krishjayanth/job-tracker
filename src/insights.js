@@ -3,7 +3,7 @@
 // resume does or doesn't mention, and a few plain checks on the resume itself.
 // Everything here is worked out from data the person already has, on each request.
 import { stagePath } from './stages.js';
-import { findSkills, roleFunction, roleLevel } from './skills.js';
+import { findSkills, skillPositions, roleFunction, roleLevel } from './skills.js';
 import { versionFor, currentVersion, countWords } from './resume.js';
 
 // Below this many finished applications, a group's rate says more about luck than the resume.
@@ -105,6 +105,45 @@ export function quickChecks(text) {
     ? { id: 'sections', ok: false, title: `No ${missing.join(' or ')} section found`, detail: 'Hiring software looks for these headings. If you have the section, a plain heading helps it get read.' }
     : { id: 'sections', ok: true, title: 'The usual sections are there', detail: 'Experience, Education and Skills.' });
   return checks;
+}
+
+// ---- the resume preview ---------------------------------------------------------------
+const HEADING = /^\s*(summary|profile|objective|about( me)?|(work |professional |relevant )?experience|employment( history)?|work history|education|(technical )?skills|technologies|tools|projects?|personal projects|activities|leadership|volunteer(ing)?|awards?|honou?rs|certifications?|publications|interests|languages|coursework|achievements|extracurriculars?)\s*:?\s*$/i;
+const CONTACT = /@|https?:|www\.|linkedin|github|\+?\d[\d ()-]{7,}|·|\|/i;
+
+// What kind of line each is, for laying the preview out like a resume.
+function lineKind(line, i, firstText) {
+  if (!line.trim()) return 'blank';
+  if (i === firstText) return 'name';
+  if (BULLET.test(line)) return 'bullet';
+  if (HEADING.test(line) || (/^[^a-z]{3,40}$/.test(line.trim()) && /[A-Z]/.test(line))) return 'heading';
+  if (i <= firstText + 3 && CONTACT.test(line)) return 'contact';
+  return 'text';
+}
+
+// Every line of a resume, with what the preview marks on it: a weak start, a bullet with no
+// number, and skills the postings ask for (`wanted`: skill name -> number of postings).
+// Positions are within the line's own text.
+export function reviewLines(text, wanted = new Map()) {
+  const lines = text.split('\n');
+  const firstText = lines.findIndex(l => l.trim());
+  return lines.map((line, i) => {
+    const kind = lineKind(line, i, firstText);
+    const at = kind === 'bullet' ? line.match(BULLET)[0].length : 0;
+    const marks = [];
+    if (kind === 'bullet') {
+      const weak = line.slice(at).match(WEAK_OPENER);
+      if (weak) marks.push({ type: 'weak', start: at, end: at + weak[0].length, phrase: weak[0] });
+      if (!/\d/.test(line)) marks.push({ type: 'number' });
+    }
+    if (kind !== 'name' && kind !== 'contact') {
+      for (const s of skillPositions(line)) {
+        const overlapsWeak = marks.some(m => m.type === 'weak' && s.start < m.end);
+        if (wanted.has(s.name) && !overlapsWeak) marks.push({ type: 'skill', start: s.start, end: s.end, name: s.name, postings: wanted.get(s.name) });
+      }
+    }
+    return { kind, text: line, at, marks };
+  });
 }
 
 // ---- everything on the page ---------------------------------------------------------
