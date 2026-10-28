@@ -35,7 +35,7 @@
       <ul>
         <li>nuj has read-only access to Gmail and only reads emails that look like job application updates.</li>
         <li>It keeps a summary of each application email (company, role, stage, subject, sender, date). It doesn't keep full email bodies.</li>
-        <li>If you add a Groq API key, part of each matching email is sent to Groq under your key to work out what it means. Nothing is sold, and there are no ads or third-party analytics.</li>
+        <li>If you add a Groq API key, part of each matching email is sent to Groq under your key to work out what it means. If you turn on AI suggestions for your resume, your resume and job titles are sent to OpenAI. Nothing is sold, and there are no ads or third-party analytics.</li>
         <li>Each person's data is kept separate. You can disconnect Gmail or delete your account from the app at any time.</li>
       </ul>
     </div>
@@ -78,7 +78,7 @@
     <p>nuj also counts how often you fix its sorting, as totals only (for example "3 emails moved, 1 sender ignored"), so we can see whether sorting is getting better. If you ignore a sender, its domain (such as example.com) is kept so nuj can skip it.</p>
 
     <h3 id="resume">Your resume</h3>
-    <p>If you use Resume insights, you can add up to five versions of your resume by uploading a PDF or Word file or by pasting the text. nuj reads the text out of the file and keeps only the text, with the name you give each version and the date you started sending it. The file itself isn't stored. You can also paste a job description into any application. nuj compares these with your applications on your own dashboard, using built-in rules, and doesn't send your resume or job descriptions anywhere. Only you can see them.</p>
+    <p>If you use Resume insights, you can add up to five versions of your resume by uploading a PDF or Word file or by pasting the text. nuj reads the text out of the file and keeps only the text, with the name you give each version and the date you started sending it. The file itself isn't stored. You can also paste a job description into any application. nuj compares these with your applications on your own dashboard using built-in rules. Only you can see them. They're only sent anywhere if you turn on AI suggestions (see <a href="#share">Who it's shared with</a>).</p>
 
     <h3 id="invites">Invite requests</h3>
     <p>If you ask for an invite on the home page, we store your name, email address, where you are in your job search and anything you write, so we can decide on and send your invite. Only the person who runs nuj sees it. Your IP address is used briefly to stop the form being sent over and over, and isn't stored. To have your request deleted, <a href="#contact">contact us</a>.</p>
@@ -102,6 +102,7 @@
     <p>We don't sell or rent your information. We share it only with the services that run the app, and only as much as each needs:</p>
     <ul>
       <li><strong>Groq</strong> (AI processing), only if you've added a Groq API key. For each matching email, the sender, date, subject and up to the first 3,500 characters of the message text are sent to Groq's API using your key, which returns the company, role, job ID, stage, any deadline, a short summary and an explanation. If it isn't clear whether an email is about a job at all, the sender, subject and a shorter excerpt are sent first to check, and an email that isn't about a job goes no further. If you have several applications at the same company and an email doesn't say which one it's about, the roles, job IDs, statuses, application dates and recent email subjects of those applications are sent with it so Groq can pick the right one. Without a key, or if Groq is unavailable, the app uses built-in rules instead and nothing is sent.</li>
+      <li><strong>OpenAI</strong> (AI processing for Resume insights), only after you choose Allow when you first ask for suggestions or Check fit. For suggestions, your current resume's text, the job titles of your applications with how each went and which resume version you sent, your totals by version and kind of role, and the skills found in your postings are sent to OpenAI's API, which returns suggested changes. For Check fit, the resume you sent for that application and its job description are sent. Company names and your emails aren't sent. You can stop it at any time with "Stop sending my resume to OpenAI" on the Resume insights page. OpenAI's API doesn't use this data to train its models by default, and it's governed by OpenAI's own policies.</li>
       <li><strong>Render</strong> (hosting). The app runs on Render's servers.</li>
       <li><strong>Supabase</strong> (database). Your applications, the email details listed above, your resume text, your Google tokens and your encrypted Groq key are stored in a Postgres database hosted by Supabase.</li>
       <li><strong>Google</strong>, to sign you in and to read Gmail as described above.</li>
@@ -129,7 +130,7 @@
       <li><strong>Remove access from Google's side</strong> at any time at <a href="https://myaccount.google.com/permissions" rel="noopener">myaccount.google.com/permissions</a>.</li>
       <li><strong>Delete everything</strong> with "Delete my account" in the app's Settings. Your applications, email details, resumes, Google tokens, Groq key and any problem reports you sent are deleted straight away, and the app's Gmail access is cancelled at Google. Copies in the database provider's backups expire on their own schedule. You can also <a href="#contact">contact us</a> and we'll delete all data stored for your account within 30 days.</li>
     </ul>
-    <p>Data held by Groq is governed by Groq's own policies.</p>
+    <p>Data held by Groq and OpenAI is governed by their own policies.</p>
 
     <h2>Children</h2>
     <p>The app isn't meant for anyone under 13, and we don't knowingly collect information from children.</p>

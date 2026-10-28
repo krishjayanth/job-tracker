@@ -1565,3 +1565,58 @@ table.apps { width: 100%; border-collapse: collapse; }
   .resume-kpis .p-word { font-size: 20px; min-height: 36px; }
   .panel-head:has([data-version-add]) { flex-wrap: wrap; }
 }
+
+/* Suggestions written by AI: one card each, with Done and Not for me. */
+.ai-run { display: flex; align-items: center; gap: 10px; flex: none; }
+.suggestions { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.suggestion { display: grid; gap: 8px; align-content: start; padding: 16px 16px 12px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.suggestion:not(.open) { background: none; }
+.suggestion:not(.open) .sg-why, .suggestion:not(.open) .sg-change { display: none; }
+.sg-top { display: grid; gap: 4px; }
+.sg-top strong { font-weight: 600; line-height: 1.35; text-wrap: pretty; }
+.sg-section { font-size: 11.5px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.sg-why, .sg-change { margin: 0; font-size: 13px; line-height: 1.55; text-wrap: pretty; }
+.sg-why { color: var(--muted); }
+.sg-change { color: var(--text-2); padding-left: 10px; border-left: 2px solid var(--border-strong); }
+.suggestion .kw { height: 24px; font-size: 12px; }
+.sg-actions { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12.5px; }
+.sg-actions .dim { margin-right: auto; }
+.sg-note { display: flex; align-items: center; gap: 8px; margin: -4px 0 14px; color: var(--muted); font-size: 13px; }
+.sg-note .icon { width: 15px; height: 15px; flex: none; }
+.sg-empty { margin: 0; font-size: 13px; }
+.sg-decided { margin-top: 18px; }
+.sg-decided summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.sg-decided summary::-webkit-details-marker { display: none; }
+.sg-decided summary .icon { width: 14px; height: 14px; color: var(--muted); transition: transform var(--fast); }
+.sg-decided[open] summary .icon { transform: rotate(180deg); }
+.sg-decided .suggestions { margin-top: 12px; }
+.sg-revoke { display: block; margin: 18px 0 0; }
+
+/* The consent sheet */
+.consent-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.consent-list li { display: grid; grid-template-columns: auto 1fr; gap: 10px; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
+.consent-list .icon { width: 15px; height: 15px; margin-top: 3px; color: var(--muted); }
+.consent-note { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+/* Check fit, in an application's panel */
+.fit-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fit { display: grid; gap: 12px; margin-top: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.fit p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-2); }
+.fit-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.fit-match { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.fit-match i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.fit-group { display: grid; gap: 6px; }
+.fit-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.fit-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.fit-chip { padding: 3px 9px; border-radius: 999px; font-size: 12px; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border); }
+.fit-chip.gap { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.rewrites { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.rewrites li { display: grid; gap: 3px; font-size: 13px; line-height: 1.5; }
+.rewrites .from { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.rewrites .to { color: var(--text); }
+.rewrites .why { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 760px) {
+  .suggestions { grid-template-columns: 1fr; }
+  .panel-head:has(.ai-run) { flex-wrap: wrap; }
+}

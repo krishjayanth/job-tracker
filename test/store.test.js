@@ -102,10 +102,11 @@ test('re-scan keeps an interview time you added', () => {
   assert.equal(rebuilt.interviewAt, '2026-11-02T14:00:00.000Z');
 });
 
-test('re-scan keeps the resume you picked and a pasted job description', () => {
+test('re-scan keeps the resume you picked, a pasted job description and its fit check', () => {
   const a = gmailApp({ company: 'Northwind Traders' });
   a.resumeId = 'v-2';
   a.posting = 'Python and SQL';
+  a.fit = { match: 'strong' };
   const snapshots = s.snapshotEdits();
   const emails = a.events.filter(e => e.messageId);
   s.db.applications.length = 0;
@@ -115,6 +116,7 @@ test('re-scan keeps the resume you picked and a pasted job description', () => {
   assert.deepEqual(s.restoreEdits(snapshots), { restored: 1, kept: 0 });
   assert.equal(rebuilt.resumeId, 'v-2');
   assert.equal(rebuilt.posting, 'Python and SQL');
+  assert.equal(rebuilt.fit.match, 'strong');
 });
 
 test('re-scan keeps an edited application whose emails no longer classify', () => {

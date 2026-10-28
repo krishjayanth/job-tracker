@@ -1225,7 +1225,8 @@ function resumeFieldsHtml(a) {
     <details class="field wide posting-field" ${a.posting ? 'open' : ''}>
       <summary>Job description <span class="dim">${words ? `${words} words` : 'Optional, for Resume insights'}</span>${icon('chevron')}</summary>
       <textarea id="f-posting" name="posting" rows="7" maxlength="20000" aria-label="Job description" placeholder="Paste the job description from the posting. Resume insights uses it to find the skills this role asks for.">${esc(a.posting)}</textarea>
-    </details>`;
+    </details>
+    ${fitFieldHtml(a)}`;
 }
 
 const savedNote = (text, tone = '') => {
@@ -1362,6 +1363,34 @@ function openDrawer(app) {
     openDrawer(state.applications.find(x => x.id === a.id));
     savedNote('Deadline done', 'ok');
   });
+
+  // Check fit. A job description still being typed is saved first, so the AI sees all of it.
+  $('#fit-btn')?.addEventListener('click', () => withConsent(async () => {
+    const btn = $('#fit-btn');
+    const posting = form.elements.posting;
+    if (!posting.value.trim()) {
+      posting.closest('details').open = true;
+      posting.focus();
+      return savedNote('Paste the job description first');
+    }
+    clearTimeout(notesTimer);
+    if (posting.value !== saved.posting) await saveField(posting);
+    btn.disabled = true;
+    btn.classList.add('busy');
+    try {
+      const { fit, ai } = await api('POST', `/api/applications/${a.id}/fit`);
+      state.ai = ai;
+      $('#fit-result').innerHTML = fitHtml(fit);
+      $('#fit-left').textContent = aiLeftText(ai);
+      btn.querySelector('span').textContent = 'Check fit again';
+      load();
+    } catch (err) {
+      savedNote(err.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('busy');
+    }
+  }));
 
   // Read this application's emails again with the current classifier (e.g. after adding a Groq key).
   $('#rescan-app')?.addEventListener('click', async () => {
@@ -2179,7 +2208,7 @@ function renderResume() {
   }
   since.textContent = !ins.total ? 'Add applications to see how your resume is doing.'
     : `Based on ${appCount(ins.counted)} with an outcome${ins.pending ? `. ${ins.pending} more ${ins.pending === 1 ? 'is' : 'are'} too new to count yet` : ''}.`;
-  $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + workingHtml() + keywordsHtml() + checksHtml();
+  $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + workingHtml() + keywordsHtml() + suggestionsHtml() + checksHtml();
 }
 
 function resumeEmptyHtml() {
@@ -2507,6 +2536,159 @@ resumeDialog.addEventListener('click', e => {
   if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) resumeDialog.close();
 });
 
+// ---- AI: suggestions for the resume, and the consent asked before anything is sent ----
+// How many AI runs are left today, in words ('' for the owner, who has no limit).
+function aiLeftText(ai) {
+  if (!ai || ai.unlimited) return '';
+  if (!ai.left) return `None left today. More ${resetTime(ai.resetsAt)}`;
+  return `${ai.left} of ${ai.limit} left today`;
+}
+const resetTime = iso => {
+  const hours = Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 3_600_000));
+  return hours >= 20 ? 'tomorrow' : `in about ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+};
+const SG_STATE = { done: 'Done', dismissed: 'Not for me' };
+
+function suggestionHtml(s) {
+  return `
+    <li class="suggestion ${s.state}">
+      <div class="sg-top"><span class="sg-section">${esc(s.section)}</span><strong>${esc(s.title)}</strong></div>
+      <p class="sg-why">${esc(s.why)}</p>
+      <p class="sg-change">${esc(s.change)}</p>
+      ${s.keywords.length ? `<div class="kw-list">${s.keywords.map(k => `<button type="button" class="kw" data-only="skill:${esc(k)}" title="Show the applications that ask for it">${esc(k)}</button>`).join('')}</div>` : ''}
+      <div class="sg-actions">${s.state === 'open'
+        ? `<button class="btn btn-sm" type="button" data-sg="${esc(s.id)}" data-sg-state="done">${icon('check')}Done</button>
+           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="dismissed">Not for me</button>`
+        : `<span class="dim">${SG_STATE[s.state]}${s.decidedAt ? ` · ${timeAgo(s.decidedAt)}` : ''}</span>
+           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="open">Undo</button>`}
+      </div>
+    </li>`;
+}
+
+function suggestionsHtml() {
+  const { ai, suggestions: sg } = resume;
+  if (!ai?.available || !resume.insights.total) return '';
+  const open = sg?.items.filter(s => s.state === 'open') ?? [];
+  const decided = sg?.items.filter(s => s.state !== 'open') ?? [];
+  const fresh = Boolean(sg?.upToDate && open.length);
+  const noneLeft = !ai.unlimited && !ai.left;
+  const label = !sg ? 'Get suggestions' : fresh ? 'Up to date' : 'Get new suggestions';
+  return `
+    <section class="panel" aria-labelledby="sg-title">
+      <div class="panel-head">
+        <div class="head-text"><h2 id="sg-title">Suggestions</h2>
+          <span class="hint">Written by AI from your current resume, how your applications went and the keywords above. You choose which to act on.</span></div>
+        <div class="ai-run">
+          <span class="hint" id="ai-left">${aiLeftText(ai)}</span>
+          <button class="btn btn-sm${sg ? '' : ' btn-primary'}" type="button" data-suggest ${fresh || noneLeft ? 'disabled' : ''}
+            ${fresh ? 'title="Nothing has changed since these were written"' : ''}>${icon('sparkles')}<span>${label}</span></button>
+        </div>
+      </div>
+      ${sg && !sg.upToDate && open.length ? `<p class="sg-note">${icon('alert')}Your resume or applications have changed since these were written ${timeAgo(sg.at)}.</p>` : ''}
+      ${open.length ? `<ul class="suggestions">${open.map(suggestionHtml).join('')}</ul>`
+        : `<p class="dim sg-empty">${sg ? "You've gone through every suggestion. Get new ones after you change your resume or apply to more jobs."
+          : 'Get 3 to 6 changes to make, each based on your own numbers and the postings you applied to.'}</p>`}
+      ${decided.length ? `<details class="sg-decided"><summary>Acted on or set aside <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
+        <ul class="suggestions">${decided.map(suggestionHtml).join('')}</ul></details>` : ''}
+      ${ai.consent ? '<button class="meta-link sg-revoke" type="button" data-ai-revoke>Stop sending my resume to OpenAI</button>' : ''}
+    </section>`;
+}
+
+// Before the first AI run: say what goes to OpenAI and ask. `then` runs once allowed.
+const consentDialog = $('#ai-consent');
+let afterConsent = null;
+function withConsent(run) {
+  const ai = resume?.ai ?? state.ai;
+  if (ai?.consent) return run();
+  afterConsent = run;
+  $('#ai-consent-limit').textContent = ai && !ai.unlimited ? ` You get ${ai.limit} a day.` : '';
+  consentDialog.showModal();
+}
+$('#ai-consent-allow').addEventListener('click', async () => {
+  const btn = $('#ai-consent-allow');
+  btn.disabled = true;
+  try {
+    const { ai } = await api('POST', '/api/insights/consent', { allow: true });
+    state.ai = ai;
+    if (resume) resume.ai = ai;
+    consentDialog.close();
+    const run = afterConsent;
+    afterConsent = null;
+    run?.();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+consentDialog.addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) consentDialog.close();
+});
+consentDialog.addEventListener('close', () => { afterConsent = null; });
+
+async function getSuggestions(btn) {
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try {
+    const r = await api('POST', '/api/insights/suggestions');
+    await loadResume();
+    if (r.cached) toast('Your suggestions are already up to date');
+  } catch (err) {
+    toast(err.message);
+    await loadResume();
+  }
+}
+
+$('#view-resume').addEventListener('click', async e => {
+  const t = e.target;
+  const run = t.closest('[data-suggest]');
+  if (run) return withConsent(() => getSuggestions($('[data-suggest]')));
+  const pick = t.closest('[data-sg-state]');
+  if (pick) {
+    pick.disabled = true;
+    try {
+      await api('PATCH', `/api/insights/suggestions/${pick.dataset.sg}`, { state: pick.dataset.sgState });
+    } catch (err) {
+      toast(err.message);
+    }
+    return loadResume();
+  }
+  if (t.closest('[data-ai-revoke]')) {
+    await api('POST', '/api/insights/consent', { allow: false });
+    toast("nuj won't send your resume to OpenAI. Your suggestions stay here");
+    return loadResume();
+  }
+});
+
+// ---- Check fit, in an application's panel ----
+const FIT_LABEL = { strong: ['Strong match', 'offer'], partial: ['Partial match', 'interview'], weak: ['Weak match', 'rejected'] };
+function fitHtml(fit) {
+  const [label, c] = FIT_LABEL[fit.match];
+  const chips = (list, cls) => list.map(x => `<span class="fit-chip ${cls}">${esc(x)}</span>`).join('');
+  return `
+    <div class="fit">
+      <div class="fit-top"><span class="fit-match"><i style="--c:var(--${c})"></i>${label}</span>
+        <span class="hint">Against ${esc(fit.versionName)} · ${timeAgo(fit.at)}</span></div>
+      ${fit.summary ? `<p>${esc(fit.summary)}</p>` : ''}
+      ${fit.matched.length ? `<div class="fit-group"><span class="fit-label">Your resume shows</span><div class="fit-chips">${chips(fit.matched, 'have')}</div></div>` : ''}
+      ${fit.missing.length ? `<div class="fit-group"><span class="fit-label">Not in your resume</span><div class="fit-chips">${chips(fit.missing, 'gap')}</div></div>` : ''}
+      ${fit.rewrites.length ? `<div class="fit-group"><span class="fit-label">Lines to reword for this job</span>
+        <ol class="rewrites">${fit.rewrites.map(r => `<li><span class="from">${esc(r.from)}</span><span class="to">${esc(r.to)}</span>${r.why ? `<span class="why">${esc(r.why)}</span>` : ''}</li>`).join('')}</ol></div>` : ''}
+    </div>`;
+}
+
+function fitFieldHtml(a) {
+  if (!state.ai?.available || !state.resumes?.length) return '';
+  return `
+    <div class="field wide fit-field">
+      <div class="fit-head">
+        <button class="btn btn-sm" type="button" id="fit-btn">${icon('sparkles')}<span>${a.fit ? 'Check fit again' : 'Check fit'}</span></button>
+        <span class="hint" id="fit-left">${a.fit ? '' : 'Compares your resume with the job description, using AI.'} ${aiLeftText(state.ai)}</span>
+      </div>
+      <div id="fit-result">${a.fit ? fitHtml(a.fit) : ''}</div>
+    </div>`;
+}
+
 let view = 'dashboard';
 function route() {
   const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
@@ -2814,6 +2996,9 @@ function renderHealth() {
     ['Sync round', s.demo ? 'Off in demo' : s.lastSyncPassAt ? timeAgo(s.lastSyncPassAt) : 'Not yet', `Every ${s.syncMinutes} min while awake`],
     ['Pinger', `${sdot(cronTone)}${s.demo ? 'Off in demo' : !s.cronConfigured ? 'Not set up' : s.lastCronAt ? timeAgo(s.lastCronAt) : 'No call yet'}`,
       s.cronConfigured || s.demo ? 'Keeps the free service awake' : 'Set CRON_SECRET (docs/DEPLOY.md)'],
+    // Resume insights' AI runs on the server's OpenAI key, so its use is worth watching.
+    ['Resume AI', s.insights.available ? `${sdot(s.insights.runs >= s.insights.serverLimit ? 'warn' : 'ok')}${s.insights.runs} of ${s.insights.serverLimit} today` : `${sdot('off')}Not set up`,
+      s.insights.available ? `${s.insights.limited} hit the limit of ${s.insights.dailyLimit} · ${s.insights.withResume} with a resume` : 'Set OPENAI_API_KEY (docs/DEPLOY.md)'],
   ];
   $('#dev-health').innerHTML = items.map(([k, v, sub]) => `<div><dt>${k}</dt><dd><span class="v">${v}</span><span class="sub">${sub}</span></dd></div>`).join('');
 }

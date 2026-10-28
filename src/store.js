@@ -278,7 +278,7 @@ export class Store {
         for (const field of Object.keys(old.edited)) target[field] = old[field];
         target.edited = { ...target.edited, ...old.edited };
       }
-      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline', 'interviewAt', 'resumeId', 'posting']) {
+      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline', 'interviewAt', 'resumeId', 'posting', 'fit']) {
         if (old[field]) target[field] = old[field];
       }
       const ids = new Set(target.events.map(e => e.id));

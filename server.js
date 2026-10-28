@@ -19,7 +19,8 @@ import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, f
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
 import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
-import { computeInsights } from './src/insights.js';
+import { computeInsights, outcomeOf } from './src/insights.js';
+import { aiStatus, reserveRun, hashOf, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -220,6 +221,7 @@ app.get('/api/state', async (req, res) => {
     ghostDays: GHOST_DAYS,
     calendarFeed: db.calendarFeed ? { url: feedUrl(req, db.calendarFeed.token) } : null,
     resumes: versions.map(({ id, name, usedFrom }) => ({ id, name, usedFrom })),
+    ai: aiStatus(user, { demo: DEMO }),
   });
 });
 
@@ -332,6 +334,9 @@ app.patch('/api/applications/:id', async (req, res) => {
   if (typeof posting === 'string' && cleanText(posting).length > MAX_POSTING) {
     return res.status(400).json({ error: `That job description is very long. Keep it under ${MAX_POSTING.toLocaleString('en-US')} characters` });
   }
+  // A Check fit answer was about the old job description or resume, so it goes.
+  if (typeof resumeId === 'string' && (resumeId || null) !== (a.resumeId ?? null)) delete a.fit;
+  if (typeof posting === 'string' && cleanText(posting) !== (a.posting ?? '')) delete a.fit;
   if (typeof resumeId === 'string') a.resumeId = resumeId || null;
   if (typeof posting === 'string') a.posting = cleanText(posting);
   const newCompany = req.body.company?.trim();
@@ -502,13 +507,32 @@ app.delete('/api/applications/:id', (req, res) => {
 // your applications. Nothing here uses AI. Changes tell your open tabs, like any other.
 const UPLOAD_LIMIT = '5mb';
 
+// Everything Resume insights shows, and what the AI would be told for suggestions (with
+// a fingerprint of it, so asking again when nothing changed doesn't use a run).
+async function resumePicture(user) {
+  const versions = await listVersions(user.id);
+  const apps = user.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
+  const insights = computeInsights(apps, versions, { ghostDays: GHOST_DAYS });
+  const current = versions.find(v => v.id === insights.currentId);
+  const input = current && suggestionsInput({
+    resumeText: current.text, versionName: current.name, insights,
+    apps: [...apps].sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)).map(a => ({
+      role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions).name,
+    })),
+  });
+  return { versions, insights, input, inputHash: input ? hashOf(input) : null };
+}
+
 app.get('/api/resume', async (req, res) => {
-  const versions = await listVersions(req.account.id);
-  const apps = req.account.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
+  const { versions, insights, inputHash } = await resumePicture(req.account);
+  const saved = req.account.store.db.insights?.suggestions ?? null;
   res.json({
     versions: versions.map(versionMeta),
-    insights: computeInsights(apps, versions, { ghostDays: GHOST_DAYS }),
+    insights,
     limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
+    ai: aiStatus(req.account, { demo: DEMO }),
+    // upToDate: nothing the suggestions were based on has changed since.
+    suggestions: saved && { at: saved.at, version: saved.version, items: saved.items, upToDate: saved.inputHash === inputHash },
   });
 });
 
@@ -548,6 +572,90 @@ app.delete('/api/resume/:id', async (req, res) => {
   if (error) return res.status(status || 400).json({ error });
   broadcast(req.account.id);
   res.json({ removed });
+});
+
+// --- AI for resume insights (src/ai.js) -------------------------------------------
+// Uses the server's OpenAI key, with a daily limit for everyone but the owner. Nothing is
+// sent until you've allowed it once.
+app.post('/api/insights/consent', (req, res) => {
+  const db = req.account.store.db;
+  db.insights ??= {};
+  db.insights.consent = req.body?.allow === false ? null : { at: new Date().toISOString() };
+  changed(req.account);
+  res.json({ ai: aiStatus(req.account, { demo: DEMO }) });
+});
+
+// Checks shared by both AI actions. Returns an error to send, or null.
+function aiBlocked(user) {
+  const ai = aiStatus(user, { demo: DEMO });
+  if (!ai.available) return { status: 400, body: { error: "AI suggestions aren't set up on this server" } };
+  if (!ai.consent) return { status: 403, body: { error: 'Allow nuj to send your resume to OpenAI first', needsConsent: true } };
+  return null;
+}
+
+app.post('/api/insights/suggestions', async (req, res) => {
+  const user = req.account;
+  const blocked = aiBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  const { input, inputHash } = await resumePicture(user);
+  if (!input) return res.status(400).json({ error: 'Add your resume first' });
+  const db = user.store.db;
+  const saved = db.insights.suggestions;
+  if (saved?.inputHash === inputHash && saved.items.some(s => s.state === 'open')) {
+    return res.json({ cached: true, ai: aiStatus(user, { demo: DEMO }) });
+  }
+  const run = await reserveRun(user);
+  if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
+  let items;
+  try {
+    items = DEMO ? demoSuggestions(input) : await writeSuggestions(input);
+  } catch (err) {
+    await run.release();
+    return res.status(502).json({ error: err.message });
+  }
+  // New suggestions replace the open ones; the ones you acted on or set aside stay listed.
+  const kept = (saved?.items || []).filter(s => s.state !== 'open').slice(0, 20);
+  db.insights.suggestions = { inputHash, at: new Date().toISOString(), version: input.currentVersion, items: [...items, ...kept] };
+  changed(user);
+  res.json({ ai: aiStatus(user, { demo: DEMO }) });
+});
+
+// Done, Not for me, or back to open (Undo).
+app.patch('/api/insights/suggestions/:id', (req, res) => {
+  const s = req.account.store.db.insights?.suggestions?.items.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'That suggestion is gone. Get new ones' });
+  if (!['open', 'done', 'dismissed'].includes(req.body?.state)) return res.status(400).json({ error: 'Unknown choice' });
+  s.state = req.body.state;
+  s.decidedAt = s.state === 'open' ? null : new Date().toISOString();
+  changed(req.account);
+  res.json({ ok: true });
+});
+
+// How well the resume this went out with fits its pasted job description.
+app.post('/api/applications/:id/fit', async (req, res) => {
+  const user = req.account;
+  const a = user.store.applications.find(x => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
+  const blocked = aiBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  if (!a.posting) return res.status(400).json({ error: 'Paste the job description first' });
+  const version = versionFor(a, await listVersions(user.id));
+  if (!version) return res.status(400).json({ error: 'Add your resume first' });
+  const key = hashOf([a.posting, version.id, version.updatedAt]);
+  if (a.fit?.key === key) return res.json({ fit: a.fit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
+  const run = await reserveRun(user);
+  if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
+  let result;
+  try {
+    const args = { resumeText: version.text, posting: a.posting, role: a.role };
+    result = DEMO ? demoFit(args) : await checkApplicationFit(args);
+  } catch (err) {
+    await run.release();
+    return res.status(502).json({ error: err.message });
+  }
+  a.fit = { key, at: new Date().toISOString(), versionName: version.name, ...result };
+  changed(user);
+  res.json({ fit: a.fit, ai: aiStatus(user, { demo: DEMO }) });
 });
 
 // --- Gmail ----------------------------------------------------------------
@@ -701,6 +809,9 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
   if (DEMO) accounts.push(...buildDemoAccounts().map(a => ({ ...a, attention: attentionFor(a) })));
   const emails = Object.fromEntries(accounts.map(a => [a.id, a.email]));
   const asks = await listAsks();
+  // Resume insights' AI, as counts: today's runs and how many people hit their limit.
+  const aiUsage = await serverUsage();
+  const withResume = (await Promise.all(people.map(u => listVersions(u.id)))).filter(v => v.length).length;
   for (const a of accounts) {
     const waiting = asks.find(x => !x.stoppedAt && x.userIds.includes(a.id) && !x.answers.some(y => y.userId === a.id) && !x.skipped.includes(a.id));
     a.feedbackAsked = waiting ? waiting.createdAt : null;
@@ -717,6 +828,7 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
       lastCronAt,
       cronConfigured: CRON_SECRET.length >= 16,
       demo: DEMO,
+      insights: { available: Boolean(AI_KEY) || DEMO, runs: aiUsage.runs, serverLimit: SERVER_DAILY_LIMIT, dailyLimit: DAILY_LIMIT, limited: aiUsage.limited.length, withResume },
     },
     accounts,
     // Each error with the addresses of the accounts it hit, for reading at a glance.
