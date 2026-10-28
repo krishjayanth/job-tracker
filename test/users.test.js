@@ -66,8 +66,10 @@ test("a key sealed with another secret can't be read back", () => {
 test('deleting an account removes its data, key and Gmail sign-in, and only its own', async () => {
   const friend = await users.getUser('sub-friend');
   await friend.store.flush();
+  const { addVersion } = await import('../src/resume.js');
+  await addVersion('sub-friend', { text: 'Experience and Education' });
   await users.deleteUser('sub-friend');
-  for (const key of ['db_sub-friend', 'groq_key_sub-friend', 'gmail_token_sub-friend']) assert.equal(await store.getKv(key), null, key);
+  for (const key of ['db_sub-friend', 'groq_key_sub-friend', 'gmail_token_sub-friend', 'resumes_sub-friend']) assert.equal(await store.getKv(key), null, key);
   assert.ok(!('sub-friend' in await store.getKv('users')));
   assert.equal((await users.getUser('sub-owner')).store.applications[0].company, 'Contoso');
   // Signing in again starts over.

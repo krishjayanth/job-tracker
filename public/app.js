@@ -18,6 +18,7 @@ let filter = 'all';
 let flow = null; // a chart stage you clicked: only applications that went through it
 let month = 'all'; // 'YYYY-MM' of the date applied
 let query = '';
+let only = null; // { label, ids }: a group picked on Resume insights (a resume version, a kind of role, a skill)
 let visibleRows = []; // what the table currently shows, for export
 let sort = { key: 'lastActivity', dir: 'desc' };
 let seen = null; // id -> lastActivity, to highlight rows that change live
@@ -843,7 +844,7 @@ const UNDO_SHOW_MS = 5000;
 
 // Everything except the stage tab: month, search and chart stage. Tab counts use it,
 // so a tab's number is how many you'd see by clicking it.
-const inView = a => inMonth(a) && matchesQuery(a) && (!flow || a.path.includes(flow));
+const inView = a => inMonth(a) && matchesQuery(a) && (!flow || a.path.includes(flow)) && (!only || only.ids.has(a.id));
 
 function renderTabs() {
   const counts = Object.fromEntries(TAB_ORDER.map(s => [s, 0]));
@@ -937,6 +938,7 @@ function notesMatch(a, words) {
 function renderFilterChips(shown, total) {
   const chips = [];
   if (query.trim()) chips.push(['query', `“${esc(query.trim())}”`]);
+  if (only) chips.push(['only', esc(only.label)]);
   if (flow) chips.push(['flow', `<i class="dot" style="--c:${color(flow)}"></i>${FLOW_LABEL[flow] || STAGE_LABEL[flow]}`]);
   if (filter !== 'all') chips.push(['filter', `<i class="dot" style="--c:${color(filter)}"></i>${STAGE_LABEL[filter]}`]);
   if (month !== 'all') chips.push(['month', monthLabel(month)]);
@@ -1203,7 +1205,27 @@ function detailFieldsHtml(a, isNew) {
           ${a.interviewAt ? `<a class="btn" href="${esc(googleLink({ kind: 'interview', a, at: a.interviewAt }))}" target="_blank" rel="noopener" title="Add this interview to Google Calendar">${icon('calendar')}Add to Google</a>` : ''}
         </div></div>`}
       <div class="field wide"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" placeholder="Referral, recruiter name, salary range…">${esc(a.notes)}</textarea></div>
+      ${isNew ? '' : resumeFieldsHtml(a)}
     </div>`;
+}
+
+// For Resume insights: which resume this went out with, and the job description if you
+// paste it (the emails rarely say much about the role).
+function resumeFieldsHtml(a) {
+  const versions = state.resumes || [];
+  const day = isoDate(a.appliedAt);
+  const byDate = versions.filter(v => v.usedFrom <= day).at(-1) ?? versions[0];
+  const words = (a.posting?.match(/\S+/g) || []).length;
+  return `
+    ${versions.length ? `<div class="field wide"><label for="f-resume">Resume sent</label>
+      <select id="f-resume" name="resumeId">
+        <option value="">From the date you applied (${esc(byDate.name)})</option>
+        ${versions.map(v => `<option value="${esc(v.id)}" ${a.resumeId === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+      </select></div>` : ''}
+    <details class="field wide posting-field" ${a.posting ? 'open' : ''}>
+      <summary>Job description <span class="dim">${words ? `${words} words` : 'Optional, for Resume insights'}</span>${icon('chevron')}</summary>
+      <textarea id="f-posting" name="posting" rows="7" maxlength="20000" aria-label="Job description" placeholder="Paste the job description from the posting. Resume insights uses it to find the skills this role asks for.">${esc(a.posting)}</textarea>
+    </details>`;
 }
 
 const savedNote = (text, tone = '') => {
@@ -1328,7 +1350,7 @@ function openDrawer(app) {
   };
   form.addEventListener('change', e => { if (e.target.name) saveField(e.target); });
   form.addEventListener('input', e => {
-    if (e.target.name !== 'notes') return;
+    if (e.target.name !== 'notes' && e.target.name !== 'posting') return;
     clearTimeout(notesTimer);
     notesTimer = setTimeout(() => saveField(e.target), 900);
   });
@@ -1811,6 +1833,7 @@ function clearFilters(which) {
   if (which === 'filter' || which === 'all') filter = 'all';
   if ((which === 'flow' || which === 'all') && flow) { flow = null; renderSankey(); }
   if (which === 'month' || which === 'all') month = 'all';
+  if (which === 'only' || which === 'all') only = null;
   if (which === 'query' || which === 'all') { query = ''; $('#search').value = ''; $('#search-clear').hidden = true; }
   renderMonths(); renderTabs(); renderTable();
 }
@@ -2099,11 +2122,6 @@ const SOON = {
     blurb: 'Set a weekly target for applications and follow-ups, and watch your streak build.',
     points: ['Weekly application targets', 'Streaks and progress at a glance', 'A gentle nudge when you fall behind'],
   },
-  resume: {
-    label: 'Resume insights', icon: 'file', c: 'in_progress', preview: 'list',
-    blurb: 'Compare the roles that move forward with the ones that don’t, and see what to sharpen in your resume.',
-    points: ['Patterns in roles that reach interviews', 'Keywords from postings you applied to', 'Suggestions you choose to act on'],
-  },
 };
 $('#soon-links').innerHTML = Object.entries(SOON).map(([id, s]) =>
   `<a class="side-link upcoming" href="#/${id}" data-view="${id}">${icon(s.icon)}${s.label}<span class="soon-tag">Soon</span></a>`).join('');
@@ -2131,11 +2149,369 @@ function renderSoon(id) {
     <a class="btn" href="#/">${icon('back')}Back to dashboard</a>`;
 }
 
+// ---------------------------------------------------------------- resume insights
+// Your resume versions and what they show, from /api/resume. The server works it out on
+// every request, so it follows each sync and edit (the live update reloads it).
+let resume = null; // { versions, insights, limits }
+let resumeShowAll = {}; // lists opened with "Show all", by name
+const KEYWORDS_SHOWN = 16;
+const GROUPS_SHOWN = 6;
+const pct = r => `${Math.round(r * 100)}%`;
+
+async function loadResume() {
+  try {
+    resume = await api('GET', '/api/resume');
+  } catch (err) {
+    $('#resume-body').innerHTML = `<p class="resume-error">${icon('alert')}${esc(err.message)}</p>`;
+    return;
+  }
+  renderResume();
+}
+
+function renderResume() {
+  if (view !== 'resume' || !resume) return;
+  const { versions, insights: ins } = resume;
+  const since = $('#resume-since');
+  if (!versions.length) {
+    since.textContent = '';
+    $('#resume-body').innerHTML = resumeEmptyHtml();
+    return;
+  }
+  since.textContent = !ins.total ? 'Add applications to see how your resume is doing.'
+    : `Based on ${appCount(ins.counted)} with an outcome${ins.pending ? `. ${ins.pending} more ${ins.pending === 1 ? 'is' : 'are'} too new to count yet` : ''}.`;
+  $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + workingHtml() + keywordsHtml() + checksHtml();
+}
+
+function resumeEmptyHtml() {
+  return `
+    <section class="resume-drop" id="resume-drop" aria-labelledby="drop-title">
+      <span class="drop-icon">${icon('upload')}</span>
+      <h2 id="drop-title">Add your resume</h2>
+      <p>Drop a PDF or Word file here, or choose one. nuj compares it with the applications that moved forward and the ones that didn't, and with the skills your postings ask for.</p>
+      <div class="drop-actions">
+        <button class="btn btn-primary" type="button" data-resume-file>${icon('upload')}Choose a file</button>
+        <button class="btn" type="button" data-resume-paste>Paste text instead</button>
+      </div>
+      <span class="fine">${icon('shield')}nuj keeps the text only, not the file. Only you can see it.</span>
+    </section>
+    <ul class="resume-promises">
+      <li>${icon('chart')}<span><strong>What's working</strong>How often applications move forward, by resume version and by kind of role.</span></li>
+      <li>${icon('search')}<span><strong>Keywords</strong>Skills from the postings you applied to that your resume does or doesn't mention.</span></li>
+      <li>${icon('check')}<span><strong>Quick checks</strong>Length, results with numbers, and the headings hiring software looks for.</span></li>
+    </ul>`;
+}
+
+// What a group's numbers say, in words: a rate once there are enough finished
+// applications to mean something, and how many there are either way.
+const groupValue = g => g.rate != null
+  ? `<b>${pct(g.rate)}</b> moved forward · ${g.forward} of ${g.counted}`
+  : `Too few to tell yet · ${g.counted} finished`;
+
+function versionsHtml() {
+  const { versions, insights: ins, limits } = resume;
+  const cards = [...versions].reverse().map(v => {
+    const g = ins.byVersion.find(x => x.key === v.id);
+    const current = v.id === ins.currentId;
+    return `
+      <li class="version${current ? ' current' : ''}">
+        <div class="v-top"><strong>${esc(v.name)}</strong>${current ? '<span class="v-tag">Current</span>' : ''}</div>
+        <span class="v-date">Sending since ${shortDate(`${v.usedFrom}T12:00:00`)} · ${v.words} words</span>
+        <span class="v-stats">${g ? `${appCount(g.total)} · ${groupValue(g)}` : 'No applications yet'}</span>
+        <div class="v-actions">
+          <button class="btn btn-sm" type="button" data-version-edit="${esc(v.id)}">Edit</button>
+          ${g ? `<button class="btn btn-sm btn-quiet" type="button" data-only="version:${esc(v.id)}">Show applications</button>` : ''}
+          <button class="btn btn-sm btn-quiet btn-danger" type="button" data-version-delete="${esc(v.id)}" aria-label="Delete ${esc(v.name)}">${icon('trash')}</button>
+        </div>
+      </li>`;
+  }).join('');
+  const full = versions.length >= limits.versions;
+  return `
+    <section class="panel" aria-labelledby="versions-title">
+      <div class="panel-head">
+        <div class="head-text"><h2 id="versions-title">Versions</h2>
+          <span class="hint">Each application counts toward the version you were sending when you applied. You can change it in the application's panel.</span></div>
+        <button class="btn btn-sm" type="button" data-version-add ${full ? `disabled title="You can keep up to ${limits.versions} versions"` : ''}>${icon('plus')}<span>New version</span></button>
+      </div>
+      <ul class="versions">${cards}</ul>
+    </section>`;
+}
+
+function resumeKpisHtml() {
+  const ins = resume.insights;
+  if (!ins.total) return '';
+  const rated = ins.byVersion.filter(g => g.rate != null).sort((a, b) => b.rate - a.rate);
+  const bestFn = ins.byFunction.find(g => g.key === ins.best.function);
+  const tiles = [
+    ['Counted', ins.counted, ins.pending ? `${ins.pending} still too new` : 'Every application has an outcome'],
+    ['Moved forward', ins.rate == null ? '—' : pct(ins.rate), `${ins.forward} reached an assessment or interview`, 'var(--interview)'],
+    ['Best version', ins.best.version ? esc(ins.best.version) : 'Too early', ins.best.version
+      ? `${pct(rated[0].rate)} against ${pct(rated[1].rate)}`
+      : resume.versions.length > 1 ? `Needs ${MIN_GROUP} finished applications for each` : 'Add a second version to compare'],
+    ['Best kind of role', bestFn ? esc(bestFn.key) : 'Too early', bestFn ? `${pct(bestFn.rate)} moved forward` : `Needs ${MIN_GROUP} finished applications of a kind`],
+  ];
+  return `<ol class="pipeline resume-kpis" aria-label="Your resume at a glance">${tiles.map(([label, value, sub, c]) => `
+    <li>
+      <span class="p-label"><i class="${c ? '' : 'hollow'}" style="${c ? `--c:${c}` : ''}"></i>${label}</span>
+      <span class="p-value${typeof value === 'string' && !/^[\d—]/.test(value) ? ' p-word' : ''}">${value}</span>
+      <span class="p-sub">${sub}</span>
+    </li>`).join('')}</ol>`;
+}
+// Matches MIN_GROUP in src/insights.js.
+const MIN_GROUP = 5;
+
+function barsHtml(title, kind, groups, name = g => g.key) {
+  const shown = resumeShowAll[kind] ? groups : groups.slice(0, GROUPS_SHOWN);
+  return `
+    <div class="bars-group">
+      <h3>${title}</h3>
+      <ul class="bars">${shown.map(g => `
+        <li><button type="button" class="bar-row" data-only="${kind}:${esc(g.key)}" title="Show these applications">
+          <span class="bar-name">${esc(name(g))}<span class="dim num">${g.total}</span></span>
+          <span class="bar-track"><span class="bar-fill${g.rate == null ? ' unsure' : ''}" style="--w:${g.rate == null ? 0 : Math.max(2, g.rate * 100)}%"></span></span>
+          <span class="bar-value">${groupValue(g)}</span>
+        </button></li>`).join('')}
+      </ul>
+      ${groups.length > GROUPS_SHOWN ? `<button type="button" class="chip-clear bars-more" data-more="${kind}">${resumeShowAll[kind] ? 'Show fewer' : `Show all ${groups.length}`}</button>` : ''}
+    </div>`;
+}
+
+function workingHtml() {
+  const ins = resume.insights;
+  if (!ins.total) return '';
+  const known = groups => groups.filter(g => g.key !== 'Not known');
+  const parts = [];
+  if (ins.byVersion.length > 1) parts.push(barsHtml('By resume version', 'version', ins.byVersion, g => g.name));
+  parts.push(barsHtml('By kind of role', 'function', known(ins.byFunction)));
+  if (known(ins.byLevel).length > 1) parts.push(barsHtml('By level', 'level', known(ins.byLevel)));
+  return `
+    <section class="panel" aria-labelledby="working-title">
+      <div class="panel-head"><div class="head-text"><h2 id="working-title">What's working</h2>
+        <span class="hint">Moved forward means it reached an assessment or interview. Groups with fewer than ${MIN_GROUP} finished applications aren't rated yet.</span></div></div>
+      <div class="bars-grid">${parts.join('')}</div>
+    </section>`;
+}
+
+function chipsHtml(list, which) {
+  const shown = resumeShowAll[which] ? list : list.slice(0, KEYWORDS_SHOWN);
+  return `<div class="kw-list">${shown.map(k => `
+    <button type="button" class="kw ${which}" data-only="skill:${esc(k.name)}" title="In ${k.postings} ${k.postings === 1 ? 'posting' : 'postings'} · ${k.forward} moved forward. Show them">
+      ${esc(k.name)}<span class="num">${k.postings}${k.forward ? ` · ${k.forward}${icon('up')}` : ''}</span>
+    </button>`).join('')}
+    ${list.length > KEYWORDS_SHOWN ? `<button type="button" class="chip-clear" data-more="${which}">${resumeShowAll[which] ? 'Show fewer' : `Show all ${list.length}`}</button>` : ''}
+  </div>`;
+}
+
+function keywordsHtml() {
+  const ins = resume.insights;
+  if (!ins.total) return '';
+  const { matched, missing, withPosting } = ins.keywords;
+  const current = resume.versions.find(v => v.id === ins.currentId);
+  const without = ins.total - withPosting;
+  return `
+    <section class="panel" aria-labelledby="kw-title">
+      <div class="panel-head"><div class="head-text"><h2 id="kw-title">Keywords</h2>
+        <span class="hint">Skills named in the postings you applied to, against ${esc(current.name)}. Each shows how many postings ask for it, and how many of those moved forward.</span></div></div>
+      ${matched.length || missing.length ? `
+      <div class="kw-grid">
+        <div><h3>Missing from your resume <span class="dim num">${missing.length}</span></h3>
+          ${missing.length ? chipsHtml(missing, 'missing') : '<p class="dim">Your resume mentions every skill nuj found in your postings.</p>'}</div>
+        <div><h3>In your resume and in postings <span class="dim num">${matched.length}</span></h3>
+          ${matched.length ? chipsHtml(matched, 'matched') : '<p class="dim">None of the skills nuj found in your postings are in your resume yet.</p>'}</div>
+      </div>` : '<p class="dim">nuj hasn\'t found any skills in your postings yet. Emails rarely list them, so paste a few job descriptions.</p>'}
+      ${without ? `<p class="kw-nudge">${icon('alert')}<span>${withPosting} of ${appCount(ins.total)} ${withPosting === 1 ? 'has' : 'have'} a job description. Paste more into an application's panel for better keywords.</span>
+        <button type="button" class="btn btn-sm" data-only="noposting:">Show the ones without</button></p>` : ''}
+    </section>`;
+}
+
+function checksHtml() {
+  const { checks, currentId } = resume.insights;
+  if (!checks.length) return '';
+  const current = resume.versions.find(v => v.id === currentId);
+  return `
+    <section class="panel" aria-labelledby="checks-title">
+      <div class="panel-head"><div class="head-text"><h2 id="checks-title">Quick checks</h2>
+        <span class="hint">On ${esc(current.name)}, your current version.</span></div></div>
+      <ul class="checks">${checks.map(c => `
+        <li class="${c.ok ? 'ok' : 'warn'}">${icon(c.ok ? 'check' : 'alert')}<span><strong>${esc(c.title)}</strong>${esc(c.detail)}</span></li>`).join('')}
+      </ul>
+    </section>`;
+}
+
+// "Show applications" on any group: the table, filtered to just those.
+function showOnly(spec) {
+  const [kind, ...rest] = spec.split(':');
+  const key = rest.join(':');
+  const ins = resume.insights;
+  const pick = {
+    version: () => { const g = ins.byVersion.find(x => x.key === key); return g && [`Resume: ${g.name}`, g.ids]; },
+    function: () => { const g = ins.byFunction.find(x => x.key === key); return g && [`Role: ${g.key}`, g.ids]; },
+    level: () => { const g = ins.byLevel.find(x => x.key === key); return g && [`Level: ${g.key}`, g.ids]; },
+    skill: () => { const k = [...ins.keywords.matched, ...ins.keywords.missing].find(x => x.name === key); return k && [`Skill: ${k.name}`, k.ids]; },
+    noposting: () => ['No job description', state.applications.filter(a => !a.posting?.trim()).map(a => a.id)],
+  }[kind]?.();
+  if (!pick) return;
+  only = { label: pick[0], ids: new Set(pick[1]) };
+  filter = 'all';
+  month = 'all';
+  renderMonths();
+  renderTabs();
+  renderTable();
+  go('#/applications');
+}
+
+$('#view-resume').addEventListener('click', async e => {
+  const t = e.target;
+  if (t.closest('[data-resume-file]')) return $('#rv-file').click();
+  if (t.closest('[data-resume-paste]') || t.closest('[data-version-add]')) return openVersionDialog();
+  const more = t.closest('[data-more]');
+  if (more) { resumeShowAll[more.dataset.more] = !resumeShowAll[more.dataset.more]; return renderResume(); }
+  const o = t.closest('[data-only]');
+  if (o) return showOnly(o.dataset.only);
+  const edit = t.closest('[data-version-edit]');
+  if (edit) return openVersionDialog({ id: edit.dataset.versionEdit });
+  const del = t.closest('[data-version-delete]');
+  if (del) {
+    del.disabled = true;
+    try {
+      const { removed } = await api('DELETE', `/api/resume/${del.dataset.versionDelete}`);
+      await loadResume();
+      toast(`Deleted ${removed.name}`, () => api('POST', '/api/resume', removed).then(loadResume));
+    } catch (err) {
+      del.disabled = false;
+      toast(err.message);
+    }
+  }
+});
+
+// Dropping a file on the empty page reads it, the same as choosing one.
+$('#view-resume').addEventListener('dragover', e => {
+  const drop = e.target.closest('#resume-drop');
+  if (!drop) return;
+  e.preventDefault();
+  drop.classList.add('over');
+});
+$('#view-resume').addEventListener('dragleave', e => {
+  const drop = e.target.closest('#resume-drop');
+  if (drop && !drop.contains(e.relatedTarget)) drop.classList.remove('over');
+});
+$('#view-resume').addEventListener('drop', e => {
+  const drop = e.target.closest('#resume-drop');
+  if (!drop) return;
+  e.preventDefault();
+  drop.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file) takeResumeFile(file);
+});
+
+// ---- the version sheet: add one, or edit one (name, date, text) ----
+const resumeDialog = $('#resume-dialog');
+let editingVersion = null; // the version being edited, or null for a new one
+const resumeMsg = (text, tone = '') => { const el = $('#resume-msg'); el.className = `key-msg ${tone}`; el.textContent = text; };
+const defaultVersionName = () => `Resume, ${new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}`;
+
+function countResumeText() {
+  const n = $('#rv-text').value.length, max = resume?.limits.text ?? 40_000;
+  const el = $('#rv-count');
+  el.textContent = n ? `${n.toLocaleString()} of ${max.toLocaleString()} characters` : '';
+  el.classList.toggle('over', n > max);
+}
+$('#rv-text').addEventListener('input', countResumeText);
+
+async function openVersionDialog({ id = null, text = '', note = '' } = {}) {
+  if (!id && resume && resume.versions.length >= resume.limits.versions) {
+    return toast(`You can keep up to ${resume.limits.versions} versions. Delete one to add another`);
+  }
+  let v = null;
+  if (id) {
+    try { v = await api('GET', `/api/resume/${id}`); } catch (err) { return toast(err.message); }
+  }
+  editingVersion = id;
+  $('#resume-dialog-title').textContent = v ? `Edit ${v.name}` : 'Add a resume version';
+  $('#resume-dialog-sub').textContent = v
+    ? 'Change its name, the date you started sending it, or its text. Read a new file to replace the text.'
+    : text ? 'Check the text nuj read from your file and fix anything that came out wrong. Only the text is kept, not the file.'
+      : 'Paste your resume, or read it from a PDF or Word file. Only the text is kept, not the file.';
+  $('#rv-name').value = v?.name ?? (resume?.versions.length ? '' : defaultVersionName());
+  $('#rv-name').placeholder = defaultVersionName();
+  $('#rv-from').value = v?.usedFrom ?? isoDate(new Date().toISOString());
+  $('#rv-text').value = v?.text ?? text;
+  $('#resume-save').textContent = v ? 'Save changes' : 'Save version';
+  $('#resume-save').disabled = false;
+  resumeMsg(note);
+  countResumeText();
+  resumeDialog.showModal();
+  (v || text ? $('#rv-name') : $('#rv-text')).focus();
+}
+
+async function readResumeFile(file) {
+  if (file.size > 5 * 1024 * 1024) throw new Error('That file is too big. nuj takes resumes up to 5 MB');
+  const res = await fetch('/api/resume/extract', {
+    method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    noteError(`POST /api/resume/extract → ${res.status} ${data.error || res.statusText}`);
+    throw new ApiError(data.error || "nuj couldn't read that file. Try again, or paste the text");
+  }
+  return data;
+}
+
+// A file chosen or dropped: into the open sheet, or open the sheet with it.
+async function takeResumeFile(file) {
+  const inSheet = resumeDialog.open;
+  const drop = $('#resume-drop');
+  if (inSheet) resumeMsg(`Reading ${file.name}…`); else drop?.classList.add('busy');
+  try {
+    const { text, cut } = await readResumeFile(file);
+    const note = cut ? 'Only the first 40,000 characters fit, so the end was left out.' : '';
+    if (inSheet) {
+      $('#rv-text').value = text;
+      countResumeText();
+      resumeMsg(note || `Read ${file.name}. Check the text below.`, note ? '' : 'ok');
+    } else {
+      await openVersionDialog({ text, note });
+    }
+  } catch (err) {
+    if (inSheet) resumeMsg(err.message, 'err'); else toast(err.message);
+  } finally {
+    drop?.classList.remove('busy');
+  }
+}
+$('#rv-file-btn').addEventListener('click', () => $('#rv-file').click());
+$('#rv-file').addEventListener('change', e => {
+  const file = e.target.files[0];
+  e.target.value = ''; // choosing the same file again still counts
+  if (file) takeResumeFile(file);
+});
+
+$('#resume-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target));
+  if (!body.text.trim()) return resumeMsg('Add the text of your resume', 'err');
+  const btn = $('#resume-save');
+  btn.disabled = true;
+  resumeMsg('Saving…');
+  try {
+    const saved = editingVersion
+      ? await api('PATCH', `/api/resume/${editingVersion}`, body)
+      : await api('POST', '/api/resume', body);
+    resumeDialog.close();
+    toast(editingVersion ? `Saved ${saved.name}` : `Added ${saved.name}`);
+    await loadResume();
+  } catch (err) {
+    btn.disabled = false;
+    resumeMsg(err.message, 'err');
+  }
+});
+resumeDialog.addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) resumeDialog.close();
+});
+
 let view = 'dashboard';
 function route() {
   const id = location.hash.replace(/^#\/?/, '') || 'dashboard';
   const soon = SOON[id];
-  const page = ['reports', 'developer', 'settings', 'calendar'].includes(id) ? id : null; // pages of their own
+  const page = ['reports', 'developer', 'settings', 'calendar', 'resume'].includes(id) ? id : null; // pages of their own
   const prev = view;
   if (view !== (soon ? id : page || 'dashboard') && $('#drawer').classList.contains('open')) closeDrawer(); // a new page, not the panel on top of it
   view = soon ? id : page || 'dashboard';
@@ -2145,7 +2521,9 @@ function route() {
   $('#view-developer').hidden = page !== 'developer';
   $('#view-settings').hidden = page !== 'settings';
   $('#view-calendar').hidden = page !== 'calendar';
+  $('#view-resume').hidden = page !== 'resume';
   if (soon) renderSoon(id);
+  if (page === 'resume') loadResume();
   if (page === 'calendar') renderCalendar();
   if (page === 'reports') loadReports();
   if (page === 'developer') loadDeveloper();
@@ -2958,12 +3336,14 @@ function cmdkSources() {
     ['Dashboard', '#/', 'dashboard'],
     ['Applications', '#/applications', 'list'],
     ['Calendar', '#/calendar', 'calendar', 'deadlines interviews schedule google'],
+    ['Resume insights', '#/resume', 'file', 'cv keywords skills versions'],
     ['Settings', '#/settings', 'sliders', 'appearance gmail groq key ignored senders account'],
     !$('#reports-link').hidden && ['Reports', '#/reports', 'flag', 'invite requests problems'],
     !$('#developer-link').hidden && ['Developer', '#/developer', 'terminal', 'accounts users errors server health logs'],
   ].filter(Boolean).map(([label, href, ic, keywords = '']) => ({ group: 'Go to', label, icon: ic, keywords: `page ${keywords}`, run: () => go(href) }));
   const actions = [
     { label: 'Add application', icon: 'plus', keywords: 'new create', run: () => $('#add-btn').click() },
+    { label: 'Add a resume version', icon: 'file', keywords: 'upload cv resume new', run: () => { go('#/resume'); openVersionDialog(); } },
     !$('#sync-btn').hidden && { label: 'Sync now', icon: 'refresh', keywords: 'gmail refresh check email', run: () => $('#sync-btn').click() },
     !$('#export-btn').disabled && { label: 'Export to Excel', icon: 'download', sub: `The ${visibleRows.length} ${visibleRows.length === 1 ? 'application' : 'applications'} in the table`, keywords: 'download xlsx spreadsheet', run: () => $('#export-btn').click() },
     { label: 'Search the table', icon: 'search', keywords: 'find filter notes emails', shortcut: ['/'], run: focusSearch },
@@ -3125,6 +3505,7 @@ new EventSource('/api/events').onmessage = e => {
   load();
   if (e.data === 'reports' && view === 'reports') loadReports();
   if (view === 'developer') loadDeveloper();
+  if (view === 'resume') loadResume();
 };
 // Keep relative times ("synced 2m ago") fresh.
 setInterval(renderGmail, 30_000);

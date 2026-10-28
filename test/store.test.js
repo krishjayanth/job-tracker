@@ -102,6 +102,21 @@ test('re-scan keeps an interview time you added', () => {
   assert.equal(rebuilt.interviewAt, '2026-11-02T14:00:00.000Z');
 });
 
+test('re-scan keeps the resume you picked and a pasted job description', () => {
+  const a = gmailApp({ company: 'Northwind Traders' });
+  a.resumeId = 'v-2';
+  a.posting = 'Python and SQL';
+  const snapshots = s.snapshotEdits();
+  const emails = a.events.filter(e => e.messageId);
+  s.db.applications.length = 0;
+  const rebuilt = s.createApplication({ company: 'Northwind Traders', source: 'gmail' });
+  rebuilt.events.push(...structuredClone(emails));
+  refresh(rebuilt);
+  assert.deepEqual(s.restoreEdits(snapshots), { restored: 1, kept: 0 });
+  assert.equal(rebuilt.resumeId, 'v-2');
+  assert.equal(rebuilt.posting, 'Python and SQL');
+});
+
 test('re-scan keeps an edited application whose emails no longer classify', () => {
   const a = gmailApp({ company: 'Trey Research' });
   a.notes = 'Keep me';

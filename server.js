@@ -17,7 +17,9 @@ import { addReport, listReports, openCount, setReportStatus, deleteReport, delet
 import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
-import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback } from './src/demo.js';
+import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { computeInsights } from './src/insights.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -35,7 +37,9 @@ let lastSyncPassAt = null; // when everyone's syncs last finished
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
-app.use(express.json());
+// A pasted resume can be up to 40,000 characters, more than the default 100kb allows once
+// it's JSON with escapes.
+app.use(express.json({ limit: '200kb' }));
 
 // --- public routes (no sign-in needed) ---------------------------------------
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -183,10 +187,13 @@ app.get('/api/state', async (req, res) => {
   const user = req.account;
   const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount(), errors: await openErrorCount(), feedback: await unreadCount() } : null;
   const db = user.store.db;
+  const versions = await listVersions(user.id);
   res.json({
     applications: db.applications.map(a => ({
       ...a,
       path: stagePath(a, { ghostDays: GHOST_DAYS }),
+      // The resume version it was sent with (see versionFor), for its panel.
+      resumeVersion: versionFor(a, versions)?.id ?? null,
       // The sender domain you could block from each email (none for Gmail, hiring software...).
       events: a.events.map(e => e.from && canBlockDomain(senderDomain(e.from)) ? { ...e, blockable: senderDomain(e.from) } : e),
     })),
@@ -212,6 +219,7 @@ app.get('/api/state', async (req, res) => {
     demo: DEMO,
     ghostDays: GHOST_DAYS,
     calendarFeed: db.calendarFeed ? { url: feedUrl(req, db.calendarFeed.token) } : null,
+    resumes: versions.map(({ id, name, usedFrom }) => ({ id, name, usedFrom })),
   });
 });
 
@@ -310,9 +318,22 @@ app.post('/api/applications', (req, res) => {
   res.json(a);
 });
 
-app.patch('/api/applications/:id', (req, res) => {
+const MAX_POSTING = 20_000;
+
+app.patch('/api/applications/:id', async (req, res) => {
   const a = req.account.store.applications.find(x => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: 'Not found' });
+  // The resume it was sent with ("" goes back to working it out from the dates) and a
+  // job description you pasted, both for Resume insights. Checked before anything changes.
+  const { resumeId, posting } = req.body;
+  if (typeof resumeId === 'string' && resumeId && !(await listVersions(req.account.id)).some(v => v.id === resumeId)) {
+    return res.status(400).json({ error: 'That resume version was deleted' });
+  }
+  if (typeof posting === 'string' && cleanText(posting).length > MAX_POSTING) {
+    return res.status(400).json({ error: `That job description is very long. Keep it under ${MAX_POSTING.toLocaleString('en-US')} characters` });
+  }
+  if (typeof resumeId === 'string') a.resumeId = resumeId || null;
+  if (typeof posting === 'string') a.posting = cleanText(posting);
   const newCompany = req.body.company?.trim();
   if (newCompany && newCompany !== a.company) {
     a.aliases = [...new Set([...(a.aliases || []), a.company])];
@@ -474,6 +495,59 @@ app.delete('/api/applications/:id', (req, res) => {
   store.deleteApplication(req.params.id);
   changed(req.account);
   res.json({ ok: true, undo });
+});
+
+// --- resume insights --------------------------------------------------------
+// Your resume versions (the text, never the file) and what nuj works out from them and
+// your applications. Nothing here uses AI. Changes tell your open tabs, like any other.
+const UPLOAD_LIMIT = '5mb';
+
+app.get('/api/resume', async (req, res) => {
+  const versions = await listVersions(req.account.id);
+  const apps = req.account.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
+  res.json({
+    versions: versions.map(versionMeta),
+    insights: computeInsights(apps, versions, { ghostDays: GHOST_DAYS }),
+    limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
+  });
+});
+
+app.get('/api/resume/:id', async (req, res) => {
+  const version = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
+  if (!version) return res.status(404).json({ error: 'That version was deleted' });
+  res.json(version);
+});
+
+// Read the text out of a PDF or Word file, for you to check before saving. The file
+// itself is never stored.
+app.post('/api/resume/extract', express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res) => {
+  if (tooMany(`resume:${req.account.id}`, { max: 30 })) return res.status(429).json({ error: "That's a lot of uploads. Try again in an hour" });
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a file to upload' });
+  const result = await extractText(req.body);
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.post('/api/resume', async (req, res) => {
+  const { version, error } = await addVersion(req.account.id, req.body || {});
+  if (error) return res.status(400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+app.patch('/api/resume/:id', async (req, res) => {
+  const { version, error, status } = await updateVersion(req.account.id, req.params.id, req.body || {});
+  if (error) return res.status(status || 400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+// Deleting returns the version, so the page's Undo can add it back as it was.
+app.delete('/api/resume/:id', async (req, res) => {
+  const { removed, error, status } = await deleteVersion(req.account.id, req.params.id);
+  if (error) return res.status(status || 400).json({ error });
+  broadcast(req.account.id);
+  res.json({ removed });
 });
 
 // --- Gmail ----------------------------------------------------------------
@@ -765,6 +839,9 @@ app.delete('/api/account', async (req, res) => {
 // Anything a route didn't handle itself: noted for the Developer page, and a plain
 // message for the person instead of a stack trace.
 app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: req.path.startsWith('/api/resume') ? 'That file is too big. nuj takes resumes up to 5 MB' : "That's more than nuj can take in one go" });
+  }
   console.error(`[server] ${req.method} ${req.path}: ${err.stack || err.message}`);
   recordError('server', err, { userId: req.account?.id ?? null, detail: `${req.method} ${req.route?.path ?? req.path}` });
   if (res.headersSent) return next(err);
@@ -819,6 +896,7 @@ await initStorage({ demo: DEMO });
 if (DEMO) {
   await setKv('errors', buildDemoErrors());
   await setKv('feedback', buildDemoFeedback());
+  await setKv(`resumes_${DEMO_ID}`, buildDemoResumes());
 }
 await initSecrets();
 

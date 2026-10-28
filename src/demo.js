@@ -150,7 +150,91 @@ export function buildDemoDb(now = Date.now()) {
     ],
   });
 
+  // Job descriptions pasted in for Resume insights, and one application marked by hand as
+  // sent with the older resume.
+  for (const [company, posting] of Object.entries(POSTINGS)) applications.find(a => a.company === company).posting = posting;
+  applications.find(a => a.company === 'Meridian Freight').resumeId = 'demo-resume-1';
+
   return { applications, processed: {}, ignored: {}, lastSync: new Date(now).toISOString(), lastSyncError: null };
+}
+
+// Pasted job descriptions, short, the way people copy the requirements from a posting.
+const POSTINGS = {
+  'Wide World Importers': 'Software Engineer Intern. You will build internal tools with React and TypeScript on a Node.js backend. We look for experience with REST APIs, PostgreSQL and Git, and an interest in system design. Bonus: Docker, AWS.',
+  'Datum Corporation': 'New grad software engineer on our data platform team. Python and SQL required; experience with Apache Spark, Airflow or Kafka is a plus. You will write unit tests, take part in code reviews and work in an Agile team.',
+  "Margie's Travel": 'Full stack engineer intern working in React, Node.js and GraphQL. Familiarity with CI/CD, Docker and accessibility best practices. Strong communication and a habit of writing tests.',
+  'Alpine Ski House': 'Join our booking team. Java or Kotlin, Spring Boot, REST APIs, PostgreSQL. Experience with Kubernetes, CI/CD and observability tools like Grafana is welcome.',
+  'Fernbrook Labs': 'Platform engineering intern: Go (golang), Kubernetes, Terraform and AWS. Linux fundamentals, distributed systems coursework, and experience with CI/CD pipelines.',
+  'Brightpath Studios': 'Frontend developer intern. React, TypeScript, CSS and accessibility (WCAG). Experience with Figma and Storybook. Performance optimization in the browser is a plus.',
+  'Proseware': 'Software engineer intern. Strong data structures and algorithms. Java or C++. Experience with distributed systems, concurrency and Linux.',
+  'Contoso': 'Software engineering intern on cloud services. C#, .NET, Azure and SQL Server. Experience with microservices, Docker and unit testing.',
+  'Fabrikam': 'Backend engineer, new grad. Go (golang) or Java, gRPC, Kafka, PostgreSQL and Redis. Experience with Kubernetes and observability.',
+  'Halcyon Health': 'Machine learning intern. Python, PyTorch, scikit-learn, Pandas and NumPy. Experience with NLP or LLMs, and statistics. SQL and data visualization.',
+  'Litware': 'Software engineer, early career. Java, Spring Boot, REST APIs, AWS and Terraform. Agile, CI/CD and test automation.',
+};
+
+// Two versions of a made-up student's resume for Resume insights: the first sent in the
+// spring, a rewrite with projects first and more numbers since about seven weeks ago.
+export function buildDemoResumes(now = Date.now()) {
+  const day = daysAgo => new Date(now - daysAgo * DAY).toISOString().slice(0, 10);
+  const words = text => text.split(/\s+/).filter(Boolean).length;
+  const version = (id, name, usedFrom, text) => ({
+    id, name, usedFrom, text, words: words(text), createdAt: new Date(`${usedFrom}T12:00:00Z`).toISOString(), updatedAt: new Date(`${usedFrom}T12:00:00Z`).toISOString(),
+  });
+  return [
+    version('demo-resume-1', 'Spring resume', day(170), `Jordan Avery
+jordan.avery@example.com · github.com/javery
+
+Education
+Bachelor of Science in Computer Science, Lakeside University (expected May 2027)
+Coursework: Data Structures, Algorithms, Operating Systems, Databases
+
+Experience
+Software Developer Intern, Harbor Point Credit Union (Summer 2025)
+• Responsible for updating pages on the member website using JavaScript and CSS
+• Helped the team move reports from Excel spreadsheets to SQL queries
+• Worked on bug fixes and attended stand-ups in an Agile team
+
+Teaching Assistant, Lakeside University (2024 to present)
+• Assisted students with Java assignments during weekly office hours
+• Responsible for grading lab work
+
+Skills
+Java, Python, JavaScript, HTML, CSS, SQL, Git`),
+    version('demo-resume-2', 'Projects first', day(50), `Jordan Avery
+jordan.avery@example.com · github.com/javery
+
+Projects
+Trailhead, a hiking trip planner (React, TypeScript, Node.js, PostgreSQL)
+• Built a REST API and React front end used by 1,200 people in its first month
+• Cut page load time by 45% by caching routes in Redis
+• Set up CI/CD with GitHub Actions and Docker, with 80% unit test coverage
+
+Campus Market (Python, Flask, AWS)
+• Launched a marketplace for 3 student clubs, handling 400 listings a week
+• Deployed on AWS with Terraform
+
+Experience
+Software Developer Intern, Harbor Point Credit Union (Summer 2025)
+• Rebuilt 6 member pages in JavaScript, raising mobile sign-ups by 18%
+• Replaced 12 weekly Excel spreadsheets with SQL queries, saving the team 5 hours a week
+• Fixed 30+ bugs in an Agile team of 8
+• Wrote the team's first automated tests for the loan calculator, catching 4 rounding errors before release
+
+Teaching Assistant, Lakeside University (2024 to present)
+• Run weekly office hours for 60 students in the second-year Java course
+• Wrote 10 practice problems on recursion and graphs, now used in every section
+
+Education
+Bachelor of Science in Computer Science, Lakeside University (expected May 2027)
+Coursework: Data Structures, Algorithms, Operating Systems, Distributed Systems
+
+Skills
+TypeScript, JavaScript, Python, Java, SQL, React, Node.js, PostgreSQL, Redis, Docker, AWS, Terraform, Git
+
+Activities
+Hackathon lead, Lakeside Coding Club: organised a 24-hour hackathon for 150 students and 9 sponsors`),
+  ];
 }
 
 // For the Developer page in demo mode: a few made-up accounts beside the demo's own, in

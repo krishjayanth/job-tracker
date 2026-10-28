@@ -35,6 +35,7 @@
       <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
       <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
       <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></symbol>
       <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
@@ -73,6 +74,7 @@
       <a class="side-link" href="#/" data-view="dashboard"><svg class="icon"><use href="#i-dashboard"/></svg>Dashboard</a>
       <a class="side-link" href="#/applications" data-view="applications"><svg class="icon"><use href="#i-list"/></svg>Applications<span class="side-count num" id="side-count"></span></a>
       <a class="side-link" href="#/calendar" data-view="calendar"><svg class="icon"><use href="#i-calendar"/></svg>Calendar<span class="side-count num" id="cal-count" title="Deadlines and interviews in the next 7 days"></span></a>
+      <a class="side-link" href="#/resume" data-view="resume"><svg class="icon"><use href="#i-file"/></svg>Resume insights</a>
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
       <a class="side-link" href="#/developer" data-view="developer" id="developer-link" hidden><svg class="icon"><use href="#i-terminal"/></svg>Developer<span class="side-badge num" id="developer-count" title="Open errors and new feedback"></span></a>
       <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
@@ -410,10 +412,20 @@
         <div class="settings-actions"><a class="btn" href="/logout">Sign out</a></div>
       </div>
       <div class="settings-row danger-zone" id="delete-section" hidden>
-        <div><strong>Delete my account</strong><p>Deletes your applications, Groq key, problem reports and Gmail access from nuj for good.</p></div>
+        <div><strong>Delete my account</strong><p>Deletes your applications, resumes, Groq key, problem reports and Gmail access from nuj for good.</p></div>
         <div class="settings-actions"><button id="delete-account-btn" class="btn btn-danger" type="button">Delete my account</button></div>
       </div>
     </section>
+  </main>
+
+  <main class="page resume-page" id="view-resume" hidden>
+    <section class="summary">
+      <div class="summary-head">
+        <h1>Resume insights</h1>
+        <span class="since" id="resume-since"></span>
+      </div>
+    </section>
+    <div id="resume-body" class="resume-body"></div>
   </main>
 
   <main class="page soon-page" id="view-soon" hidden>
@@ -587,6 +599,39 @@
       </div>
     </div>
   </dialog>
+  <dialog id="resume-dialog" class="sheet resume-sheet" aria-labelledby="resume-dialog-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-file"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="resume-dialog-title">Add a resume version</h2>
+        <p id="resume-dialog-sub">Check the text nuj read from your file and fix anything that came out wrong. Only the text is kept, not the file.</p>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <form id="resume-form" class="sheet-body" novalidate>
+      <div class="fields">
+        <div class="field"><label for="rv-name">Name</label><input id="rv-name" name="name" maxlength="60" autocomplete="off" placeholder="e.g. Projects first"></div>
+        <div class="field"><label for="rv-from">Sending it since</label><input id="rv-from" name="usedFrom" type="date"></div>
+        <div class="field wide">
+          <div class="label-row">
+            <label for="rv-text">Resume text</label>
+            <button class="btn btn-sm" type="button" id="rv-file-btn"><svg class="icon"><use href="#i-upload"/></svg><span>Read from a file</span></button>
+            <input type="file" id="rv-file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+          </div>
+          <textarea id="rv-text" name="text" rows="14" spellcheck="false" placeholder="Paste your resume here, or read it from a PDF or Word file"></textarea>
+          <span class="hint" id="rv-count"></span>
+        </div>
+      </div>
+      <p id="resume-msg" class="key-msg" role="status"></p>
+    </form>
+    <div class="sheet-foot">
+      <span class="fine"><svg class="icon"><use href="#i-shield"/></svg>Only you can see your resume. It's deleted with your account.</span>
+      <button class="btn btn-primary" type="submit" form="resume-form" id="resume-save">Save version</button>
+    </div>
+  </dialog>
+
   <dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
     <div class="sheet-head">
       <span class="sheet-icon"><svg class="icon"><use href="#i-flag"/></svg></span>
