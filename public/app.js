@@ -2187,14 +2187,31 @@ const KEYWORDS_SHOWN = 16;
 const GROUPS_SHOWN = 6;
 const pct = r => `${Math.round(r * 100)}%`;
 
+// Live updates arrive often during a sync. Redrawing the page each time would drop your
+// place (focus, what you'd opened), so it only redraws when something actually changed.
+let resumeJson = '';
 async function loadResume() {
+  let data;
   try {
-    resume = await api('GET', '/api/resume');
+    data = await api('GET', '/api/resume');
   } catch (err) {
+    resumeJson = '';
     $('#resume-body').innerHTML = `<p class="resume-error">${icon('alert')}${esc(err.message)}</p>`;
     return;
   }
+  const json = JSON.stringify(data);
+  if (json === resumeJson && $('#resume-body').childElementCount) return;
+  resumeJson = view === 'resume' ? json : ''; // a hidden page isn't drawn, so it isn't up to date
+  resume = data;
   renderResume();
+}
+
+// The control you were on, by its data attributes, so a redraw can put focus back on it.
+function focusKey() {
+  const el = document.activeElement;
+  if (!el || !$('#resume-body').contains(el)) return null;
+  const attrs = [...el.attributes].filter(a => a.name.startsWith('data-'));
+  return attrs.length ? attrs.map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join('') : null;
 }
 
 function renderResume() {
@@ -2208,8 +2225,14 @@ function renderResume() {
   }
   since.textContent = !ins.total ? 'Add applications to see how your resume is doing.'
     : `Based on ${appCount(ins.counted)} with an outcome${ins.pending ? `. ${ins.pending} more ${ins.pending === 1 ? 'is' : 'are'} too new to count yet` : ''}.`;
+  const key = focusKey();
   $('#resume-body').innerHTML = versionsHtml() + resumeKpisHtml() + workingHtml() + keywordsHtml() + suggestionsHtml() + checksHtml();
+  if (key) $('#resume-body').querySelector(key)?.focus();
 }
+// "Acted on or set aside" stays open across redraws once you open it.
+$('#view-resume').addEventListener('toggle', e => {
+  if (e.target.matches('.sg-decided')) resumeShowAll.decided = e.target.open;
+}, true);
 
 function resumeEmptyHtml() {
   return `
@@ -2247,8 +2270,8 @@ function versionsHtml() {
         <span class="v-date">Sending since ${shortDate(`${v.usedFrom}T12:00:00`)} · ${v.words} words</span>
         <span class="v-stats">${g ? `${appCount(g.total)} · ${groupValue(g)}` : 'No applications yet'}</span>
         <div class="v-actions">
-          <button class="btn btn-sm" type="button" data-version-edit="${esc(v.id)}">Edit</button>
-          ${g ? `<button class="btn btn-sm btn-quiet" type="button" data-only="version:${esc(v.id)}">Show applications</button>` : ''}
+          <button class="btn btn-sm" type="button" data-version-edit="${esc(v.id)}" aria-label="Edit ${esc(v.name)}">Edit</button>
+          ${g ? `<button class="btn btn-sm btn-quiet" type="button" data-only="version:${esc(v.id)}" aria-label="Show applications sent with ${esc(v.name)}">Show applications</button>` : ''}
           <button class="btn btn-sm btn-quiet btn-danger" type="button" data-version-delete="${esc(v.id)}" aria-label="Delete ${esc(v.name)}">${icon('trash')}</button>
         </div>
       </li>`;
@@ -2552,15 +2575,16 @@ const SG_STATE = { done: 'Done', dismissed: 'Not for me' };
 function suggestionHtml(s) {
   return `
     <li class="suggestion ${s.state}">
-      <div class="sg-top"><span class="sg-section">${esc(s.section)}</span><strong>${esc(s.title)}</strong></div>
+      <strong class="sg-title">${esc(s.title)}</strong>
       <p class="sg-why">${esc(s.why)}</p>
       <p class="sg-change">${esc(s.change)}</p>
       ${s.keywords.length ? `<div class="kw-list">${s.keywords.map(k => `<button type="button" class="kw" data-only="skill:${esc(k)}" title="Show the applications that ask for it">${esc(k)}</button>`).join('')}</div>` : ''}
       <div class="sg-actions">${s.state === 'open'
-        ? `<button class="btn btn-sm" type="button" data-sg="${esc(s.id)}" data-sg-state="done">${icon('check')}Done</button>
-           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="dismissed">Not for me</button>`
+        ? `<button class="btn btn-sm" type="button" data-sg="${esc(s.id)}" data-sg-state="done" aria-label="Done: ${esc(s.title)}">${icon('check')}Done</button>
+           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="dismissed" aria-label="Not for me: ${esc(s.title)}">Not for me</button>`
         : `<span class="dim">${SG_STATE[s.state]}${s.decidedAt ? ` · ${timeAgo(s.decidedAt)}` : ''}</span>
-           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="open">Undo</button>`}
+           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="open" aria-label="Undo: ${esc(s.title)}">Undo</button>`}
+        <span class="sg-for">${esc(s.section === 'Overall' ? 'Whole resume' : s.section === 'Layout' ? 'Layout' : `${s.section} section`)}</span>
       </div>
     </li>`;
 }
@@ -2588,7 +2612,7 @@ function suggestionsHtml() {
       ${open.length ? `<ul class="suggestions">${open.map(suggestionHtml).join('')}</ul>`
         : `<p class="dim sg-empty">${sg ? "You've gone through every suggestion. Get new ones after you change your resume or apply to more jobs."
           : 'Get 3 to 6 changes to make, each based on your own numbers and the postings you applied to.'}</p>`}
-      ${decided.length ? `<details class="sg-decided"><summary>Acted on or set aside <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
+      ${decided.length ? `<details class="sg-decided" ${resumeShowAll.decided ? 'open' : ''}><summary>Acted on or set aside <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
         <ul class="suggestions">${decided.map(suggestionHtml).join('')}</ul></details>` : ''}
       ${ai.consent ? '<button class="meta-link sg-revoke" type="button" data-ai-revoke>Stop sending my resume to OpenAI</button>' : ''}
     </section>`;
@@ -2632,7 +2656,8 @@ async function getSuggestions(btn) {
   try {
     const r = await api('POST', '/api/insights/suggestions');
     await loadResume();
-    if (r.cached) toast('Your suggestions are already up to date');
+    const n = resume.suggestions?.items.filter(s => s.state === 'open').length ?? 0;
+    toast(r.cached ? 'Your suggestions are already up to date' : `${n} new ${n === 1 ? 'suggestion' : 'suggestions'}`);
   } catch (err) {
     toast(err.message);
     await loadResume();
@@ -2661,13 +2686,13 @@ $('#view-resume').addEventListener('click', async e => {
 });
 
 // ---- Check fit, in an application's panel ----
-const FIT_LABEL = { strong: ['Strong match', 'offer'], partial: ['Partial match', 'interview'], weak: ['Weak match', 'rejected'] };
+const FIT_LABEL = { strong: 'Strong match', partial: 'Partial match', weak: 'Weak match' };
 function fitHtml(fit) {
-  const [label, c] = FIT_LABEL[fit.match];
+  const label = FIT_LABEL[fit.match];
   const chips = (list, cls) => list.map(x => `<span class="fit-chip ${cls}">${esc(x)}</span>`).join('');
   return `
     <div class="fit">
-      <div class="fit-top"><span class="fit-match"><i style="--c:var(--${c})"></i>${label}</span>
+      <div class="fit-top"><span class="fit-match ${fit.match}"><i aria-hidden="true"></i>${label}</span>
         <span class="hint">Against ${esc(fit.versionName)} · ${timeAgo(fit.at)}</span></div>
       ${fit.summary ? `<p>${esc(fit.summary)}</p>` : ''}
       ${fit.matched.length ? `<div class="fit-group"><span class="fit-label">Your resume shows</span><div class="fit-chips">${chips(fit.matched, 'have')}</div></div>` : ''}
@@ -2685,7 +2710,7 @@ function fitFieldHtml(a) {
         <button class="btn btn-sm" type="button" id="fit-btn">${icon('sparkles')}<span>${a.fit ? 'Check fit again' : 'Check fit'}</span></button>
         <span class="hint" id="fit-left">${a.fit ? '' : 'Compares your resume with the job description, using AI.'} ${aiLeftText(state.ai)}</span>
       </div>
-      <div id="fit-result">${a.fit ? fitHtml(a.fit) : ''}</div>
+      <div id="fit-result" aria-live="polite">${a.fit ? fitHtml(a.fit) : ''}</div>
     </div>`;
 }
 

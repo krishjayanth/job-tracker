@@ -240,6 +240,7 @@ function whatsNewFor(user) {
   const rereading = rescanned || (!user.owner && user.mailbox.connected());
   return {
     ...LATEST_RELEASE,
+    items: LATEST_RELEASE.items.filter(i => i.needs !== 'ai' || AI_KEY),
     rescan: rereading
       ? (rescanned ? 'Your application emails have been read again with the new sorting.' : "Your application emails are being read again with the new sorting; you'll see the progress on your dashboard.")
         + ' Your notes, deadlines, status changes and fixes are kept.'

@@ -1536,8 +1536,8 @@ table.apps { width: 100%; border-collapse: collapse; }
 .checks li { display: grid; grid-template-columns: auto 1fr; gap: 10px; font-size: 13px; line-height: 1.5; color: var(--muted); }
 .checks strong { display: block; color: var(--text); font-weight: 500; }
 .checks .icon { width: 16px; height: 16px; margin-top: 2px; }
-.checks .ok .icon { color: var(--offer); }
-.checks .warn .icon { color: var(--interview); }
+.checks .ok .icon { color: var(--muted); }
+.checks .warn .icon { color: var(--text); }
 
 /* The version sheet, and the application panel's resume fields. */
 .sheet.resume-sheet { width: min(680px, calc(100vw - 32px)); }
@@ -1572,15 +1572,13 @@ table.apps { width: 100%; border-collapse: collapse; }
 .suggestion { display: grid; gap: 8px; align-content: start; padding: 16px 16px 12px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
 .suggestion:not(.open) { background: none; }
 .suggestion:not(.open) .sg-why, .suggestion:not(.open) .sg-change { display: none; }
-.sg-top { display: grid; gap: 4px; }
-.sg-top strong { font-weight: 600; line-height: 1.35; text-wrap: pretty; }
-.sg-section { font-size: 11.5px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.sg-title { font-weight: 600; line-height: 1.35; text-wrap: pretty; }
+.sg-for { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .sg-why, .sg-change { margin: 0; font-size: 13px; line-height: 1.55; text-wrap: pretty; }
 .sg-why { color: var(--muted); }
-.sg-change { color: var(--text-2); padding-left: 10px; border-left: 2px solid var(--border-strong); }
+.sg-change { color: var(--text); }
 .suggestion .kw { height: 24px; font-size: 12px; }
 .sg-actions { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12.5px; }
-.sg-actions .dim { margin-right: auto; }
 .sg-note { display: flex; align-items: center; gap: 8px; margin: -4px 0 14px; color: var(--muted); font-size: 13px; }
 .sg-note .icon { width: 15px; height: 15px; flex: none; }
 .sg-empty { margin: 0; font-size: 13px; }
@@ -1604,7 +1602,9 @@ table.apps { width: 100%; border-collapse: collapse; }
 .fit p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-2); }
 .fit-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .fit-match { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
-.fit-match i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
+.fit-match i { width: 8px; height: 8px; border-radius: 2px; box-shadow: inset 0 0 0 1.5px var(--text); }
+.fit-match.strong i { background: var(--text); }
+.fit-match.partial i { background: linear-gradient(90deg, var(--text) 50%, transparent 50%); }
 .fit-group { display: grid; gap: 6px; }
 .fit-label { font-size: 12px; font-weight: 500; color: var(--muted); }
 .fit-chips { display: flex; flex-wrap: wrap; gap: 5px; }
