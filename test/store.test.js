@@ -102,6 +102,23 @@ test('re-scan keeps an interview time you added', () => {
   assert.equal(rebuilt.interviewAt, '2026-11-02T14:00:00.000Z');
 });
 
+test('re-scan keeps the resume you picked, a pasted job description and its fit check', () => {
+  const a = gmailApp({ company: 'Northwind Traders' });
+  a.resumeId = 'v-2';
+  a.posting = 'Python and SQL';
+  a.fit = { match: 'strong' };
+  const snapshots = s.snapshotEdits();
+  const emails = a.events.filter(e => e.messageId);
+  s.db.applications.length = 0;
+  const rebuilt = s.createApplication({ company: 'Northwind Traders', source: 'gmail' });
+  rebuilt.events.push(...structuredClone(emails));
+  refresh(rebuilt);
+  assert.deepEqual(s.restoreEdits(snapshots), { restored: 1, kept: 0 });
+  assert.equal(rebuilt.resumeId, 'v-2');
+  assert.equal(rebuilt.posting, 'Python and SQL');
+  assert.equal(rebuilt.fit.match, 'strong');
+});
+
 test('re-scan keeps an edited application whose emails no longer classify', () => {
   const a = gmailApp({ company: 'Trey Research' });
   a.notes = 'Keep me';
@@ -337,6 +354,7 @@ test('typedDeadline: a date and time from the dashboard is kept to the minute', 
 
 test('typedDeadline: a bare date means the end of that day, and junk is refused', () => {
   assert.equal(typedDeadline('2026-10-30'), new Date(2026, 9, 30, 23, 59).toISOString());
+  assert.equal(typedDeadline('2026-10-30', 'America/Los_Angeles'), '2026-10-31T06:59:00.000Z');
   for (const bad of ['', 'tomorrow', '2026-13-45T99:99', '30/10/2026', null, 42]) assert.equal(typedDeadline(bad), null);
 });
 

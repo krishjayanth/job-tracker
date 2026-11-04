@@ -8,6 +8,7 @@ import { groqClient, forgetClient, SERVER_KEY } from './groq.js';
 import { ownerEmail } from './auth.js';
 import { recordError, forgetUserErrors } from './errors.js';
 import { forgetUserFeedback } from './feedback.js';
+import { forgetResumes } from './resume.js';
 
 export const LOCAL_ID = 'local';
 export const DEMO_ID = 'demo';
@@ -89,6 +90,7 @@ export async function deleteUser(id) {
   const feed = user.store.db.calendarFeed;
   if (feed) await deleteKv(`calfeed_${feed.token}`);
   await closeStore(id);
+  await forgetResumes(id);
   const keys = [`db_${id}`, `groq_key_${id}`, `db_before_rescan_${id}`];
   if (user.owner) keys.push('db_before_accounts', 'db_before_rescan'); // backups from before accounts
   for (const key of keys) await deleteKv(key);

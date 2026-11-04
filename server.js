@@ -17,7 +17,11 @@ import { addReport, listReports, openCount, setReportStatus, deleteReport, delet
 import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
-import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback } from './src/demo.js';
+import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { textPdf } from './src/textpdf.js';
+import { computeInsights, outcomeOf, reviewLines, quickChecks } from './src/insights.js';
+import { aiStatus, reserveRun, hashOf, findLine, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -35,7 +39,9 @@ let lastSyncPassAt = null; // when everyone's syncs last finished
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
-app.use(express.json());
+// A pasted resume can be up to 40,000 characters, more than the default 100kb allows once
+// it's JSON with escapes.
+app.use(express.json({ limit: '200kb' }));
 
 // --- public routes (no sign-in needed) ---------------------------------------
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -138,6 +144,8 @@ app.use(requireLogin);
 app.use(express.static('public'));
 app.use('/vendor/d3', express.static(path.resolve('node_modules/d3/dist')));
 app.use('/vendor/d3-sankey', express.static(path.resolve('node_modules/d3-sankey/dist')));
+// PDF.js, for showing an uploaded resume as its real pages (loaded only on that page).
+app.use('/vendor/pdfjs', express.static(path.resolve('node_modules/pdfjs-dist/build')));
 
 // Every API call works on the signed-in person's own data (req.account) and nobody else's.
 app.use('/api', async (req, res, next) => {
@@ -183,10 +191,13 @@ app.get('/api/state', async (req, res) => {
   const user = req.account;
   const reports = canSeeReports(user) ? { open: await openCount(), requests: await pendingCount(), errors: await openErrorCount(), feedback: await unreadCount() } : null;
   const db = user.store.db;
+  const versions = await listVersions(user.id);
   res.json({
     applications: db.applications.map(a => ({
       ...a,
       path: stagePath(a, { ghostDays: GHOST_DAYS }),
+      // The resume version it was sent with (see versionFor), for its panel.
+      resumeVersion: versionFor(a, versions)?.id ?? null,
       // The sender domain you could block from each email (none for Gmail, hiring software...).
       events: a.events.map(e => e.from && canBlockDomain(senderDomain(e.from)) ? { ...e, blockable: senderDomain(e.from) } : e),
     })),
@@ -212,6 +223,10 @@ app.get('/api/state', async (req, res) => {
     demo: DEMO,
     ghostDays: GHOST_DAYS,
     calendarFeed: db.calendarFeed ? { url: feedUrl(req, db.calendarFeed.token) } : null,
+    // Your time zone as nuj last heard it from your browser (see PUT /api/time-zone).
+    timeZone: db.timeZone ?? null,
+    resumes: versions.map(({ id, name, usedFrom }) => ({ id, name, usedFrom })),
+    ai: aiStatus(user, { demo: DEMO }),
   });
 });
 
@@ -230,6 +245,7 @@ function whatsNewFor(user) {
   const rereading = rescanned || (!user.owner && user.mailbox.connected());
   return {
     ...LATEST_RELEASE,
+    items: LATEST_RELEASE.items.filter(i => i.needs !== 'ai' || AI_KEY),
     rescan: rereading
       ? (rescanned ? 'Your application emails have been read again with the new sorting.' : "Your application emails are being read again with the new sorting; you'll see the progress on your dashboard.")
         + ' Your notes, deadlines, status changes and fixes are kept.'
@@ -257,6 +273,18 @@ app.post('/api/whats-new/seen', (req, res) => {
   req.account.store.db.seenRelease = LATEST_RELEASE.id;
   req.account.store.save();
   res.json({ ok: true });
+});
+
+// Your time zone, from your browser: deadlines in emails ("by Oct 9 at 11:59 PM") are read
+// as times where you are, not where the server is. Emails already read keep their deadline.
+app.put('/api/time-zone', (req, res) => {
+  const timeZone = req.body?.timeZone;
+  if (!validTimeZone(timeZone)) return res.status(400).json({ error: "That isn't a time zone nuj knows" });
+  if (req.account.store.db.timeZone !== timeZone) {
+    req.account.store.db.timeZone = timeZone;
+    req.account.store.save();
+  }
+  res.json({ timeZone });
 });
 
 // --- calendar feed ----------------------------------------------------------
@@ -310,9 +338,25 @@ app.post('/api/applications', (req, res) => {
   res.json(a);
 });
 
-app.patch('/api/applications/:id', (req, res) => {
+const MAX_POSTING = 20_000;
+
+app.patch('/api/applications/:id', async (req, res) => {
   const a = req.account.store.applications.find(x => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: 'Not found' });
+  // The resume it was sent with ("" goes back to working it out from the dates) and a
+  // job description you pasted, both for Resume insights. Checked before anything changes.
+  const { resumeId, posting } = req.body;
+  if (typeof resumeId === 'string' && resumeId && !(await listVersions(req.account.id)).some(v => v.id === resumeId)) {
+    return res.status(400).json({ error: 'That resume version was deleted' });
+  }
+  if (typeof posting === 'string' && cleanText(posting).length > MAX_POSTING) {
+    return res.status(400).json({ error: `That job description is very long. Keep it under ${MAX_POSTING.toLocaleString('en-US')} characters` });
+  }
+  // A Check fit answer was about the old job description or resume, so it goes.
+  if (typeof resumeId === 'string' && (resumeId || null) !== (a.resumeId ?? null)) delete a.fit;
+  if (typeof posting === 'string' && cleanText(posting) !== (a.posting ?? '')) delete a.fit;
+  if (typeof resumeId === 'string') a.resumeId = resumeId || null;
+  if (typeof posting === 'string') a.posting = cleanText(posting);
   const newCompany = req.body.company?.trim();
   if (newCompany && newCompany !== a.company) {
     a.aliases = [...new Set([...(a.aliases || []), a.company])];
@@ -333,7 +377,7 @@ app.patch('/api/applications/:id', (req, res) => {
   // Deadline: a date and time (or "YYYY-MM-DD" for the end of that day) sets your own;
   // "" or done=true clears the current one.
   if (typeof req.body.deadline === 'string') {
-    const typed = typedDeadline(req.body.deadline);
+    const typed = typedDeadline(req.body.deadline, req.account.store.db.timeZone);
     if (typed) {
       a.manualDeadline = typed;
       a.deadlineDone = null;
@@ -474,6 +518,213 @@ app.delete('/api/applications/:id', (req, res) => {
   store.deleteApplication(req.params.id);
   changed(req.account);
   res.json({ ok: true, undo });
+});
+
+// --- resume insights --------------------------------------------------------
+// Your resume versions (the text, never the file) and what nuj works out from them and
+// your applications. Nothing here uses AI. Changes tell your open tabs, like any other.
+const UPLOAD_LIMIT = '5mb';
+
+// Everything Resume insights shows, and what the AI would be told for suggestions (with
+// a fingerprint of it, so asking again when nothing changed doesn't use a run).
+async function resumePicture(user) {
+  const versions = await listVersions(user.id);
+  const apps = user.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
+  const insights = computeInsights(apps, versions, { ghostDays: GHOST_DAYS });
+  const current = versions.find(v => v.id === insights.currentId);
+  const input = current && suggestionsInput({
+    resumeText: current.text, versionName: current.name, insights,
+    apps: [...apps].sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)).map(a => ({
+      role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions).name,
+    })),
+  });
+  return { versions, insights, current, input, inputHash: input ? hashOf(input) : null };
+}
+
+// One version laid out for the preview: each line with what to highlight on it, and the
+// checks on the whole thing. Skills are marked when the postings ask for them.
+const reviewOf = (version, insights) => ({
+  versionId: version.id,
+  name: version.name,
+  lines: reviewLines(version.text, new Map(insights.keywords.matched.map(k => [k.name, k.postings]))),
+  checks: quickChecks(version.text),
+});
+
+// Saved suggestions, with the lines each one is about found in the version it was written
+// for (they move if you edit the text, and drop out if the line is gone).
+function placedSuggestions(saved, versions, inputHash) {
+  if (!saved) return null;
+  const text = versions.find(v => v.id === saved.versionId)?.text ?? '';
+  return {
+    at: saved.at, version: saved.version, versionId: saved.versionId ?? null,
+    upToDate: saved.inputHash === inputHash,
+    items: saved.items.map(s => {
+      const rewrites = (s.rewrites || []).map(r => ({ ...r, line: findLine(text, r.from) })).filter(r => r.line >= 0);
+      const lines = [...new Set([...(s.lines || []).map(l => findLine(text, l)), ...rewrites.map(r => r.line)])].filter(i => i >= 0).sort((a, b) => a - b);
+      return { ...s, lines, rewrites };
+    }),
+  };
+}
+
+app.get('/api/resume', async (req, res) => {
+  const { versions, insights, current, inputHash } = await resumePicture(req.account);
+  res.json({
+    versions: versions.map(versionMeta),
+    insights,
+    limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
+    ai: aiStatus(req.account, { demo: DEMO }),
+    // upToDate: nothing the suggestions were based on has changed since.
+    suggestions: placedSuggestions(req.account.store.db.insights?.suggestions, versions, inputHash),
+    review: current ? reviewOf(current, insights) : null,
+  });
+});
+
+// One version with its text; ?review=1 lays it out for the preview instead.
+app.get('/api/resume/:id', async (req, res) => {
+  const { versions, insights } = req.query.review ? await resumePicture(req.account) : { versions: await listVersions(req.account.id) };
+  const version = versions.find(v => v.id === req.params.id);
+  if (!version) return res.status(404).json({ error: 'That version was deleted' });
+  res.json(req.query.review ? reviewOf(version, insights) : version);
+});
+
+// Read the text out of a PDF or Word file, for you to check before saving. The file
+// itself is never stored.
+app.post('/api/resume/extract', express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res) => {
+  if (tooMany(`resume:${req.account.id}`, { max: 30 })) return res.status(429).json({ error: "That's a lot of uploads. Try again in an hour" });
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a file to upload' });
+  const result = await extractText(req.body);
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.post('/api/resume', async (req, res) => {
+  const { version, error } = await addVersion(req.account.id, req.body || {});
+  if (error) return res.status(400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+app.patch('/api/resume/:id', async (req, res) => {
+  const { version, error, status } = await updateVersion(req.account.id, req.params.id, req.body || {});
+  if (error) return res.status(status || 400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+// Deleting returns the version, so the page's Undo can add it back as it was (its PDF
+// is kept until the Undo has passed).
+app.delete('/api/resume/:id', async (req, res) => {
+  const { removed, error, status } = await deleteVersion(req.account.id, req.params.id);
+  if (error) return res.status(status || 400).json({ error });
+  if (removed.pdf) dropPdfLater(req.account.id, removed.id);
+  broadcast(req.account.id);
+  res.json({ removed });
+});
+
+// A version's PDF: shown on the page as its real pages. Only a PDF is kept.
+app.get('/api/resume/:id/pdf', async (req, res) => {
+  const pdf = await loadPdf(req.account.id, req.params.id);
+  if (!pdf) return res.status(404).json({ error: 'This version has no PDF' });
+  res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-cache', 'Content-Disposition': 'inline' });
+  res.send(pdf);
+});
+
+app.put('/api/resume/:id/pdf', express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a PDF to upload' });
+  const { version, error, status } = await savePdf(req.account.id, req.params.id, req.body);
+  if (error) return res.status(status || 400).json({ error });
+  broadcast(req.account.id);
+  res.json(versionMeta(version));
+});
+
+app.delete('/api/resume/:id/pdf', async (req, res) => {
+  await removePdf(req.account.id, req.params.id);
+  broadcast(req.account.id);
+  res.json({ ok: true });
+});
+
+// --- AI for resume insights (src/ai.js) -------------------------------------------
+// Uses the server's OpenAI key, with a daily limit for everyone but the owner. Nothing is
+// sent until you've allowed it once.
+app.post('/api/insights/consent', (req, res) => {
+  const db = req.account.store.db;
+  db.insights ??= {};
+  db.insights.consent = req.body?.allow === false ? null : { at: new Date().toISOString() };
+  changed(req.account);
+  res.json({ ai: aiStatus(req.account, { demo: DEMO }) });
+});
+
+// Checks shared by both AI actions. Returns an error to send, or null.
+function aiBlocked(user) {
+  const ai = aiStatus(user, { demo: DEMO });
+  if (!ai.available) return { status: 400, body: { error: "AI suggestions aren't set up on this server" } };
+  if (!ai.consent) return { status: 403, body: { error: 'Allow nuj to send your resume to OpenAI first', needsConsent: true } };
+  return null;
+}
+
+app.post('/api/insights/suggestions', async (req, res) => {
+  const user = req.account;
+  const blocked = aiBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  const { input, inputHash, current } = await resumePicture(user);
+  if (!input) return res.status(400).json({ error: 'Add your resume first' });
+  const db = user.store.db;
+  const saved = db.insights.suggestions;
+  if (saved?.inputHash === inputHash && saved.items.some(s => s.state === 'open')) {
+    return res.json({ cached: true, ai: aiStatus(user, { demo: DEMO }) });
+  }
+  const run = await reserveRun(user);
+  if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
+  let items;
+  try {
+    items = DEMO ? demoSuggestions(input) : await writeSuggestions(input);
+  } catch (err) {
+    await run.release();
+    return res.status(502).json({ error: err.message });
+  }
+  // New suggestions replace the open ones; the ones you acted on or set aside stay listed.
+  const kept = (saved?.items || []).filter(s => s.state !== 'open').slice(0, 20);
+  db.insights.suggestions = { inputHash, at: new Date().toISOString(), version: input.currentVersion, versionId: current.id, items: [...items, ...kept] };
+  changed(user);
+  res.json({ ai: aiStatus(user, { demo: DEMO }) });
+});
+
+// Done, Not for me, or back to open (Undo).
+app.patch('/api/insights/suggestions/:id', (req, res) => {
+  const s = req.account.store.db.insights?.suggestions?.items.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'That suggestion is gone. Get new ones' });
+  if (!['open', 'done', 'dismissed'].includes(req.body?.state)) return res.status(400).json({ error: 'Unknown choice' });
+  s.state = req.body.state;
+  s.decidedAt = s.state === 'open' ? null : new Date().toISOString();
+  changed(req.account);
+  res.json({ ok: true });
+});
+
+// How well the resume this went out with fits its pasted job description.
+app.post('/api/applications/:id/fit', async (req, res) => {
+  const user = req.account;
+  const a = user.store.applications.find(x => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Not found' });
+  const blocked = aiBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  if (!a.posting) return res.status(400).json({ error: 'Paste the job description first' });
+  const version = versionFor(a, await listVersions(user.id));
+  if (!version) return res.status(400).json({ error: 'Add your resume first' });
+  const key = hashOf([a.posting, version.id, version.updatedAt]);
+  if (a.fit?.key === key) return res.json({ fit: a.fit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
+  const run = await reserveRun(user);
+  if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
+  let result;
+  try {
+    const args = { resumeText: version.text, posting: a.posting, role: a.role };
+    result = DEMO ? demoFit(args) : await checkApplicationFit(args);
+  } catch (err) {
+    await run.release();
+    return res.status(502).json({ error: err.message });
+  }
+  a.fit = { key, at: new Date().toISOString(), versionName: version.name, ...result };
+  changed(user);
+  res.json({ fit: a.fit, ai: aiStatus(user, { demo: DEMO }) });
 });
 
 // --- Gmail ----------------------------------------------------------------
@@ -627,6 +878,9 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
   if (DEMO) accounts.push(...buildDemoAccounts().map(a => ({ ...a, attention: attentionFor(a) })));
   const emails = Object.fromEntries(accounts.map(a => [a.id, a.email]));
   const asks = await listAsks();
+  // Resume insights' AI, as counts: today's runs and how many people hit their limit.
+  const aiUsage = await serverUsage();
+  const withResume = (await Promise.all(people.map(u => listVersions(u.id)))).filter(v => v.length).length;
   for (const a of accounts) {
     const waiting = asks.find(x => !x.stoppedAt && x.userIds.includes(a.id) && !x.answers.some(y => y.userId === a.id) && !x.skipped.includes(a.id));
     a.feedbackAsked = waiting ? waiting.createdAt : null;
@@ -643,6 +897,7 @@ app.get('/api/dev/overview', ownerOnly, async (req, res) => {
       lastCronAt,
       cronConfigured: CRON_SECRET.length >= 16,
       demo: DEMO,
+      insights: { available: Boolean(AI_KEY) || DEMO, runs: aiUsage.runs, serverLimit: SERVER_DAILY_LIMIT, dailyLimit: DAILY_LIMIT, limited: aiUsage.limited.length, withResume },
     },
     accounts,
     // Each error with the addresses of the accounts it hit, for reading at a glance.
@@ -765,6 +1020,9 @@ app.delete('/api/account', async (req, res) => {
 // Anything a route didn't handle itself: noted for the Developer page, and a plain
 // message for the person instead of a stack trace.
 app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: req.path.startsWith('/api/resume') ? 'That file is too big. nuj takes resumes up to 5 MB' : "That's more than nuj can take in one go" });
+  }
   console.error(`[server] ${req.method} ${req.path}: ${err.stack || err.message}`);
   recordError('server', err, { userId: req.account?.id ?? null, detail: `${req.method} ${req.route?.path ?? req.path}` });
   if (res.headersSent) return next(err);
@@ -819,6 +1077,14 @@ await initStorage({ demo: DEMO });
 if (DEMO) {
   await setKv('errors', buildDemoErrors());
   await setKv('feedback', buildDemoFeedback());
+  // The demo's resumes as real PDFs, so the preview shows pages like an upload would.
+  const resumes = buildDemoResumes();
+  for (const v of resumes) {
+    const pdf = textPdf(v.text);
+    await setKv(`resume_pdf_${DEMO_ID}_${v.id}`, pdf.toString('base64'));
+    v.pdf = { size: pdf.length, at: v.updatedAt };
+  }
+  await setKv(`resumes_${DEMO_ID}`, resumes);
 }
 await initSecrets();
 

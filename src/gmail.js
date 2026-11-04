@@ -136,6 +136,8 @@ async function withRetry(fn, attempts = 6) {
 
 class Stopped extends Error {}
 
+const RESCAN_BACKUP = 'db_before_rescan';
+
 // One person's Gmail connection and syncing. `user` supplies their tracker (store)
 // and their Groq client (groq(), keyRejected()).
 export class Mailbox {
@@ -152,7 +154,22 @@ export class Mailbox {
 
   async load() {
     this.token = await getKv(this.tokenKey);
+    await this.recoverRescan();
     return this;
+  }
+
+  // A re-scan cut off part-way (the server restarted, say) leaves the tracker half
+  // rebuilt and without your edits. Go back to the backup it took first; the next
+  // re-scan then starts over from there.
+  async recoverRescan() {
+    const store = this.user.store;
+    if (!store.db.rescanStartedAt) return;
+    const backup = await store.readBackup(RESCAN_BACKUP);
+    if (backup) store.replaceDb(backup);
+    else delete store.db.rescanStartedAt;
+    await store.flush();
+    console.warn(`[rescan] ${this.user.id}: a re-scan was cut off part-way; ${backup ? 'put back as it was before' : 'no backup to put back'}`);
+    recordError('rescan', 'A re-scan was cut off part-way and the tracker was put back as it was before it', { userId: this.user.id, level: 'warning' });
   }
 
   connected() {
@@ -217,7 +234,12 @@ export class Mailbox {
       const db = store.db;
       this.progress = { mode: 'rescan', done: 0, total: 0 };
       this.onProgress();
-      await store.backup('db_before_rescan');
+      // The backup is what a re-scan that fails or is cut off goes back to, so your edits
+      // are never lost with it. While the tracker is marked rescanStartedAt, it's the only
+      // good copy (see recoverRescan).
+      await store.backup(RESCAN_BACKUP);
+      const before = structuredClone(db);
+      db.rescanStartedAt = new Date().toISOString();
 
       db.setupDone = true; // about to clear lastSync and processed; this isn't a new account
       const snapshots = store.snapshotEdits();
@@ -232,11 +254,21 @@ export class Mailbox {
       db.lastSync = null;
       store.save();
 
-      const result = await this.drain({ mode: 'rescan', sinceEpoch });
-      const restore = store.restoreEdits(snapshots);
-      store.save();
-      await store.flush();
-      return { ...result, ...restore, applications: db.applications.length };
+      try {
+        const result = await this.drain({ mode: 'rescan', sinceEpoch });
+        const restore = store.restoreEdits(snapshots);
+        delete db.rescanStartedAt;
+        await store.flush();
+        return { ...result, ...restore, applications: db.applications.length };
+      } catch (err) {
+        // Put everything back as it was, keeping why it failed (Gmail's sign-in expired,
+        // say) on show. Anything changed during the re-scan goes with it.
+        const { lastSyncError } = db;
+        store.replaceDb(before);
+        db.lastSyncError = lastSyncError;
+        await store.flush();
+        throw err;
+      }
     })();
     this.syncing = job.finally(() => { this.syncing = null; this.progress = null; });
     return this.syncing;
@@ -258,7 +290,7 @@ export class Mailbox {
         subject: header(msg, 'Subject'),
         date: new Date(Number(msg.internalDate)).toISOString(),
         body: bodyText(msg.payload),
-      }, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
+      }, this.readingOptions());
       if (!result) { notJob++; continue; }
       const before = JSON.stringify([e.stage, e.deadline, e.summary]);
       e.stage = result.stage;
@@ -275,6 +307,13 @@ export class Mailbox {
     refresh(app);
     this.user.store.save();
     return { emails: emails.length, changed, notJob };
+  }
+
+  // How this person's emails are read: their Groq key, their own address, and their time
+  // zone (from their browser) for deadlines.
+  readingOptions() {
+    const user = this.user;
+    return { groq: user.groq(), self: user.email, onKeyRejected: () => user.keyRejected(), userId: user.id, timeZone: user.store.db.timeZone };
   }
 
   // Which of these same-company applications an email is about, by the model, or null
@@ -355,7 +394,7 @@ export class Mailbox {
         };
         // Blocked after this search began, or beyond the search's exclusion list.
         const result = store.isBlocked(email.from) ? null
-          : await classify(email, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
+          : await classify(email, this.readingOptions());
         // Saved per message so an interrupted sync resumes where it left off.
         db.processed[msg.id] = true;
         if (!result) {

@@ -112,6 +112,42 @@ test('extractDeadline: a December email\'s "Jan 5" means next year', () => {
   assert.equal(extractDeadline('Submit your work by Jan 5.', sent), new Date(2027, 0, 5, 23, 59).toISOString());
 });
 
+// Deadlines are read in your own time zone, whatever the server's clock says (Render's is UTC).
+test('extractDeadline: dates and times are read in your time zone', () => {
+  const sent = '2026-10-01T17:00:00.000Z'; // 10 AM in Los Angeles
+  const la = 'America/Los_Angeles';
+  // 11:59 PM Pacific on Oct 9 is 6:59 AM UTC on Oct 10.
+  assert.equal(extractDeadline('Please complete the assessment by October 9 at 11:59 PM.', sent, la), '2026-10-10T06:59:00.000Z');
+  // No time: the end of that day where you are.
+  assert.equal(extractDeadline('The link expires on Oct 12.', sent, la), '2026-10-13T06:59:00.000Z');
+  assert.equal(extractDeadline('Submit by 10/14.', sent, la), '2026-10-15T06:59:00.000Z');
+  // After the clocks go back (Nov 1, 2026), the end of the day moves an hour.
+  assert.equal(extractDeadline('Please submit by Nov 3.', sent, la), '2026-11-04T07:59:00.000Z');
+  // The same email for someone in New York.
+  assert.equal(extractDeadline('The link expires on Oct 12.', sent, 'America/New_York'), '2026-10-13T03:59:00.000Z');
+});
+
+test('extractDeadline: "in 5 days" counts from the day the email arrived where you are', () => {
+  // 8 PM on Oct 1 in Los Angeles, already Oct 2 in UTC.
+  const sent = '2026-10-02T03:00:00.000Z';
+  assert.equal(extractDeadline('This assessment expires in 5 days.', sent, 'America/Los_Angeles'), '2026-10-07T06:59:00.000Z');
+  // Hours count from the moment it was sent, wherever you are.
+  assert.equal(extractDeadline('Please complete it within 48 hours.', sent, 'America/Los_Angeles'), '2026-10-04T03:00:00.000Z');
+});
+
+test('extractDeadline: a time zone written in the email wins over yours', () => {
+  const sent = '2026-10-01T17:00:00.000Z';
+  const la = 'America/Los_Angeles';
+  assert.equal(extractDeadline('Complete it by October 9 at 11:59 PM ET.', sent, la), '2026-10-10T03:59:00.000Z');
+  assert.equal(extractDeadline('Complete it by October 9 at 11:59 PM (EST).', sent, la), '2026-10-10T03:59:00.000Z');
+  assert.equal(extractDeadline('Complete it by October 9 at 5 PM Pacific Time.', sent, 'America/New_York'), '2026-10-10T00:00:00.000Z');
+  assert.equal(extractDeadline('Complete it by October 9 at 11:59 PM UTC.', sent, la), '2026-10-09T23:59:00.000Z');
+});
+
+test('extractDeadline: a December email\'s "Jan 5" means next year, in your time zone too', () => {
+  assert.equal(extractDeadline('Submit your work by Jan 5.', '2026-12-20T18:00:00.000Z', 'America/Chicago'), '2027-01-06T05:59:00.000Z');
+});
+
 test('extractDeadline: ignores the company\'s own promises and past dates', () => {
   const sent = new Date(2026, 9, 1).toISOString();
   assert.equal(extractDeadline('We will get back to you within 5 days.', sent), '');

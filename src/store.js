@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { computeStatus } from './stages.js';
 import { buildDemoDb } from './demo.js';
 import { senderDomain } from './jobcheck.js';
+import { endOfDayIn } from './zones.js';
 
 // Storage: Postgres when DATABASE_URL is set (hosted, e.g. Supabase), otherwise JSON
 // files in data/ (local). Either way it's a key-value table of JSON values, and each
@@ -98,6 +99,18 @@ export async function deleteKv(key) {
   else fs.rmSync(kvFile(key), { force: true });
 }
 
+// Every key starting with `prefix` (a person's resume PDFs, when their account goes).
+export async function deleteKvPrefix(prefix) {
+  if (memory) {
+    for (const k of [...memory.keys()]) if (k.startsWith(prefix)) memory.delete(k);
+  } else if (pool) {
+    // Compared as text, not LIKE: an id's "_" would be a wildcard there.
+    await pool.query('delete from app_state where left(key, length($1)) = $1', [prefix]);
+  } else {
+    for (const f of fs.readdirSync(DATA_DIR)) if (f.startsWith(prefix) && f.endsWith('.json')) fs.rmSync(path.join(DATA_DIR, f), { force: true });
+  }
+}
+
 export const newId = () => crypto.randomUUID();
 
 // ---- one tracker per person ---------------------------------------------------------
@@ -152,11 +165,11 @@ export function refresh(app) {
 
 // A deadline you typed, as an ISO time, or null if it isn't one. The dashboard sends the
 // full date and time worked out in your own time zone; a bare "YYYY-MM-DD" (older pages)
-// means the end of that day.
-export function typedDeadline(value) {
+// means the end of that day in your time zone.
+export function typedDeadline(value, timeZone) {
   if (typeof value !== 'string') return null;
   const day = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const when = day ? new Date(+day[1], +day[2] - 1, +day[3], 23, 59)
+  const when = day ? endOfDayIn({ year: +day[1], month: +day[2] - 1, day: +day[3] }, timeZone)
     : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) ? new Date(value) : null;
   return when && !isNaN(when) ? when.toISOString() : null;
 }
@@ -204,7 +217,7 @@ export function startsNewApplication(app, { date, stage }) {
 
 const userEdited = a =>
   a.events.some(e => e.manual) || a.renamed || a.notes || a.url || a.edited ||
-  a.manualDeadline || a.deadlineDone || a.notifiedDeadline || a.interviewAt;
+  a.manualDeadline || a.deadlineDone || a.notifiedDeadline || a.interviewAt || a.resumeId || a.posting;
 
 // One person's applications and sync bookkeeping, with everything that reads or
 // changes them. Nothing here can reach another person's data.
@@ -250,6 +263,19 @@ export class Store {
     await setKv(`${name}_${this.key.replace(/^db_/, '')}`, structuredClone(this.db));
   }
 
+  readBackup(name) {
+    return getKv(`${name}_${this.key.replace(/^db_/, '')}`);
+  }
+
+  // Swap in another copy of the whole tracker (a backup, say). this.db stays the same
+  // object, so anything already holding it sees the change.
+  replaceDb(value) {
+    for (const k of Object.keys(this.db)) delete this.db[k];
+    Object.assign(this.db, structuredClone(value));
+    this.db.ignored ??= {};
+    this.db.assignments ??= {};
+  }
+
   // Snapshot the hand-made parts of Gmail-built applications before a re-scan.
   snapshotEdits() {
     return this.db.applications
@@ -278,7 +304,7 @@ export class Store {
         for (const field of Object.keys(old.edited)) target[field] = old[field];
         target.edited = { ...target.edited, ...old.edited };
       }
-      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline', 'interviewAt']) {
+      for (const field of ['notes', 'url', 'manualDeadline', 'deadlineDone', 'notifiedDeadline', 'interviewAt', 'resumeId', 'posting', 'fit']) {
         if (old[field]) target[field] = old[field];
       }
       const ids = new Set(target.events.map(e => e.id));

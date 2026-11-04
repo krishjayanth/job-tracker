@@ -3,6 +3,7 @@
 // can subscribe to. The feed's address is a long random token, so it works without
 // signing in; resetting it stops the old address.
 import crypto from 'node:crypto';
+import { validTimeZone } from './zones.js';
 
 const CLOSED = new Set(['rejected', 'withdrawn']);
 export const INTERVIEW_MINUTES = 60; // how long an interview is shown as, without a known end
@@ -69,10 +70,7 @@ function endOfDay(iso, timeZone) {
   return t === '23:59';
 }
 
-export function validTimeZone(tz) {
-  if (typeof tz !== 'string' || !tz) return false;
-  try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; }
-}
+export { validTimeZone };
 
 // The feed for one person's applications. `link` is where "Open in nuj" points.
 export function buildIcs(applications, { timeZone = 'UTC', link = '', now = Date.now() } = {}) {
