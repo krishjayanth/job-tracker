@@ -89,6 +89,13 @@ test('trying again after a failed re-scan still keeps your edits and a good back
   assert.equal((await getKv('db_before_rescan_retry')).applications.find(a => a.company === 'Acme').notes, 'Spoke to Dana');
 });
 
+test('emails are read with the time zone your browser last told nuj', async () => {
+  const { store, mailbox } = await mailboxFor('zone', tracker());
+  assert.equal(mailbox.readingOptions().timeZone, undefined);
+  store.db.timeZone = 'America/Denver';
+  assert.equal(mailbox.readingOptions().timeZone, 'America/Denver');
+});
+
 test('a re-scan cut off by a restart is put back from its backup when the account loads', async () => {
   const before = tracker();
   // What a restart part-way through left saved: the backup, and a tracker that's half

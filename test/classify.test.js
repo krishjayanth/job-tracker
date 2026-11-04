@@ -30,6 +30,18 @@ test("merge: the model's deadline is kept only when it's a plausible date after 
   assert.equal(merge({ deadline: 'next week' }).deadline, '');
 });
 
+test("merge: the model's deadline date is the end of that day in your time zone", () => {
+  const r = mergeWithRules(llm({ deadline: '2026-10-06' }), classifyWithRules(email), email, { timeZone: 'America/Los_Angeles' });
+  assert.equal(r.deadline, '2026-10-07T06:59:00.000Z');
+});
+
+test('classify: deadlines in the email are read in your time zone', async () => {
+  const e = { from: 'Contoso Careers <noreply@hackerrank.com>', subject: 'Contoso coding assessment', date: '2026-10-01T17:00:00.000Z',
+    body: 'Thanks for applying to Contoso. Please complete the coding assessment by October 9 at 11:59 PM.' };
+  const r = await classify(e, { timeZone: 'America/Los_Angeles' });
+  assert.equal(r.deadline, '2026-10-10T06:59:00.000Z');
+});
+
 // A stand-in for the Groq client: answers the job check and the full read, and records calls.
 function fakeGroq({ gate, read }) {
   const calls = [];

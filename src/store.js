@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { computeStatus } from './stages.js';
 import { buildDemoDb } from './demo.js';
 import { senderDomain } from './jobcheck.js';
+import { endOfDayIn } from './zones.js';
 
 // Storage: Postgres when DATABASE_URL is set (hosted, e.g. Supabase), otherwise JSON
 // files in data/ (local). Either way it's a key-value table of JSON values, and each
@@ -164,11 +165,11 @@ export function refresh(app) {
 
 // A deadline you typed, as an ISO time, or null if it isn't one. The dashboard sends the
 // full date and time worked out in your own time zone; a bare "YYYY-MM-DD" (older pages)
-// means the end of that day.
-export function typedDeadline(value) {
+// means the end of that day in your time zone.
+export function typedDeadline(value, timeZone) {
   if (typeof value !== 'string') return null;
   const day = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const when = day ? new Date(+day[1], +day[2] - 1, +day[3], 23, 59)
+  const when = day ? endOfDayIn({ year: +day[1], month: +day[2] - 1, day: +day[3] }, timeZone)
     : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) ? new Date(value) : null;
   return when && !isNaN(when) ? when.toISOString() : null;
 }

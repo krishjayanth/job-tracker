@@ -223,6 +223,8 @@ app.get('/api/state', async (req, res) => {
     demo: DEMO,
     ghostDays: GHOST_DAYS,
     calendarFeed: db.calendarFeed ? { url: feedUrl(req, db.calendarFeed.token) } : null,
+    // Your time zone as nuj last heard it from your browser (see PUT /api/time-zone).
+    timeZone: db.timeZone ?? null,
     resumes: versions.map(({ id, name, usedFrom }) => ({ id, name, usedFrom })),
     ai: aiStatus(user, { demo: DEMO }),
   });
@@ -271,6 +273,18 @@ app.post('/api/whats-new/seen', (req, res) => {
   req.account.store.db.seenRelease = LATEST_RELEASE.id;
   req.account.store.save();
   res.json({ ok: true });
+});
+
+// Your time zone, from your browser: deadlines in emails ("by Oct 9 at 11:59 PM") are read
+// as times where you are, not where the server is. Emails already read keep their deadline.
+app.put('/api/time-zone', (req, res) => {
+  const timeZone = req.body?.timeZone;
+  if (!validTimeZone(timeZone)) return res.status(400).json({ error: "That isn't a time zone nuj knows" });
+  if (req.account.store.db.timeZone !== timeZone) {
+    req.account.store.db.timeZone = timeZone;
+    req.account.store.save();
+  }
+  res.json({ timeZone });
 });
 
 // --- calendar feed ----------------------------------------------------------
@@ -363,7 +377,7 @@ app.patch('/api/applications/:id', async (req, res) => {
   // Deadline: a date and time (or "YYYY-MM-DD" for the end of that day) sets your own;
   // "" or done=true clears the current one.
   if (typeof req.body.deadline === 'string') {
-    const typed = typedDeadline(req.body.deadline);
+    const typed = typedDeadline(req.body.deadline, req.account.store.db.timeZone);
     if (typed) {
       a.manualDeadline = typed;
       a.deadlineDone = null;

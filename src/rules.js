@@ -1,6 +1,7 @@
 // Rule-based email classifier (always available, no API key needed).
 // Tuned against real confirmation/assessment/interview/rejection emails from
 // Workday, iCIMS, Greenhouse, Ashby, Workable, HackerRank, CodeSignal and direct senders.
+import { partsIn, zonedTime, endOfDayIn, zoneFromWord, ZONE_PATTERN } from './zones.js';
 
 // Checked in order; first match wins. Rejections often open with "thank you for
 // applying", so they're checked before the plain confirmation rule. The offer rule
@@ -177,46 +178,41 @@ const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven
 const DEADLINE_CUE = /\b(expires?|expiring|expiration|deadline|due|complete|submit|finish|take (?:it|the|your)|respond|action|access|before|by|until|no later than|within)\b/i;
 const THEIR_PROMISE = /\b(get back to you|hear from (?:us|you)|be in touch|reach out|we(?:'ll| will| aim| typically| usually)?\s+(?:review|respond|contact|follow up|get back|be in touch|reach out))\b/i;
 
-const MONTH_DATE = /\b(?:by|before|until|no later than|due(?: on| by)?|deadline(?: is|:)?|expires?(?: on)?|expiration(?: date)?:?|on)\s+(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?(?:\s*(?:at|@|,)?\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?)?/i;
+// A time can name its zone ("11:59 PM ET", "5 PM (Pacific Time)"), which wins over yours.
+const MONTH_DATE = new RegExp(String.raw`\b(?:by|before|until|no later than|due(?: on| by)?|deadline(?: is|:)?|expires?(?: on)?|expiration(?: date)?:?|on)\s+(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?(?:\s*(?:at|@|,)?\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?(?:\s*\(?(${ZONE_PATTERN})\b(?:\s+time)?\)?)?)?`, 'i');
 const NUMERIC_DATE = /\b(?:by|before|until|due(?: on| by)?|deadline:?|expires?(?: on)?)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i;
 const RELATIVE = /\b(?:in|within|next)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|fourteen)\s+(?:business\s+|calendar\s+)?(hours?|days?|weeks?)\b/i;
+const DAY = 86_400_000;
 
-function atEndOfDay(d) { d.setHours(23, 59, 0, 0); return d; }
-
-// Returns an ISO date for "the thing you must do by", or '' if the email has none.
-export function extractDeadline(text, emailDate) {
+// Returns an ISO date for "the thing you must do by", or '' if the email has none. Dates
+// and times are read in timeZone (yours), so "by Oct 9" ends at 11:59 PM where you are.
+export function extractDeadline(text, emailDate, timeZone) {
   const base = new Date(emailDate);
+  const sentOn = partsIn(base, timeZone); // the email's date where you are
   const sentences = text.slice(0, 5000).split(/(?<=[.!?])\s+|\n+/);
   for (const s of sentences) {
     if (!DEADLINE_CUE.test(s) || THEIR_PROMISE.test(s)) continue;
     let when = null;
     let m;
     if ((m = s.match(MONTH_DATE))) {
-      const year = m[3] ? Number(m[3]) : base.getFullYear();
-      when = new Date(year, MONTHS[m[1].toLowerCase()], Number(m[2]));
-      if (m[4]) {
-        let h = Number(m[4]) % 12;
-        if (m[6].toLowerCase() === 'p') h += 12;
-        when.setHours(h, Number(m[5] || 0), 0, 0);
-      } else {
-        atEndOfDay(when);
-      }
-      if (!m[3] && when < base - 2 * 86_400_000) when.setFullYear(year + 1); // "Jan 5" seen in December
+      const date = { year: m[3] ? Number(m[3]) : sentOn.year, month: MONTHS[m[1].toLowerCase()], day: Number(m[2]) };
+      const at = () => m[4]
+        ? zonedTime({ ...date, hour: Number(m[4]) % 12 + (m[6].toLowerCase() === 'p' ? 12 : 0), minute: Number(m[5] || 0) }, zoneFromWord(m[7]) || timeZone)
+        : endOfDayIn(date, timeZone);
+      when = at();
+      if (!m[3] && when < base - 2 * DAY) { date.year++; when = at(); } // "Jan 5" seen in December
     } else if ((m = s.match(NUMERIC_DATE))) {
-      const year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : base.getFullYear();
-      when = atEndOfDay(new Date(year, Number(m[1]) - 1, Number(m[2])));
+      const year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : sentOn.year;
+      when = endOfDayIn({ year, month: Number(m[1]) - 1, day: Number(m[2]) }, timeZone);
     } else if ((m = s.match(RELATIVE)) && /\b(expire|due|deadline|complete|submit|finish|action|access|respond|take)\w*/i.test(s)) {
       const n = Number(m[1]) || NUMBER_WORDS[m[1].toLowerCase()];
       const unit = m[2].toLowerCase();
-      when = new Date(base);
-      if (unit.startsWith('hour')) when.setHours(when.getHours() + n);
-      else {
-        when.setDate(when.getDate() + n * (unit.startsWith('week') ? 7 : 1));
-        atEndOfDay(when);
-      }
+      // Hours count from when it was sent; days end at the end of a day where you are.
+      if (unit.startsWith('hour')) when = new Date(base.getTime() + n * 3_600_000);
+      else when = endOfDayIn({ ...sentOn, day: sentOn.day + n * (unit.startsWith('week') ? 7 : 1) }, timeZone);
     }
     // Ignore dates in the past relative to the email, or implausibly far out.
-    if (when && !isNaN(when) && when > base - 12 * 3_600_000 && when - base < 60 * 86_400_000) {
+    if (when && !isNaN(when) && when > base - 12 * 3_600_000 && when - base < 60 * DAY) {
       return when.toISOString();
     }
   }

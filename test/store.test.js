@@ -354,6 +354,7 @@ test('typedDeadline: a date and time from the dashboard is kept to the minute', 
 
 test('typedDeadline: a bare date means the end of that day, and junk is refused', () => {
   assert.equal(typedDeadline('2026-10-30'), new Date(2026, 9, 30, 23, 59).toISOString());
+  assert.equal(typedDeadline('2026-10-30', 'America/Los_Angeles'), '2026-10-31T06:59:00.000Z');
   for (const bad of ['', 'tomorrow', '2026-13-45T99:99', '30/10/2026', null, 42]) assert.equal(typedDeadline(bad), null);
 });
 

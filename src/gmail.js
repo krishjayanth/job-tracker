@@ -290,7 +290,7 @@ export class Mailbox {
         subject: header(msg, 'Subject'),
         date: new Date(Number(msg.internalDate)).toISOString(),
         body: bodyText(msg.payload),
-      }, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
+      }, this.readingOptions());
       if (!result) { notJob++; continue; }
       const before = JSON.stringify([e.stage, e.deadline, e.summary]);
       e.stage = result.stage;
@@ -307,6 +307,13 @@ export class Mailbox {
     refresh(app);
     this.user.store.save();
     return { emails: emails.length, changed, notJob };
+  }
+
+  // How this person's emails are read: their Groq key, their own address, and their time
+  // zone (from their browser) for deadlines.
+  readingOptions() {
+    const user = this.user;
+    return { groq: user.groq(), self: user.email, onKeyRejected: () => user.keyRejected(), userId: user.id, timeZone: user.store.db.timeZone };
   }
 
   // Which of these same-company applications an email is about, by the model, or null
@@ -387,7 +394,7 @@ export class Mailbox {
         };
         // Blocked after this search began, or beyond the search's exclusion list.
         const result = store.isBlocked(email.from) ? null
-          : await classify(email, { groq: this.user.groq(), self: this.user.email, onKeyRejected: () => this.user.keyRejected(), userId: this.user.id });
+          : await classify(email, this.readingOptions());
         // Saved per message so an interrupted sync resumes where it left off.
         db.processed[msg.id] = true;
         if (!result) {

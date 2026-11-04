@@ -86,6 +86,16 @@ async function load() {
   if (res.status === 401) return location.assign('/login'); // signed out or session expired
   state = await res.json();
   render();
+  rememberTimeZone();
+}
+
+// Tell the server this browser's time zone, so deadlines in emails are read as times where
+// you are. Only when it's new or has changed (you travelled); a failure just tries next load.
+function rememberTimeZone() {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!timeZone || state.demo || state.timeZone === timeZone) return;
+  state.timeZone = timeZone;
+  api('PUT', '/api/time-zone', { timeZone }).catch(() => { state.timeZone = null; });
 }
 
 class ApiError extends Error {}

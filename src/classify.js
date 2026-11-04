@@ -2,6 +2,7 @@ import { classifyWithRules, resolveCompanyName, stripJobId, extractDeadline, rej
 import { classifyWithGroq, isJobEmailWithGroq, MODEL } from './groq.js';
 import { jobSignal, senderAddress } from './jobcheck.js';
 import { recordError } from './errors.js';
+import { endOfDayIn } from './zones.js';
 
 export { classifyWithRules };
 
@@ -16,11 +17,12 @@ const UNKNOWN = 'Unknown company';
 const STAGE_WORDS = { applied: 'an application update', oa: 'an assessment', interview: 'an interview', offer: 'an offer', withdrawn: 'a withdrawal' };
 const DAY = 86_400_000;
 
-// The model's "YYYY-MM-DD" deadline, if it's a real date shortly after the email.
-function llmDeadline(value, emailDate) {
+// The model's "YYYY-MM-DD" deadline, if it's a real date shortly after the email: the end
+// of that day in your time zone.
+function llmDeadline(value, emailDate, timeZone) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
   if (!m) return '';
-  const when = new Date(+m[1], +m[2] - 1, +m[3], 23, 59);
+  const when = endOfDayIn({ year: +m[1], month: +m[2] - 1, day: +m[3] }, timeZone);
   const base = Date.parse(emailDate);
   return when >= base - DAY && when - base < 60 * DAY ? when.toISOString() : '';
 }
@@ -29,7 +31,7 @@ function llmDeadline(value, emailDate) {
 // the rules are narrow but precise. A company or job ID is only accepted if it actually
 // appears in the email, and the rules' rejection/offer checks act as guard rails.
 // Anything the two can't settle between them is flagged for you to confirm.
-export function mergeWithRules(llm, rules, email) {
+export function mergeWithRules(llm, rules, email, { timeZone } = {}) {
   if (!llm.isJob) return null;
   const raw = `${email.from}\n${email.subject}\n${email.body}`;
   const text = squash(raw);
@@ -68,7 +70,7 @@ export function mergeWithRules(llm, rules, email) {
     company,
     role: stripJobId(llmRole || rules?.role || '', jobId),
     jobId,
-    deadline: llmDeadline(llm.deadline, email.date),
+    deadline: llmDeadline(llm.deadline, email.date, timeZone),
     summary: llm.summary.slice(0, 160),
     reasoning: llm.reasoning.slice(0, 600),
     review,
@@ -86,7 +88,8 @@ export function mergeWithRules(llm, rules, email) {
 //   3. the full read (Groq, cross-checked by the rules), or the rules alone.
 // Which application it belongs to is settled afterwards, in gmail.js.
 // `self` is your own address: an email you sent (a reply to a recruiter) is never filed.
-export async function classify(email, { groq = null, self = null, onKeyRejected, userId = null } = {}) {
+// `timeZone` is yours: deadlines in the email are read as times where you are.
+export async function classify(email, { groq = null, self = null, onKeyRejected, userId = null, timeZone } = {}) {
   if (self && senderAddress(email.from) === self.trim().toLowerCase()) return null;
   const signal = jobSignal(email);
   if (signal.verdict === 'not_job') return null;
@@ -100,7 +103,7 @@ export async function classify(email, { groq = null, self = null, onKeyRejected,
         gateSaidJob = isJob === true;
       }
       const llm = await classifyWithGroq(groq, email);
-      if (llm) result = mergeWithRules(llm, classifyWithRules(email), email);
+      if (llm) result = mergeWithRules(llm, classifyWithRules(email), email, { timeZone });
     } catch (err) {
       if (err.status === 401 || err.status === 403) onKeyRejected?.();
       else {
@@ -124,7 +127,7 @@ export async function classify(email, { groq = null, self = null, onKeyRejected,
       result.deadline = '';
     } else {
       // The rules find dates written out in the email; the model also works out "within 5 days".
-      result.deadline = extractDeadline(`${email.subject}\n${email.body}`, email.date) || result.deadline || '';
+      result.deadline = extractDeadline(`${email.subject}\n${email.body}`, email.date, timeZone) || result.deadline || '';
     }
   }
   return result;
