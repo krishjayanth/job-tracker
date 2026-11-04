@@ -119,7 +119,8 @@ free tier awake):
   where it stopped. The sync window only advances once the backlog is cleared, and Gmail calls are paced with
   exponential backoff on 429s. ([`src/gmail.js`](src/gmail.js))
 - **Re-scan without losing work.** Reclassifying the whole inbox snapshots every hand edit, rebuilds applications
-  from scratch, then re-attaches the edits by matching Gmail message IDs. A backup is written first.
+  from scratch, then re-attaches the edits by matching Gmail message IDs. A backup is written first, and a
+  re-scan that fails or is cut off by a restart puts the tracker back exactly as it was.
   ([`src/store.js`](src/store.js))
 - **Monotonic status and an acyclic chart.** Status moves forward only, unless an application reaches a terminal
   stage or you correct it by hand. The Sankey path is built so it can never form a cycle.

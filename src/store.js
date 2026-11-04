@@ -262,6 +262,19 @@ export class Store {
     await setKv(`${name}_${this.key.replace(/^db_/, '')}`, structuredClone(this.db));
   }
 
+  readBackup(name) {
+    return getKv(`${name}_${this.key.replace(/^db_/, '')}`);
+  }
+
+  // Swap in another copy of the whole tracker (a backup, say). this.db stays the same
+  // object, so anything already holding it sees the change.
+  replaceDb(value) {
+    for (const k of Object.keys(this.db)) delete this.db[k];
+    Object.assign(this.db, structuredClone(value));
+    this.db.ignored ??= {};
+    this.db.assignments ??= {};
+  }
+
   // Snapshot the hand-made parts of Gmail-built applications before a re-scan.
   snapshotEdits() {
     return this.db.applications

@@ -53,6 +53,8 @@ served from `node_modules` via `/vendor/*`. No framework.
   application. Without a Groq key everything falls back to rules.
 - **Re-scan keeps hand edits.** `Store.snapshotEdits()` / `restoreEdits()` re-attach edits by Gmail message ID
   after rebuilding applications. Anything new a user can edit must be included there to survive a re-scan.
+  While `db.rescanStartedAt` is set, the `db_before_rescan_<id>` backup is the only good copy: a failed re-scan
+  reverts to the pre-scan state, and `Mailbox.recoverRescan()` restores the backup on load after a restart.
 - **Live updates.** Any change should end with `broadcast(user.id)` (SSE `data: update`), which makes open tabs
   refetch `/api/state`. Undo-able actions use `store.checkpoint(...)` and return an undo token.
 - **Errors and the Developer page.** Call `recordError(source, err, { userId, level, detail })` from
