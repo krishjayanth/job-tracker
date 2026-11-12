@@ -26,8 +26,9 @@ npm install
 npm run demo
 ```
 
-Then open http://localhost:5178. Demo mode loads a made-up job search (37 applications at fictional companies)
-into memory, so you can click around, edit, filter and export without a Google account. Nothing is saved.
+Then open http://localhost:5178. Demo mode loads a made-up job search (39 applications at fictional companies,
+plus two versions of a sample resume) into memory, so you can click around, edit, filter, export and try Resume
+insights without a Google account or an OpenAI key. Nothing is saved.
 
 ## What it does
 
@@ -40,8 +41,19 @@ into memory, so you can click around, edit, filter and export without a Google a
   can set or change a deadline's date and time yourself; a date with no time means the end of that day.
 - **Nudges about silence.** Applications with no reply for three weeks move to *No response*, where you can
   close them all at once (with Undo) or follow up.
+- **Puts dates on a calendar.** Deadlines and the interview times you enter show on a Calendar page and in a
+  private feed that Google Calendar (or any calendar app) can subscribe to.
+- **Grades your resume and tailors it to a job.** Upload versions of your resume (PDF or Word) and nuj tracks
+  which one each application went out with. An AI review acts as a strict recruiter: a score out of 100 and a
+  letter grade, five rubric scores, every bullet that misses the XYZ formula ("Accomplished X as measured by Y, by
+  doing Z") with a rewrite, skills you list but never show, and the biggest weakness. For one job description it
+  gives a match score, the top missing keywords, three red flags and rewrites aimed at that job.
+- **Edits your PDF as you go.** "Use this" puts a rewrite into your resume and draws it over your real PDF, and
+  "Download edited PDF" writes your accepted rewrites into a copy of your own file. Compare any two versions line
+  by line.
 - **Keeps your corrections.** Renames, status changes, notes and deadlines survive a full re-scan of the inbox.
-- **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
+- **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel. A tab left
+  open across an update asks to be reloaded rather than running old code.
 - **Acts on several at once.** Tick applications in the table (Shift-click for a range, Space on a focused
   row) to give them all one status, export just those, or delete them, with a single Undo.
 - **A Developer page for whoever runs it.** Every account's health (Gmail connected or expired, how emails are
@@ -74,12 +86,14 @@ flowchart LR
     end
     Gmail[("Gmail API<br/>read-only")]
     Groq[("Groq LLM<br/>gpt-oss-20b")]
+    OpenAI[("OpenAI<br/>resume review")]
     PG[("Postgres<br/>Supabase")]
 
     UI <-- "REST + live updates" --> API
     Cron -- "/api/cron/sync" --> API
     Sync -- "list + get messages" --> Gmail
     Cls -- "strict JSON schema" --> Groq
+    API -- "structured outputs, after consent" --> OpenAI
     Store -- "debounced jsonb upsert" --> PG
 ```
 
@@ -134,6 +148,16 @@ free tier awake):
 - **Cheap persistence.** Each tracker is one JSON document in memory. Writes are debounced into a single
   Postgres `jsonb` upsert and flushed on shutdown, so syncing 500 emails is one write, not 500. The same interface
   falls back to atomic local file writes or, in demo mode, memory only.
+- **Resume AI held to what it can prove.** nuj doesn't grade resumes itself; OpenAI does, given the resume
+  without your name or contact details, how your applications went and the job descriptions you pasted. Its
+  answer is checked before you see it: a bullet it grades must really be in your resume, a keyword must really be
+  in the posting, a listed skill must really be listed, and a rewrite can't add a number your line didn't have.
+  Nothing is sent until you allow it, and you're asked again if what's sent ever grows. ([`src/ai.js`](src/ai.js))
+- **Editing a PDF without leaving the old words in.** Covering a line in white would leave its text in the file,
+  where applicant tracking software still reads it. Instead nuj follows each piece of text in the page's
+  drawing instructions to where it lands, takes out the changed lines, and writes the new wording in the same
+  place, so the reading order is unchanged. It reads the copy back and refuses rather than give one that still
+  holds the old wording or would print over the next line. ([`src/pdfedit.js`](src/pdfedit.js))
 - **Small security surface.** One Google sign-in both identifies the user and grants read-only Gmail access, with
   the ID token verified server-side. Sessions are stateless HMAC-signed cookies compared in constant time. When
   hosted, the server refuses to start without an email allow-list and a strong secret.
@@ -145,14 +169,16 @@ free tier awake):
 |---|---|
 | Server | Node.js 22+ (ES modules), Express 5 |
 | Data | PostgreSQL on Supabase (`jsonb`, row-level security on), or local JSON files |
-| Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`) |
+| Integrations | Gmail API (`googleapis`), Google OAuth 2.0 / OpenID Connect, Groq (`gpt-oss-20b`), OpenAI (structured outputs) |
+| Resumes | `unpdf` and `mammoth` to read uploads (in a worker thread), PDF.js to show pages, `pdf-lib` to write edits |
 | Frontend | Vanilla JavaScript, D3 + d3-sankey, CSS custom properties (light and dark, following the system) |
 | Live updates | Server-Sent Events |
 | Export | ExcelJS |
 | Testing / CI | `node:test`, GitHub Actions (Node 22 and 24, plus a demo-mode smoke test) |
 | Hosting | Render (Blueprint in [`render.yaml`](render.yaml)) |
 
-No frontend framework or build step: the browser loads plain scripts, and D3 is served straight from `node_modules`.
+No frontend framework or build step: the browser loads plain scripts, and D3 and PDF.js are served straight from
+`node_modules`.
 
 ## Tests
 
@@ -160,7 +186,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 217 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 242 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
@@ -178,6 +204,12 @@ There are 217 tests, written with the built-in `node:test` runner and no test de
 - letting go of idle trackers (saved first, loaded again later), and Undo surviving a restart
 - the API routes, against the server in demo mode: what they accept and refuse, bulk actions and Undo
 - checks on what the API is sent (text, lengths, web links only) and plain-worded sync errors
+- resume versions: reading PDF and Word files (with a time limit), PDFs kept as files, which version an
+  application went out with (in your own time zone), and cleaning up after deletes and restarts
+- the AI review and tailoring, with a stand-in OpenAI client: what's sent (never your name), and what's kept of
+  the answer (real bullets, real keywords, no made-up numbers), plus asking for consent again
+- editing a PDF: the old wording gone from the page and the file, reading order kept, too-long rewrites refused
+- the dashboard fingerprint that tells an open tab a newer version is live
 
 CI runs them on every push, then boots the app in demo mode and checks the API.
 
@@ -212,6 +244,19 @@ also shows how often people fix sorting across all accounts.
 | [`src/users.js`](src/users.js) | Accounts: each person's tracker, mailbox and Groq key; account deletion |
 | [`src/secrets.js`](src/secrets.js) | Encryption for stored Groq keys |
 | [`src/export.js`](src/export.js) | Excel export |
+| [`src/calendar.js`](src/calendar.js) | The Calendar page's items and the private calendar feed |
+| [`src/zones.js`](src/zones.js) | Dates in each person's own time zone |
+| [`src/resume.js`](src/resume.js) | Resume versions, their PDFs, reading uploads, and rewrites accepted since a PDF was saved |
+| [`src/extract-worker.js`](src/extract-worker.js) | Reads an uploaded PDF or Word file in a time-limited worker thread |
+| [`src/insights.js`](src/insights.js) | How applications went by resume version and kind of role, for the AI; the preview's line layout |
+| [`src/roles.js`](src/roles.js) | Sorting job titles into kinds of role and levels |
+| [`src/ai.js`](src/ai.js) | The resume review and tailoring on OpenAI: limits, consent, and checking the answers |
+| [`src/pdfedit.js`](src/pdfedit.js) | Writing accepted rewrites into a copy of a resume PDF |
+| [`src/textpdf.js`](src/textpdf.js) | Plain PDFs of the demo's resumes |
+| [`src/releases.js`](src/releases.js) | The "What's new" note, and the one-time re-scan after a sorting change |
+| [`src/rescan-all.js`](src/rescan-all.js) | That one-time re-scan of everyone's emails |
+| [`src/access.js`](src/access.js) | Invite requests from the landing page, and rate limits |
+| [`src/dbcopy.js`](src/dbcopy.js) | Copying every row between two databases (`npm run copy-db`) |
 | [`src/demo.js`](src/demo.js) | Sample data for demo mode |
 | [`public/`](public/) | Dashboard: `index.html`, `styles.css`, and its scripts in `public/js/` (one per page or part, loaded in order) |
 | [`src/input.js`](src/input.js) | Checks on the text fields the API is sent |
@@ -220,5 +265,5 @@ also shows how often people fix sorting across all accounts.
 
 ## Deploy your own
 
-It runs on free tiers (Render, Supabase, Groq, Google Cloud). See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the
+It runs on free tiers (Render, Supabase, Groq, Google Cloud); Resume insights' AI also needs an OpenAI key. See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the
 step-by-step setup and every configuration option.
