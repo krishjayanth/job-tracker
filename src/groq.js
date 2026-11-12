@@ -83,31 +83,36 @@ Then fill in:
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---- is this about a job at all? -------------------------------------------------
-// Only asked when the free checks can't tell (see jobcheck.js). A small, fast model and
-// a short excerpt, so it costs a fraction of the full read and saves that read entirely
-// for the rental and utility emails it turns away.
-export const GATE_MODEL = process.env.GROQ_GATE_MODEL || 'llama-3.1-8b-instant';
+// Only asked when the free checks can't tell (see jobcheck.js). A short excerpt and little
+// thinking, so it costs a fraction of the full read and saves that read entirely for the
+// rental and utility emails it turns away. It uses the main model unless GROQ_GATE_MODEL
+// names a smaller one: Groq retired llama-3.1-8b-instant (August 2026) and names
+// gpt-oss-20b, the main model, as its replacement.
+export const GATE_MODEL = process.env.GROQ_GATE_MODEL || MODEL;
 const GATE_SYSTEM = `You decide whether an email is about the recipient's own application for a JOB (employment, internship, co-op) with an employer.
 Answer false for every other kind of application or account: apartments, rentals and housing; utilities and bill-splitting services; banks, credit cards, loans and insurance; schools, admissions and scholarships; visas and permits; memberships and subscriptions; student clubs, societies, fraternities and sororities, even when they "interview" for "positions". Also false for job alerts and newsletters.
 Reply with JSON only: {"job": true or false, "why": "a few words"}`;
 
 // true / false, or undefined when Groq can't answer now (the full read then decides).
-// Groq retires models now and then. When the small model is gone, the job check moves to
-// the main model (with little reasoning, so it stays cheap) until the server restarts,
-// instead of failing on every unclear email. GROQ_GATE_MODEL picks a different small one.
+// Groq retires models now and then. When a small GROQ_GATE_MODEL is gone, the job check
+// moves to the main model until the server restarts, instead of failing on every unclear
+// email.
+let configured = GATE_MODEL;
 let gateGone = false;
 const modelGone = err => err.status === 404 || err.error?.error?.code === 'model_not_found' || err.code === 'model_not_found';
-export const gateModel = () => (gateGone ? MODEL : GATE_MODEL);
-export function resetGateModelForTests() { gateGone = false; }
+export const gateModel = () => (gateGone ? MODEL : configured);
+export function resetGateModelForTests(model = GATE_MODEL) { configured = model; gateGone = false; }
+// Models that think before they answer, which counts towards the token limit: they get
+// low effort and room to finish, where a small plain model needs only a few tokens.
+const thinks = model => model === MODEL || /gpt-oss|qwen3|deepseek-r1/i.test(model);
 
 export async function isJobEmailWithGroq(client, { from, subject, body }) {
-  const fallback = gateGone;
+  const model = gateModel();
   try {
     const res = await client.chat.completions.create({
-      model: gateModel(),
+      model,
       temperature: 0,
-      // The main model thinks before it answers, and that counts towards the limit.
-      ...(fallback ? { reasoning_effort: 'low', max_completion_tokens: 400 } : { max_completion_tokens: 60 }),
+      ...(thinks(model) ? { reasoning_effort: 'low', max_completion_tokens: 400 } : { max_completion_tokens: 60 }),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: GATE_SYSTEM },
@@ -118,10 +123,10 @@ export async function isJobEmailWithGroq(client, { from, subject, body }) {
     return typeof out.job === 'boolean' ? out.job : undefined;
   } catch (err) {
     if (err.status === 401 || err.status === 403) throw err; // the key itself is bad
-    if (!fallback && modelGone(err)) {
+    if (model !== MODEL && modelGone(err)) {
       gateGone = true;
-      console.warn(`[groq] ${GATE_MODEL} isn't available; the job check uses ${MODEL} instead`);
-      recordError('groq', `${GATE_MODEL} isn't available on Groq; the job check uses ${MODEL} instead. Set GROQ_GATE_MODEL to choose another small model`, { level: 'warning' });
+      console.warn(`[groq] ${model} isn't available; the job check uses ${MODEL} instead`);
+      recordError('groq', `${model} isn't available on Groq; the job check uses ${MODEL} instead. Set GROQ_GATE_MODEL to another model from Groq's list, or remove it to use ${MODEL}`, { level: 'warning' });
       return isJobEmailWithGroq(client, { from, subject, body });
     }
     if (err.status !== 429) {

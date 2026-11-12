@@ -172,7 +172,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `GROQ_API_KEY` | — | Groq key for the owner only; everyone else adds their own in the app |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
 | `GROQ_REASONING_EFFORT` | `medium` | `low` uses fewer tokens per email, but reads tricky emails less carefully |
-| `GROQ_GATE_MODEL` | `llama-3.1-8b-instant` | Small model that checks whether an unclear email is about a job before the full read. If Groq retires it, nuj uses `GROQ_MODEL` for the check instead and notes it on the Developer page; set this to another small model from Groq's model list to go back to a cheap one |
+| `GROQ_GATE_MODEL` | `GROQ_MODEL` | Model that checks whether an unclear email is about a job before the full read. Leave unset to use the main model (Groq retired `llama-3.1-8b-instant` in August 2026 and recommends `openai/gpt-oss-20b`). If a model set here is retired, nuj uses `GROQ_MODEL` instead and notes it on the Developer page |
 | `OPENAI_API_KEY` | — | OpenAI key for Resume insights' review and grade, Check a job and Check fit. Unset hides them, leaving your resume versions, their preview and comparing two versions. Everyone shares it, so the limits below keep the bill down |
 | `OPENAI_MODEL` | `gpt-5.4-mini` | OpenAI model for Resume insights. It must support structured outputs |
 | `OPENAI_REASONING_EFFORT` | — | Sent only when set (`low`, `medium`…), for models that take it |

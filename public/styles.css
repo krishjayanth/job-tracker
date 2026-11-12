@@ -1887,3 +1887,12 @@ table.apps { width: 100%; border-collapse: collapse; }
 .nudge > span { flex: 1 1 260px; }
 .nudge .icon { width: 14px; height: 14px; flex: none; color: var(--muted); }
 p.nudge { margin: 0 0 14px; }
+
+/* A newer version of nuj is live (see newVersion in start.js): stays until you reload. */
+.update-bar {
+  position: fixed; left: 50%; bottom: 76px; z-index: 21; transform: translateX(-50%); /* above toasts */
+  display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px); padding: 10px 10px 10px 14px;
+  border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-strong), 0 18px 40px -16px rgba(0, 0, 0, .6);
+  font-size: 13px; color: var(--text); animation: note-in .22s var(--ease);
+}
+.update-bar > .icon { width: 15px; height: 15px; flex: none; color: var(--muted); }

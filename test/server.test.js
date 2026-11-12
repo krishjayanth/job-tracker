@@ -153,3 +153,17 @@ test('the AI grades the resume, keeps the review, and marks its bullets done or 
   assert.equal((await call('PATCH', `/api/insights/review/items/${id}`, { state: 'maybe' })).status, 400);
   assert.equal((await call('PATCH', '/api/insights/review/items/nope', { state: 'done' })).status, 404);
 });
+
+test('the live-update stream starts with a fingerprint of the dashboard, the same on every connection', async () => {
+  const first = async () => {
+    const ctrl = new AbortController();
+    const res = await fetch(`${BASE}/api/events`, { signal: ctrl.signal });
+    const reader = res.body.getReader();
+    const { value } = await reader.read();
+    ctrl.abort();
+    return new TextDecoder().decode(value);
+  };
+  const [a, b] = [await first(), await first()];
+  assert.match(a, /^event: build\ndata: [0-9a-f]{12}\n\n/);
+  assert.equal(a, b);
+});
