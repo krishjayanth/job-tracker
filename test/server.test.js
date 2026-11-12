@@ -167,3 +167,20 @@ test('the live-update stream starts with a fingerprint of the dashboard, the sam
   assert.match(a, /^event: build\ndata: [0-9a-f]{12}\n\n/);
   assert.equal(a, b);
 });
+
+test('the edited PDF needs a changed line and where it sits, and says no plainly otherwise', async () => {
+  const { body: page } = await call('GET', '/api/resume');
+  const id = page.preview.versionId;
+  assert.equal((await call('POST', `/api/resume/${id}/pdf/edited`, { places: [] })).status, 400); // nothing changed yet
+  const line = page.preview.lines.find(l => l.kind === 'bullet');
+  const done = await call('POST', `/api/resume/${id}/rewrite`, { from: line.text.slice(line.at), to: 'A rewrite for the edited PDF test' });
+  const { body: after } = await call('GET', '/api/resume');
+  assert.equal(after.versions.find(v => v.id === id).pdf.edited, 1);
+  assert.equal(after.preview.pdfEdits.length, 1);
+  const missing = await call('POST', `/api/resume/${id}/pdf/edited`, { places: [] });
+  assert.equal(missing.status, 400);
+  assert.match(missing.body.error, /couldn't find/);
+  const bad = await call('POST', `/api/resume/${id}/pdf/edited`, { places: [{ at: after.preview.pdfEdits[0].at, boxes: [{ page: 0, l: 'x', t: 0, w: 0, h: 0 }] }] });
+  assert.equal(bad.status, 400);
+  await call('PATCH', `/api/resume/${id}`, { text: done.body.before });
+});

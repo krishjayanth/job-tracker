@@ -151,7 +151,11 @@ export function addVersion(userId, body) {
     const now = new Date().toISOString();
     const version = { id, ...fields, createdAt: body.createdAt && !Number.isNaN(Date.parse(body.createdAt)) ? body.createdAt : now, updatedAt: now };
     // Undo: its PDF is kept for a while after a delete (see dropPdfLater), so it comes back too.
-    if (id === body.id && body.pdf?.at) version.pdf = { size: Number(body.pdf.size) || 0, at: String(body.pdf.at), ...(typeof body.pdf.textHash === 'string' && { textHash: body.pdf.textHash.slice(0, 32) }) };
+    if (id === body.id && body.pdf?.at) {
+      version.pdf = { size: Number(body.pdf.size) || 0, at: String(body.pdf.at), ...(typeof body.pdf.textHash === 'string' && { textHash: body.pdf.textHash.slice(0, 32) }) };
+      const edits = Array.isArray(body.pdf.edits) ? body.pdf.edits.filter(e => ['from', 'to', 'after'].every(k => typeof e?.[k] === 'string')) : [];
+      if (edits.length) version.pdf.edits = edits.slice(-MAX_PDF_EDITS).map(({ from, to, after }) => ({ from: from.slice(0, 600), to: to.slice(0, 600), after: after.slice(0, 32) }));
+    }
     versions.push(version);
     return { version };
   });
@@ -175,22 +179,66 @@ function notePdfText(version) {
   if (version.pdf && !version.pdf.textHash) version.pdf.textHash = textHash(version.text);
 }
 
-// Change one version's text with `change(text)`, which returns the new text or { error }.
-// Done in turn with other changes, so it always starts from the latest text. Returns the
-// version and the text it had before (for Undo).
+// Change one version's text with `change(text)`, which returns the new text, or
+// { text, pdfEdit: { from, to } } for a line swapped for another (a rewrite you accepted), or
+// { error }. Done in turn with other changes, so it always starts from the latest text.
+// Returns the version and the text it had before (for Undo).
 export function editText(userId, id, change) {
   return update(userId, versions => {
     const version = versions.find(v => v.id === id);
     if (!version) return { error: 'That version was deleted', status: 404 };
-    const next = change(version.text);
-    if (next?.error) return next;
-    const { fields, error } = checkFields({ text: next }, { partial: true });
+    const out = change(version.text);
+    if (out?.error) return out;
+    const { fields, error } = checkFields({ text: typeof out === 'string' ? out : out.text }, { partial: true });
     if (error) return { error };
     const before = version.text;
     notePdfText(version);
+    const applied = pdfEditsFor(version);
     Object.assign(version, fields, { updatedAt: new Date().toISOString() });
+    // A swapped line is noted against the PDF, so the preview can draw it over the old line
+    // and a copy of the PDF can be written with it (see pdfedit.js). Not after a change by
+    // hand: nuj can't tell which lines that moved, so the PDF is simply out of date.
+    if (out.pdfEdit && version.pdf && applied) {
+      version.pdf.edits = [...applied, { from: out.pdfEdit.from, to: out.pdfEdit.to, after: textHash(version.text) }].slice(-MAX_PDF_EDITS);
+    }
     return { version, before };
   });
+}
+
+// ---- lines changed since the PDF was saved -------------------------------------------
+// Each accepted rewrite is kept as { from, to, after }: the line's words before and after,
+// and a fingerprint of the whole text it left. Undo just puts the text back, so which edits
+// still hold is read off the text: none when it's as the PDF was saved, the edits up to the
+// one that left this exact text, or null when the text was changed some other way.
+const MAX_PDF_EDITS = 50;
+const BULLET = /^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/;
+const bodyOf = line => line.replace(BULLET, '').trim();
+
+export function pdfEditsFor(version) {
+  const pdf = version.pdf;
+  if (!pdf?.textHash) return [];
+  const now = textHash(version.text);
+  if (now === pdf.textHash) return [];
+  const edits = pdf.edits || [];
+  for (let k = edits.length - 1; k >= 0; k--) if (edits[k].after === now) return edits.slice(0, k + 1);
+  return null;
+}
+
+// Where the text differs from the PDF because of those edits: [{ at, from }], the line
+// number in the text now and the words the PDF shows there. Undoing the edits from the
+// last, each line goes back to what it was; a rewrite swaps one line for one line, so the
+// line numbers match.
+export function pdfLineChanges(version) {
+  const applied = pdfEditsFor(version);
+  if (!applied?.length) return [];
+  const lines = version.text.split('\n');
+  const shown = [...lines];
+  for (const e of [...applied].reverse()) {
+    const i = shown.findIndex(l => bodyOf(l) === e.to);
+    if (i < 0) return [];
+    shown[i] = (shown[i].match(BULLET)?.[0] ?? '') + e.from;
+  }
+  return lines.map((line, at) => (shown[at] !== line ? { at, from: bodyOf(shown[at]) } : null)).filter(Boolean);
 }
 
 export function deleteVersion(userId, id) {
@@ -271,11 +319,15 @@ export async function forgetResumes(userId) {
   await deleteFilePrefix(`resume_pdf_${userId}_`);
 }
 
-// What the page lists: everything but the text. `stale`: the text was edited after the PDF
-// was saved, so the PDF shows the old wording and the page marks the review on the text.
-export const versionMeta = ({ text, ...meta }) => (meta.pdf?.textHash && meta.pdf.textHash !== textHash(text)
-  ? { ...meta, pdf: { ...meta.pdf, stale: true } }
-  : meta);
+// What the page lists: everything but the text. `stale`: the text was changed by hand after
+// the PDF was saved, so the PDF shows the old wording and the page shows the text instead.
+// `edited`: how many accepted rewrites are drawn over the PDF.
+export function versionMeta({ text, ...meta }) {
+  if (!meta.pdf) return meta;
+  const { textHash: _, edits: __, ...pdf } = meta.pdf;
+  const applied = pdfEditsFor({ text, pdf: meta.pdf });
+  return { ...meta, pdf: { ...pdf, ...(applied === null ? { stale: true } : applied.length ? { edited: applied.length } : {}) } };
+}
 
 // ---- which version an application was sent with ---------------------------------------
 // The day a moment fell on where you are. Start dates are days on your own calendar, so an

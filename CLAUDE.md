@@ -58,6 +58,11 @@ defines (functions called later can use anything). D3 is served from `node_modul
   (quoted lines really in the resume, keywords really in the posting, no rewrite adding numbers). Only the outcome
   grouping in `src/insights.js` is worked out on the server. Sending OpenAI anything new means raising
   `CONSENT_VERSION` (everyone is asked again) and updating the consent dialog and privacy policy.
+- **Accepted rewrites and the PDF (`src/pdfedit.js`).** "Use this" records each swapped line in `version.pdf.edits`;
+  which still hold is read off the text (`pdfEditsFor`), so Undo needs nothing extra and a change by hand marks the PDF
+  stale. The preview draws them over the PDF, and "Download edited PDF" removes the old lines' text from the page's
+  content stream and writes the new wording in the same place (reading order matters to tracking software). It refuses
+  rather than give a copy that still holds the old wording or would print over the next line.
 - **Re-scan keeps hand edits.** `Store.snapshotEdits()` / `restoreEdits()` re-attach edits by Gmail message ID
   after rebuilding applications. Anything new a user can edit must be included there to survive a re-scan.
   While `db.rescanStartedAt` is set, the `db_before_rescan_<id>` backup is the only good copy: a failed re-scan
