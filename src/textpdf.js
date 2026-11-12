@@ -1,7 +1,7 @@
 // A plain PDF of a resume's text, for the demo: its made-up resumes need a real PDF so the
 // preview shows what an upload looks like. Built by hand (Helvetica, one column) rather than
 // with a library, since nothing else in nuj makes PDFs.
-import { reviewLines } from './insights.js';
+import { layoutLines } from './insights.js';
 
 const PAGE = { w: 612, h: 792, margin: 56 };
 // Helvetica's built-in encoding has these at its own codes, not their Unicode ones.
@@ -36,7 +36,7 @@ export function textPdf(text) {
   const { w, h, margin } = PAGE;
   const ops = [];
   let y = h - margin;
-  const lines = reviewLines(text);
+  const lines = layoutLines(text);
   lines.forEach((line, n) => {
     // A title is bold when bullets follow it (a job or a project); a skills list isn't.
     const titled = line.kind === 'text' && lines.slice(n + 1).find(l => l.kind !== 'blank')?.kind === 'bullet';

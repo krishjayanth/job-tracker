@@ -173,7 +173,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
 | `GROQ_REASONING_EFFORT` | `medium` | `low` uses fewer tokens per email, but reads tricky emails less carefully |
 | `GROQ_GATE_MODEL` | `llama-3.1-8b-instant` | Small model that checks whether an unclear email is about a job before the full read. If Groq retires it, nuj uses `GROQ_MODEL` for the check instead and notes it on the Developer page; set this to another small model from Groq's model list to go back to a cheap one |
-| `OPENAI_API_KEY` | — | OpenAI key for Resume insights' Suggestions and Check fit. Unset hides them; the rest of Resume insights works without it. Everyone shares it, so the limits below keep the bill down |
+| `OPENAI_API_KEY` | — | OpenAI key for Resume insights' Suggestions, Check a job and Check fit. Unset hides them, leaving your resume versions, their preview and comparing two versions. Everyone shares it, so the limits below keep the bill down |
 | `OPENAI_MODEL` | `gpt-5.4-mini` | OpenAI model for Resume insights. It must support structured outputs |
 | `OPENAI_REASONING_EFFORT` | — | Sent only when set (`low`, `medium`…), for models that take it |
 | `INSIGHTS_DAILY_LIMIT` | 3 | AI runs a day for each person except the owner. A failed run, or one that would repeat the last answer, doesn't count |

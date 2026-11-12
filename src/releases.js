@@ -2,28 +2,28 @@
 // (see whatsNewFor in server.js). Give each release a new id; people who've seen
 // that id don't see it again. Write it for the people using nuj, not for developers.
 export const LATEST_RELEASE = {
-  id: '2026-11-needs-your-action',
+  id: '2026-11-resume-ai-only',
   title: "What's new in nuj",
   items: [
     {
-      title: 'Interviews and offers in Needs your action',
-      text: "Interviews in the next two weeks and new offers now show up in Needs your action, next to your deadlines. Add an interview's date and time in its application to see it there.",
+      title: 'Resume insights is simpler',
+      text: "Resume insights now keeps your resume versions and shows your resume, with the AI's suggestions marked on it. The rate charts, keyword lists and automatic checks are gone. Ask for suggestions, or use Check fit on an application, for advice on what to change.",
     },
     {
-      title: 'Clearer stages',
-      text: 'The tab for applications still waiting on a first reply is now called Awaiting reply, and the chart shows Ongoing for ones still under way.',
+      title: 'Put a suggested rewrite straight into your resume',
+      text: 'Select "Use this" beside a rewrite and nuj swaps that line in your resume for you. Undo puts it back.',
     },
     {
-      title: 'Close quiet applications at once',
-      text: "On the No response tab you can mark everything that's gone quiet as withdrawn in one go, and undo it if you change your mind.",
+      title: 'Check a job before you apply',
+      text: 'Paste a job description under your resume to see how well it fits and which lines to reword for it.',
     },
     {
-      title: 'Applications has its own page',
-      text: 'Applications in the sidebar now opens just your list, without the chart and summary above it.',
+      title: 'Compare two versions',
+      text: 'Pick "Compare with" above your resume to see the lines one version added and took out.',
     },
     {
-      title: 'Undo keeps working after an update',
-      text: 'If nuj is updated right after you delete or move something, Undo still puts it back.',
+      title: 'Suggestions from day one',
+      text: "AI suggestions now work as soon as you add your resume, before you've added any applications. Your name and contact details are no longer sent to OpenAI.",
     },
   ],
 };

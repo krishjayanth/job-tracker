@@ -93,3 +93,42 @@ test('moving an email with odd fields is refused plainly, not a crash', async ()
   const r = await call('POST', '/api/emails/no-such-email/assign', { action: 'new', company: 3 });
   assert.equal(r.status, 404);
 });
+
+test('a suggested rewrite goes into the version text, keeping its bullet, and Undo puts it back', async () => {
+  const { body: page } = await call('GET', '/api/resume');
+  const id = page.review.versionId;
+  const line = page.review.lines.find(l => l.kind === 'bullet');
+  const from = line.text.slice(line.at);
+  const done = await call('POST', `/api/resume/${id}/rewrite`, { from, to: 'Rewritten by a test' });
+  assert.equal(done.status, 200);
+  const text = (await call('GET', `/api/resume/${id}`)).body.text;
+  assert.ok(text.includes(`${line.text.slice(0, line.at)}Rewritten by a test`));
+  assert.equal((await call('POST', `/api/resume/${id}/rewrite`, { from: 'A line that was never there at all', to: 'x' })).status, 400);
+  assert.equal((await call('POST', `/api/resume/${id}/rewrite`, { from, to: 'two\nlines' })).status, 400);
+  await call('PATCH', `/api/resume/${id}`, { text: done.body.before });
+  assert.equal((await call('GET', `/api/resume/${id}`)).body.text, done.body.before);
+});
+
+test('a job can be checked from the Resume page, and the answer is kept', async () => {
+  await call('POST', '/api/insights/consent', { allow: true });
+  assert.equal((await call('POST', '/api/insights/fit', { posting: 'too short' })).status, 400);
+  const posting = 'We are hiring an intern who knows React, TypeScript and Kubernetes to build our web app.';
+  const { status, body } = await call('POST', '/api/insights/fit', { posting });
+  assert.equal(status, 200);
+  assert.ok(['strong', 'partial', 'weak'].includes(body.jobFit.match));
+  assert.equal((await call('POST', '/api/insights/fit', { posting })).body.cached, true);
+  assert.equal((await call('GET', '/api/resume')).body.jobFit.posting, posting);
+  await call('DELETE', '/api/insights/fit');
+  assert.equal((await call('GET', '/api/resume')).body.jobFit, null);
+});
+
+test('deleting a version says where its applications go', async () => {
+  const { body: page } = await call('GET', '/api/resume');
+  const oldest = page.versions[0];
+  const { status, body } = await call('DELETE', `/api/resume/${oldest.id}`);
+  assert.equal(status, 200);
+  assert.ok(body.moved.count > 0);
+  assert.ok(page.versions.some(v => v.name === body.moved.to));
+  await call('POST', '/api/resume', body.removed); // Undo
+  assert.equal((await call('GET', '/api/resume')).body.versions.length, page.versions.length);
+});

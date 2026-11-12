@@ -145,3 +145,37 @@ test('suggestions keep the resume lines they point at, and drop lines that are n
   assert.equal(ai.findLine(resume, s.lines[0]), 1);
   assert.equal(ai.findLine(resume, 'Fixed bugs'), -1); // too short to tell apart
 });
+
+test('a rewrite that adds a number the line did not have is dropped, as made up', () => {
+  assert.equal(ai.addsNumbers('Built the sign-up page', 'Built the sign-up page, raising sign-ups by 40%'), true);
+  assert.equal(ai.addsNumbers('Cut load time by 40% across 3 pages', 'Across 3 pages, cut load time by 40%'), false);
+  assert.equal(ai.addsNumbers('Built the sign-up page', 'Built the sign-up page, raising sign-ups by [X%]'), false);
+  const resume = 'Experience\n• Built the sign-up page';
+  const [s] = ai.checkSuggestions({ suggestions: [{
+    title: 'Add results', why: 'x', change: 'Say how it went', section: 'Experience', keywords: [], lines: [],
+    rewrites: [{ from: 'Built the sign-up page', to: 'Built the sign-up page, raising sign-ups by 40%' }],
+  }] }, { ...input, resume });
+  assert.equal(s.rewrites.length, 0);
+  const fit = ai.checkFit({ match: 'weak', summary: '', matched: [], missing: [],
+    rewrites: [{ from: 'Built the sign-up page', to: 'Built the sign-up page for 10,000 users', why: '' }] }, { resumeText: resume, posting: 'x' });
+  assert.equal(fit.rewrites.length, 0);
+});
+
+test('the AI is told about small groups and interviews, and never sees your name or contact details', () => {
+  const group = (key, counted, extra = {}) => ({ key, name: key, total: counted, counted, forward: 1, interviews: 1, ...extra });
+  const sent = ai.suggestionsInput({
+    resumeText: 'Sam Example\nsam@example.com · 555-123-4567\nExperience\n• Built things',
+    versionName: 'v1', apps: [],
+    insights: {
+      total: 8, counted: 8, forward: 3, interviews: 1, mainKinds: ['Data'],
+      byVersion: [group('v1', 6), group('v0', 2)], byFunction: [], byLevel: [],
+      keywords: { missing: [{ name: 'SQL', postings: 2, forward: 1, kinds: ['Data'] }], matched: [] }, checks: [],
+    },
+  });
+  assert.ok(!sent.resume.includes('Sam') && !sent.resume.includes('@') && !sent.resume.includes('555'));
+  assert.equal(sent.overall.reachedInterview, 1);
+  assert.equal(sent.byVersion[0].tooFewToCompare, undefined);
+  assert.equal(sent.byVersion[1].tooFewToCompare, true);
+  assert.deepEqual(sent.skillsMissingFromResume[0].askedForBy, ['Data']);
+  assert.deepEqual(sent.mainKindsOfRole, ['Data']);
+});

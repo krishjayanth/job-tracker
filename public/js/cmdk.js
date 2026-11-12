@@ -39,7 +39,7 @@ function cmdkSources() {
     ['Dashboard', '#/', 'dashboard'],
     ['Applications', '#/applications', 'list'],
     ['Calendar', '#/calendar', 'calendar', 'deadlines interviews schedule google'],
-    ['Resume insights', '#/resume', 'file', 'cv keywords skills versions'],
+    ['Resume insights', '#/resume', 'file', 'cv versions suggestions ai'],
     ['Settings', '#/settings', 'sliders', 'appearance gmail groq key ignored senders account'],
     !$('#reports-link').hidden && ['Reports', '#/reports', 'flag', 'invite requests problems'],
     !$('#developer-link').hidden && ['Developer', '#/developer', 'terminal', 'accounts users errors server health logs'],
