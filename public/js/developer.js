@@ -391,7 +391,7 @@ $('#ask-everyone').addEventListener('click', async () => {
 
 // ---- errors (after 21st.dev's Interactive Logs Table: level, source, message and count on
 // one line; open it for when it happened and to whom)
-const SOURCE_LABEL = { sync: 'Sync', gmail: 'Gmail', groq: 'Groq', server: 'Server', 'sign-in': 'Sign-in', rescan: 'Re-scan', browser: 'Browser' };
+const SOURCE_LABEL = { sync: 'Sync', gmail: 'Gmail', groq: 'Groq', insights: 'Resume AI', server: 'Server', 'sign-in': 'Sign-in', rescan: 'Re-scan', browser: 'Browser' };
 const ERROR_TABS = [['open', 'Open', g => g.status === 'open'], ['resolved', 'Resolved', g => g.status === 'resolved'], ['all', 'All', () => true]];
 function renderErrors() {
   const all = dev.errors;

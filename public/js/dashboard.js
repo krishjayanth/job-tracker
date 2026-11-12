@@ -725,17 +725,18 @@ function renderActions() {
 }
 
 // A short note at the bottom of the screen, with Undo for things you can take back.
+// `ms`: how long Undo stays, for something that's a bigger loss to undo by mistake.
 let toastTimer;
-function toast(text, undo) {
+function toast(text, undo, { ms = UNDO_SHOW_MS } = {}) {
   let el = $('#toast');
   if (!el) {
     el = Object.assign(document.createElement('div'), { id: 'toast', className: 'toast' });
     el.setAttribute('role', 'status');
     document.body.append(el);
   }
-  // With Undo, a bar along the bottom runs down over UNDO_SHOW_MS: when it's empty, Undo is gone.
+  // With Undo, a bar along the bottom runs down over `ms`: when it's empty, Undo is gone.
   el.innerHTML = `${icon('check')}<span>${esc(text)}</span>${undo
-    ? `<button type="button" data-undo>Undo</button><i class="toast-timer" style="animation-duration:${UNDO_SHOW_MS}ms" aria-hidden="true"></i>`
+    ? `<button type="button" data-undo>Undo</button><i class="toast-timer" style="animation-duration:${ms}ms" aria-hidden="true"></i>`
     : ''}`;
   el.querySelector('[data-undo]')?.addEventListener('click', async () => {
     el.classList.remove('show');
@@ -748,7 +749,7 @@ function toast(text, undo) {
   }, { once: true });
   requestAnimationFrame(() => el.classList.add('show'));
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), undo ? UNDO_SHOW_MS : 4500);
+  toastTimer = setTimeout(() => el.classList.remove('show'), undo ? ms : 4500);
 }
 const UNDO_SHOW_MS = 5000;
 

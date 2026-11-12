@@ -12,7 +12,7 @@ const MAX_GROUPS = 300;
 const MAX_SAMPLES = 5; // the latest few occurrences of each, with their details
 const MAX_USERS = 50;
 const SAVE_DELAY_MS = 2000;
-export const SOURCES = ['sync', 'gmail', 'groq', 'server', 'sign-in', 'rescan', 'browser'];
+export const SOURCES = ['sync', 'gmail', 'groq', 'insights', 'server', 'sign-in', 'rescan', 'browser'];
 export const LEVELS = ['error', 'warning'];
 
 let groups = null; // id -> group, loaded once

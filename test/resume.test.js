@@ -1,8 +1,8 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { initStorage, getKv } from '../src/store.js';
-import { extractText, cleanText, addVersion, updateVersion, deleteVersion, listVersions, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
+import { initStorage, getKv, setKv, getFile } from '../src/store.js';
+import { extractText, cleanText, addVersion, updateVersion, editText, deleteVersion, listVersions, releaseResumes, versionMeta, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
 import { textPdf } from '../src/textpdf.js';
 
 before(() => initStorage({ inMemory: true }));
@@ -91,4 +91,69 @@ test('the demo writes a real PDF whose text reads back', async () => {
   assert.equal(error, undefined);
   assert.match(back, /Built a dashboard used by 300 people/);
   assert.match(back, /EXPERIENCE/); // headings are set in capitals
+});
+
+test('editing the text after saving a PDF marks the PDF out of date, and undoing the edit puts it right', async () => {
+  const user = 'u-stale';
+  const { version } = await addVersion(user, { text });
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  const meta = async () => versionMeta((await listVersions(user))[0]);
+  assert.equal((await meta()).pdf.stale, undefined);
+  assert.equal((await meta()).text, undefined); // the page's list never carries the text
+  const { before } = await editText(user, version.id, t => `${t}\nNew line`);
+  assert.equal((await meta()).pdf.stale, true);
+  await updateVersion(user, version.id, { text: before });
+  assert.equal((await meta()).pdf.stale, undefined);
+  assert.match((await editText(user, version.id, () => ({ error: 'nope' }))).error, /nope/);
+  assert.equal((await editText(user, 'gone', t => t)).status, 404);
+});
+
+test('an idle account lets go of its versions, and they read back from storage', async () => {
+  const user = 'u-idle';
+  await addVersion(user, { text });
+  const held = await listVersions(user);
+  releaseResumes(user);
+  const again = await listVersions(user);
+  assert.notEqual(again, held);
+  assert.deepEqual(again, held);
+});
+
+test('a PDF left behind by a restart during Undo is found when the versions are next read', async () => {
+  const user = 'u-orphan';
+  await addVersion(user, { text });
+  await setKv(`resume_pdf_${user}_deleted-version`, 'AAAA');
+  releaseResumes(user);
+  await listVersions(user); // schedules its removal after the Undo window; it's still there for now
+  assert.equal(await getKv(`resume_pdf_${user}_deleted-version`), 'AAAA');
+});
+
+test('a file that takes too long to read is stopped with a plain explanation', { timeout: 30_000 }, async () => {
+  assert.match((await extractText(fixture('resume.pdf'), { limitMs: 1 })).error, /took too long/);
+  const { text: back, error } = await extractText(fixture('resume.pdf'));
+  assert.ok(back && !error); // with time to spare, read in its own thread the same as before
+});
+
+test('a PDF saved before its text was noted is still marked out of date by an edit', async () => {
+  const user = 'u-old-pdf';
+  const { version } = await addVersion(user, { text });
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  delete (await listVersions(user))[0].pdf.textHash; // as saved by an older nuj
+  await editText(user, version.id, t => `${t}\nNew line`);
+  assert.equal(versionMeta((await listVersions(user))[0]).pdf.stale, true);
+});
+
+test('a PDF is kept as a file, and one saved as text by an older nuj moves over when read', async () => {
+  const user = 'u-files';
+  const { version } = await addVersion(user, { text });
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  const key = `resume_pdf_${user}_${version.id}`;
+  assert.ok((await getFile(key)).equals(fixture('resume.pdf')));
+  assert.equal(await getKv(key), null);
+
+  const old = (await addVersion(user, { text })).version;
+  const oldKey = `resume_pdf_${user}_${old.id}`;
+  await setKv(oldKey, fixture('resume.pdf').toString('base64'));
+  assert.ok((await loadPdf(user, old.id)).equals(fixture('resume.pdf')));
+  assert.ok((await getFile(oldKey)).equals(fixture('resume.pdf')));
+  assert.equal(await getKv(oldKey), null);
 });

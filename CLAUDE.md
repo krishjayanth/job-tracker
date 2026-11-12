@@ -42,7 +42,8 @@ defines (functions called later can use anything). D3 is served from `node_modul
   data (user registry, reports, access requests, calendar-feed tokens) goes through `getKv`/`setKv`, with
   read-modify-write serialized through a promise chain (see `src/access.js`, `src/users.js`). Hosted on
   Supabase: connect through `poolOptions()` (it applies `DATABASE_CA`, Supabase's own certificate) and keep
-  row-level security on `app_state` (`prepareTable()`), since Supabase exposes public tables through its API.
+  row-level security on `app_state` and `app_files` (`prepareTable()`), since Supabase exposes public tables through its API.
+  Binary files (resume PDFs) go through `getFile`/`setFile` into `app_files` (`bytea`; `.bin` files in `data/`), not as base64 JSON.
   `npm run copy-db` copies every row between two databases (`SOURCE_DATABASE_URL` → `DATABASE_URL`).
 - **Status is derived, never stored directly.** After changing an application's events, call `refresh(app)`;
   it recomputes `status` (via `computeStatus` in `src/stages.js`), dates, deadline and `needsReview`. Manual

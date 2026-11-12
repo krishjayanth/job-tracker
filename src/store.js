@@ -21,6 +21,7 @@ const RETRY_LIMIT = 5;
 export const emptyDb = () => ({ applications: [], processed: {}, ignored: {}, assignments: {}, lastSync: null, lastSyncError: null });
 let pool = null;
 let memory = null; // Map of key -> value in demo mode; nothing touches disk
+let memoryFiles = null; // Map of key -> Buffer, the same for files
 let demoMode = false;
 
 export const usingDatabase = () => Boolean(pool);
@@ -39,20 +40,27 @@ export function poolOptions(url = process.env.DATABASE_URL, ca = process.env.DAT
   return { connectionString: u.toString(), ssl: { ca: ca.replace(/\\n/g, '\n'), rejectUnauthorized: true } };
 }
 
-// The one table, and row-level security on it: Supabase offers every table through its
+// The tables, and row-level security on them: Supabase offers every table through its
 // public API, and with RLS on and no policies, that API can't read or write it. The app
-// connects as the table's owner, which RLS doesn't apply to. Elsewhere it changes nothing.
+// connects as the tables' owner, which RLS doesn't apply to. Elsewhere it changes nothing.
+// app_state holds JSON; app_files holds files as they are (resume PDFs), since a file
+// written into JSON as base64 takes a third more room.
 export async function prepareTable(db) {
   await db.query(`create table if not exists app_state (
     key text primary key, value jsonb not null, updated_at timestamptz not null default now())`);
-  await db.query('alter table app_state enable row level security')
-    .catch(err => console.warn(`[storage] couldn't turn on row-level security for app_state: ${err.message}`));
+  await db.query(`create table if not exists app_files (
+    key text primary key, data bytea not null, updated_at timestamptz not null default now())`);
+  for (const table of ['app_state', 'app_files']) {
+    await db.query(`alter table ${table} enable row level security`)
+      .catch(err => console.warn(`[storage] couldn't turn on row-level security for ${table}: ${err.message}`));
+  }
 }
 
 // inMemory without demo (for tests): nothing stored, no sample data.
 export async function initStorage({ demo = false, inMemory = demo } = {}) {
   if (inMemory) {
     memory = new Map();
+    memoryFiles = new Map();
     demoMode = demo;
   } else if (process.env.DATABASE_URL) {
     const { default: pg } = await import('pg');
@@ -102,6 +110,20 @@ export async function deleteKv(key) {
   else fs.rmSync(kvFile(key), { force: true });
 }
 
+// The keys starting with `prefix` (to find a person's resume PDFs left without a version).
+export async function listKvKeys(prefix) {
+  if (memory) return [...memory.keys()].filter(k => k.startsWith(prefix));
+  if (pool) {
+    const { rows } = await pool.query('select key from app_state where left(key, length($1)) = $1', [prefix]);
+    return rows.map(r => r.key);
+  }
+  try {
+    return fs.readdirSync(DATA_DIR).filter(f => f.startsWith(prefix) && f.endsWith('.json')).map(f => f.slice(0, -5));
+  } catch {
+    return [];
+  }
+}
+
 // Every key starting with `prefix` (a person's resume PDFs, when their account goes).
 export async function deleteKvPrefix(prefix) {
   if (memory) {
@@ -112,6 +134,56 @@ export async function deleteKvPrefix(prefix) {
   } else {
     for (const f of fs.readdirSync(DATA_DIR)) if (f.startsWith(prefix) && f.endsWith('.json')) fs.rmSync(path.join(DATA_DIR, f), { force: true });
   }
+}
+
+// ---- files ------------------------------------------------------------------------
+// Binary files (resume PDFs) by key, beside the JSON: the app_files table, raw files in
+// data/ (ending .bin, so they're never read as JSON), or memory.
+const fileOnDisk = key => path.join(DATA_DIR, `${key}.bin`);
+
+export async function getFile(key) {
+  if (memoryFiles) return memoryFiles.get(key) ?? null;
+  if (pool) {
+    const { rows } = await pool.query('select data from app_files where key = $1', [key]);
+    return rows[0]?.data ?? null;
+  }
+  try { return fs.readFileSync(fileOnDisk(key)); } catch { return null; }
+}
+
+export async function setFile(key, buffer) {
+  if (memoryFiles) memoryFiles.set(key, Buffer.from(buffer));
+  else if (pool) {
+    await pool.query(
+      `insert into app_files (key, data, updated_at) values ($1, $2, now())
+       on conflict (key) do update set data = excluded.data, updated_at = now()`, [key, buffer]);
+  } else {
+    const tmp = `${fileOnDisk(key)}.tmp`;
+    fs.writeFileSync(tmp, buffer);
+    fs.renameSync(tmp, fileOnDisk(key));
+  }
+}
+
+export async function deleteFile(key) {
+  if (memoryFiles) memoryFiles.delete(key);
+  else if (pool) await pool.query('delete from app_files where key = $1', [key]);
+  else fs.rmSync(fileOnDisk(key), { force: true });
+}
+
+export async function listFileKeys(prefix) {
+  if (memoryFiles) return [...memoryFiles.keys()].filter(k => k.startsWith(prefix));
+  if (pool) {
+    const { rows } = await pool.query('select key from app_files where left(key, length($1)) = $1', [prefix]);
+    return rows.map(r => r.key);
+  }
+  try {
+    return fs.readdirSync(DATA_DIR).filter(f => f.startsWith(prefix) && f.endsWith('.bin')).map(f => f.slice(0, -4));
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteFilePrefix(prefix) {
+  for (const key of await listFileKeys(prefix)) await deleteFile(key);
 }
 
 export const newId = () => crypto.randomUUID();
@@ -254,11 +326,15 @@ export class Store {
     this.persist = persist;
     this.saveTimer = null;
     this.writing = Promise.resolve();
+    this.revision = 0;
   }
 
   get applications() { return this.db.applications; }
 
+  // Every change ends with save(), so this counts changes: anything worked out from the
+  // tracker can be kept until it moves (see resumePicture in server.js).
   save() {
+    this.revision++;
     if (!this.persist) return;
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.flush(), SAVE_DELAY_MS);

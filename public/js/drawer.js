@@ -252,8 +252,8 @@ function resumeFieldsHtml(a) {
         ${versions.map(v => `<option value="${esc(v.id)}" ${a.resumeId === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
       </select></div>` : ''}
     <details class="field wide posting-field" ${a.posting ? 'open' : ''}>
-      <summary>Job description <span class="dim">${words ? `${words} words` : 'Optional, for Resume insights'}</span>${icon('chevron')}</summary>
-      <textarea id="f-posting" name="posting" rows="7" maxlength="20000" aria-label="Job description" placeholder="Paste the job description from the posting. Resume insights uses it to find the skills this role asks for.">${esc(a.posting)}</textarea>
+      <summary>Job description <span class="dim">${words ? `${words} words` : 'Optional, for Check fit'}</span>${icon('chevron')}</summary>
+      <textarea id="f-posting" name="posting" rows="7" maxlength="20000" aria-label="Job description" placeholder="Paste the job description from the posting. Check fit compares your resume with it.">${esc(a.posting)}</textarea>
     </details>
     ${fitFieldHtml(a)}`;
 }
@@ -431,7 +431,7 @@ function openDrawer(app) {
     try {
       const { fit, ai } = await api('POST', `/api/applications/${a.id}/fit`);
       state.ai = ai;
-      $('#fit-result').innerHTML = fitHtml(fit);
+      $('#fit-result').innerHTML = fitHtml(fit, a.resumeVersion);
       $('#fit-left').textContent = aiLeftText(ai);
       btn.querySelector('span').textContent = 'Check fit again';
       load();

@@ -8,7 +8,7 @@ import { groqClient, forgetClient, SERVER_KEY } from './groq.js';
 import { ownerEmail } from './auth.js';
 import { recordError, forgetUserErrors } from './errors.js';
 import { forgetUserFeedback } from './feedback.js';
-import { forgetResumes } from './resume.js';
+import { forgetResumes, releaseResumes } from './resume.js';
 import { LATEST_RELEASE } from './releases.js';
 
 export const LOCAL_ID = 'local';
@@ -65,6 +65,7 @@ export async function releaseIdleUsers({ idleMs, keep = () => false, now = Date.
     if (user.store.undoable.size) continue;
     users.delete(id);
     await releaseStore(id);
+    releaseResumes(id);
     released++;
   }
   return released;

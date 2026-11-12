@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initStorage, flushAll, refresh, newId, typedDeadline, getKv, setKv, deleteKv } from './src/store.js';
+import { initStorage, flushAll, refresh, newId, typedDeadline, getKv, setKv, deleteKv, setFile } from './src/store.js';
 import { LATEST_RELEASE, RESCAN_ID } from './src/releases.js';
 import { rescanEveryoneOnce, rescanAccount } from './src/rescan-all.js';
 import { addRequest, listRequests, pendingCount, setRequestStatus, tooMany } from './src/access.js';
@@ -18,10 +18,10 @@ import { getUser, knownUser, allUsers, userIds, releaseIdleUsers, deleteUser, jo
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
-import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, editText, deleteVersion, versionMeta, versionFor, currentVersion, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
 import { textPdf } from './src/textpdf.js';
 import { textFields } from './src/input.js';
-import { computeInsights, outcomeOf, reviewLines, quickChecks } from './src/insights.js';
+import { computeInsights, outcomeOf, layoutLines } from './src/insights.js';
 import { aiStatus, reserveRun, hashOf, findLine, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
@@ -220,7 +220,7 @@ app.get('/api/state', async (req, res) => {
       ...a,
       path: stagePath(a, { ghostDays: GHOST_DAYS }),
       // The resume version it was sent with (see versionFor), for its panel.
-      resumeVersion: versionFor(a, versions)?.id ?? null,
+      resumeVersion: versionFor(a, versions, db.timeZone)?.id ?? null,
       // The sender domain you could block from each email (none for Gmail, hiring software...).
       events: a.events.map(e => e.from && canBlockDomain(senderDomain(e.from)) ? { ...e, blockable: senderDomain(e.from) } : e),
     })),
@@ -545,33 +545,49 @@ app.delete('/api/applications/:id', (req, res) => {
 });
 
 // --- resume insights --------------------------------------------------------
-// Your resume versions (the text, never the file) and what nuj works out from them and
-// your applications. Nothing here uses AI. Changes tell your open tabs, like any other.
+// Your resume versions (their text, and a PDF to show the pages) and the AI's suggestions
+// for them. nuj itself doesn't grade the resume; the numbers worked out here are what the
+// AI is told. Changes tell your open tabs, like any other.
 const UPLOAD_LIMIT = '5mb';
 
-// Everything Resume insights shows, and what the AI would be told for suggestions (with
-// a fingerprint of it, so asking again when nothing changed doesn't use a run).
+// The versions, the numbers behind them, and what the AI would be told for suggestions
+// (with a fingerprint of it, so asking again when nothing changed doesn't use a run).
+// Working it out reads every application against ~230 skill patterns, and an open Resume
+// page asks again on every live update (every 1.5 seconds during a sync), so the answer is
+// kept until the tracker or the versions change, or the hour turns (applications go quiet
+// with time).
+const pictures = new WeakMap(); // store -> { key, versions, picture }
 async function resumePicture(user) {
   const versions = await listVersions(user.id);
+  const timeZone = user.store.db.timeZone;
+  const key = `${user.store.revision}|${Math.floor(Date.now() / 3_600_000)}|${timeZone}`;
+  const kept = pictures.get(user.store);
+  if (kept?.key === key && kept.versions === versions && kept.apps === user.store.applications) return kept.picture;
   const apps = user.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
-  const insights = computeInsights(apps, versions, { ghostDays: GHOST_DAYS });
+  const insights = computeInsights(apps, versions, { ghostDays: GHOST_DAYS, timeZone });
   const current = versions.find(v => v.id === insights.currentId);
   const input = current && suggestionsInput({
     resumeText: current.text, versionName: current.name, insights,
     apps: [...apps].sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)).map(a => ({
-      role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions).name,
+      role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions, timeZone).name,
     })),
   });
-  return { versions, insights, current, input, inputHash: input ? hashOf(input) : null };
+  const picture = { versions, insights, current, input, inputHash: input ? hashOf(input) : null };
+  pictures.set(user.store, { key, versions, apps: user.store.applications, picture });
+  return picture;
 }
 
-// One version laid out for the preview: each line with what to highlight on it, and the
-// checks on the whole thing. Skills are marked when the postings ask for them.
-const reviewOf = (version, insights) => ({
-  versionId: version.id,
-  name: version.name,
-  lines: reviewLines(version.text, new Map(insights.keywords.matched.map(k => [k.name, k.postings]))),
-  checks: quickChecks(version.text),
+// One version laid out for the preview. The only highlights are the lines AI suggestions
+// are about, which the page adds itself.
+const reviewOf = version => ({ versionId: version.id, name: version.name, lines: layoutLines(version.text) });
+
+// What the page needs from the numbers: how many applications there are, which version is
+// current, and which applications went out with each version (for "Show applications").
+// The rest is only for the AI (see resumePicture).
+const pageInsights = insights => ({
+  total: insights.total,
+  currentId: insights.currentId,
+  byVersion: insights.byVersion.map(({ key, total, ids }) => ({ key, total, ids })),
 });
 
 // Saved suggestions, with the lines each one is about found in the version it was written
@@ -594,21 +610,22 @@ app.get('/api/resume', async (req, res) => {
   const { versions, insights, current, inputHash } = await resumePicture(req.account);
   res.json({
     versions: versions.map(versionMeta),
-    insights,
+    insights: pageInsights(insights),
     limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
     ai: aiStatus(req.account, { demo: DEMO }),
     // upToDate: nothing the suggestions were based on has changed since.
     suggestions: placedSuggestions(req.account.store.db.insights?.suggestions, versions, inputHash),
-    review: current ? reviewOf(current, insights) : null,
+    review: current ? reviewOf(current) : null,
+    // The last job you checked from this page (Check a job), if any.
+    jobFit: req.account.store.db.insights?.jobFit ?? null,
   });
 });
 
 // One version with its text; ?review=1 lays it out for the preview instead.
 app.get('/api/resume/:id', async (req, res) => {
-  const { versions, insights } = req.query.review ? await resumePicture(req.account) : { versions: await listVersions(req.account.id) };
-  const version = versions.find(v => v.id === req.params.id);
+  const version = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
   if (!version) return res.status(404).json({ error: 'That version was deleted' });
-  res.json(req.query.review ? reviewOf(version, insights) : version);
+  res.json(req.query.review ? reviewOf(version) : version);
 });
 
 // Read the text out of a PDF or Word file, for you to check before saving. The file
@@ -638,11 +655,41 @@ app.patch('/api/resume/:id', async (req, res) => {
 // Deleting returns the version, so the page's Undo can add it back as it was (its PDF
 // is kept until the Undo has passed).
 app.delete('/api/resume/:id', async (req, res) => {
+  const timeZone = req.account.store.db.timeZone;
+  const before = await listVersions(req.account.id);
   const { removed, error, status } = await deleteVersion(req.account.id, req.params.id);
   if (error) return res.status(status || 400).json({ error });
   if (removed.pdf) dropPdfLater(req.account.id, removed.id);
+  // Its applications now count toward another version: say which, so it's no surprise.
+  const after = await listVersions(req.account.id);
+  const moved = req.account.store.applications.filter(a => versionFor(a, before, timeZone)?.id === removed.id);
+  const to = new Map();
+  for (const a of moved) {
+    const name = versionFor(a, after, timeZone)?.name;
+    if (name) to.set(name, (to.get(name) ?? 0) + 1);
+  }
   broadcast(req.account.id);
-  res.json({ removed });
+  res.json({ removed, moved: { count: moved.length, to: [...to].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null } });
+});
+
+// Put a suggested rewrite into the version's text, in place of the line it rewrites. The
+// line keeps its bullet. Returns the text from before, for Undo.
+app.post('/api/resume/:id/rewrite', async (req, res) => {
+  const { from, to } = req.body || {};
+  if (typeof from !== 'string' || typeof to !== 'string' || !to.trim() || to.length > 600 || /[\r\n]/.test(to)) {
+    return res.status(400).json({ error: "That rewrite can't be used as it is. Copy it instead" });
+  }
+  const result = await editText(req.account.id, req.params.id, text => {
+    const lines = text.split('\n');
+    const i = findLine(text, from);
+    if (i < 0) return { error: "That line isn't in this version any more" };
+    const bullet = lines[i].match(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/)?.[0] ?? '';
+    lines[i] = bullet + to.trim();
+    return lines.join('\n');
+  });
+  if (result.error) return res.status(result.status || 400).json({ error: result.error });
+  broadcast(req.account.id);
+  res.json({ version: versionMeta(result.version), before: result.before });
 });
 
 // A version's PDF: shown on the page as its real pages. Only a PDF is kept.
@@ -654,6 +701,7 @@ app.get('/api/resume/:id/pdf', async (req, res) => {
 });
 
 app.put('/api/resume/:id/pdf', express.raw({ type: () => true, limit: UPLOAD_LIMIT }), async (req, res) => {
+  if (tooMany(`resume-pdf:${req.account.id}`, { max: 20 })) return res.status(429).json({ error: "That's a lot of uploads. Try again in an hour" });
   if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a PDF to upload' });
   const { version, error, status } = await savePdf(req.account.id, req.params.id, req.body);
   if (error) return res.status(status || 400).json({ error });
@@ -724,6 +772,45 @@ app.patch('/api/insights/suggestions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Check a job from the Resume page: how well a version fits a job description you paste,
+// for a job you haven't applied to yet. The last one is kept to show when you come back.
+app.post('/api/insights/fit', async (req, res) => {
+  const user = req.account;
+  const blocked = aiBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  const posting = cleanText(typeof req.body?.posting === 'string' ? req.body.posting : '');
+  if (posting.length < 40) return res.status(400).json({ error: 'Paste the whole job description' });
+  if (posting.length > MAX_POSTING) return res.status(400).json({ error: `That job description is very long. Keep it under ${MAX_POSTING.toLocaleString('en-US')} characters` });
+  const versions = await listVersions(user.id);
+  const version = versions.find(v => v.id === req.body?.versionId) ?? currentVersion(versions, { timeZone: user.store.db.timeZone });
+  if (!version) return res.status(400).json({ error: 'Add your resume first' });
+  const db = user.store.db;
+  db.insights ??= {};
+  const key = hashOf([posting, version.id, version.updatedAt]);
+  if (db.insights.jobFit?.key === key) return res.json({ jobFit: db.insights.jobFit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
+  const run = await reserveRun(user);
+  if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
+  let result;
+  try {
+    const args = { resumeText: version.text, posting, role: '' };
+    result = DEMO ? demoFit(args) : await checkApplicationFit(args);
+  } catch (err) {
+    await run.release();
+    return res.status(502).json({ error: err.message });
+  }
+  db.insights.jobFit = { key, at: new Date().toISOString(), posting, versionId: version.id, versionName: version.name, ...result };
+  changed(user);
+  res.json({ jobFit: db.insights.jobFit, ai: aiStatus(user, { demo: DEMO }) });
+});
+
+app.delete('/api/insights/fit', (req, res) => {
+  if (req.account.store.db.insights?.jobFit) {
+    delete req.account.store.db.insights.jobFit;
+    changed(req.account);
+  }
+  res.json({ ok: true });
+});
+
 // How well the resume this went out with fits its pasted job description.
 app.post('/api/applications/:id/fit', async (req, res) => {
   const user = req.account;
@@ -732,7 +819,7 @@ app.post('/api/applications/:id/fit', async (req, res) => {
   const blocked = aiBlocked(user);
   if (blocked) return res.status(blocked.status).json(blocked.body);
   if (!a.posting) return res.status(400).json({ error: 'Paste the job description first' });
-  const version = versionFor(a, await listVersions(user.id));
+  const version = versionFor(a, await listVersions(user.id), user.store.db.timeZone);
   if (!version) return res.status(400).json({ error: 'Add your resume first' });
   const key = hashOf([a.posting, version.id, version.updatedAt]);
   if (a.fit?.key === key) return res.json({ fit: a.fit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
@@ -1127,7 +1214,7 @@ if (DEMO) {
   const resumes = buildDemoResumes();
   for (const v of resumes) {
     const pdf = textPdf(v.text);
-    await setKv(`resume_pdf_${DEMO_ID}_${v.id}`, pdf.toString('base64'));
+    await setFile(`resume_pdf_${DEMO_ID}_${v.id}`, pdf);
     v.pdf = { size: pdf.length, at: v.updatedAt };
   }
   await setKv(`resumes_${DEMO_ID}`, resumes);

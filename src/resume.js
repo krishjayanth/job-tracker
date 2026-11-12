@@ -1,10 +1,12 @@
 // Resumes for Resume insights: reading the text out of an uploaded PDF or Word file, and
 // keeping each person's versions. Versions live under their own key (resumes_<user id>)
 // rather than in the tracker, so the long text isn't sent with every page update. A PDF is
-// also kept, under resume_pdf_<user id>_<version id>, so the page can show the real thing;
-// a Word file never is (there'd be nothing to show it with).
+// also kept, as a file under resume_pdf_<user id>_<version id>, so the page can show the
+// real thing; a Word file never is (there'd be nothing to show it with). PDFs saved before
+// files were kept as files are base64 text under the same key, moved over when next read.
 import crypto from 'node:crypto';
-import { getKv, setKv, deleteKv, deleteKvPrefix } from './store.js';
+import { Worker } from 'node:worker_threads';
+import { getKv, setKv, deleteKv, deleteKvPrefix, listKvKeys, getFile, setFile, deleteFile, deleteFilePrefix, listFileKeys } from './store.js';
 
 export const MAX_VERSIONS = 5;
 export const MAX_TEXT = 40_000;
@@ -35,23 +37,38 @@ export function fileKind(buffer) {
   return null;
 }
 
+// Reading happens in its own thread with a time and memory limit (see extract-worker.js).
+// Resolves to the text, null if the file couldn't be read, or TIMED_OUT.
+export const READ_LIMIT_MS = 20_000;
+const TIMED_OUT = Symbol('timed out');
+function readInWorker(kind, buffer, ms = READ_LIMIT_MS) {
+  return new Promise(resolve => {
+    const worker = new Worker(new URL('./extract-worker.js', import.meta.url), {
+      workerData: { kind, bytes: new Uint8Array(buffer) },
+      resourceLimits: { maxOldGenerationSizeMb: 256 },
+    });
+    let done = false;
+    const finish = value => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      worker.terminate();
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(TIMED_OUT), ms);
+    worker.once('message', m => finish(m.failed ? null : m.text));
+    worker.once('error', () => finish(null));
+    worker.once('exit', () => finish(null));
+  });
+}
+
 // Returns { text } or { error } (shown to the person, so in plain words).
-export async function extractText(buffer) {
+export async function extractText(buffer, { limitMs = READ_LIMIT_MS } = {}) {
   const kind = fileKind(buffer);
   if (!kind) return { error: 'nuj can read PDF and Word (.docx) files. Save your resume as one of those, or paste the text.' };
-  let text;
-  try {
-    if (kind === 'pdf') {
-      const { getDocumentProxy, extractText: pdfText } = await import('unpdf');
-      const pdf = await getDocumentProxy(new Uint8Array(buffer));
-      text = (await pdfText(pdf, { mergePages: true })).text;
-    } else {
-      const { default: mammoth } = await import('mammoth');
-      text = (await mammoth.extractRawText({ buffer })).value;
-    }
-  } catch {
-    return { error: `nuj couldn't open that ${kind === 'pdf' ? 'PDF' : 'Word file'}. Try saving it again, or paste the text.` };
-  }
+  let text = await readInWorker(kind, buffer, limitMs);
+  if (text === TIMED_OUT) return { error: `That ${kind === 'pdf' ? 'PDF' : 'Word file'} took too long to read. Try saving it again, or paste the text.` };
+  if (text == null) return { error: `nuj couldn't open that ${kind === 'pdf' ? 'PDF' : 'Word file'}. Try saving it again, or paste the text.` };
   text = cleanText(text);
   if (text.length < MIN_TEXT) {
     return { error: kind === 'pdf'
@@ -66,8 +83,21 @@ const cache = new Map(); // user id -> versions, so each page update doesn't rea
 const chains = new Map(); // user id -> the last change, so changes happen one at a time
 
 export async function listVersions(userId) {
-  if (!cache.has(userId)) cache.set(userId, (await getKv(key(userId))) ?? []);
+  if (!cache.has(userId)) {
+    const versions = (await getKv(key(userId))) ?? [];
+    if (!cache.has(userId)) {
+      cache.set(userId, versions);
+      dropOrphanPdfs(userId, versions).catch(() => {});
+    }
+  }
   return cache.get(userId);
+}
+
+// Let go of an idle account's versions (with its tracker, see releaseIdleUsers). They're
+// read back from storage the next time they're needed. Kept while a change is under way.
+export function releaseResumes(userId) {
+  if (chains.has(userId)) return;
+  cache.delete(userId);
 }
 
 function update(userId, fn) {
@@ -80,11 +110,13 @@ function update(userId, fn) {
     cache.set(userId, versions);
     return result;
   });
-  chains.set(userId, run.catch(() => {}));
+  const settled = run.catch(() => {}).then(() => { if (chains.get(userId) === settled) chains.delete(userId); });
+  chains.set(userId, settled);
   return run;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const textHash = text => crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 16);
 const validDay = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 // Bullets on their own don't count as words.
 export const countWords = text => (text.match(/\S*[\p{L}\p{N}]\S*/gu) || []).length;
@@ -119,7 +151,7 @@ export function addVersion(userId, body) {
     const now = new Date().toISOString();
     const version = { id, ...fields, createdAt: body.createdAt && !Number.isNaN(Date.parse(body.createdAt)) ? body.createdAt : now, updatedAt: now };
     // Undo: its PDF is kept for a while after a delete (see dropPdfLater), so it comes back too.
-    if (id === body.id && body.pdf?.at) version.pdf = { size: Number(body.pdf.size) || 0, at: String(body.pdf.at) };
+    if (id === body.id && body.pdf?.at) version.pdf = { size: Number(body.pdf.size) || 0, at: String(body.pdf.at), ...(typeof body.pdf.textHash === 'string' && { textHash: body.pdf.textHash.slice(0, 32) }) };
     versions.push(version);
     return { version };
   });
@@ -131,8 +163,33 @@ export function updateVersion(userId, id, body) {
   return update(userId, versions => {
     const version = versions.find(v => v.id === id);
     if (!version) return { error: 'That version was deleted', status: 404 };
+    notePdfText(version);
     Object.assign(version, fields, { updatedAt: new Date().toISOString() });
     return { version };
+  });
+}
+
+// A PDF saved before nuj noted which text it went with matches the text it has now: note
+// that before the text changes, so the change marks the PDF out of date.
+function notePdfText(version) {
+  if (version.pdf && !version.pdf.textHash) version.pdf.textHash = textHash(version.text);
+}
+
+// Change one version's text with `change(text)`, which returns the new text or { error }.
+// Done in turn with other changes, so it always starts from the latest text. Returns the
+// version and the text it had before (for Undo).
+export function editText(userId, id, change) {
+  return update(userId, versions => {
+    const version = versions.find(v => v.id === id);
+    if (!version) return { error: 'That version was deleted', status: 404 };
+    const next = change(version.text);
+    if (next?.error) return next;
+    const { fields, error } = checkFields({ text: next }, { partial: true });
+    if (error) return { error };
+    const before = version.text;
+    notePdfText(version);
+    Object.assign(version, fields, { updatedAt: new Date().toISOString() });
+    return { version, before };
   });
 }
 
@@ -150,23 +207,35 @@ export async function savePdf(userId, versionId, buffer) {
   if (fileKind(buffer) !== 'pdf') return { error: 'Only a PDF can be shown here. Save your resume as a PDF and try again' };
   const found = (await listVersions(userId)).some(v => v.id === versionId);
   if (!found) return { error: 'That version was deleted', status: 404 };
-  await setKv(pdfKey(userId, versionId), buffer.toString('base64'));
+  await setFile(pdfKey(userId, versionId), buffer);
   return update(userId, versions => {
     const version = versions.find(v => v.id === versionId);
     if (!version) return { error: 'That version was deleted', status: 404 };
-    version.pdf = { size: buffer.length, at: new Date().toISOString() };
+    // Which text the PDF was saved with: edit the text afterwards and the PDF shows the old
+    // wording (see versionMeta).
+    version.pdf = { size: buffer.length, at: new Date().toISOString(), textHash: textHash(version.text) };
     return { version };
   });
 }
 
 export async function loadPdf(userId, versionId) {
-  const data = await getKv(pdfKey(userId, versionId));
-  return data ? Buffer.from(data, 'base64') : null;
+  const key = pdfKey(userId, versionId);
+  const file = await getFile(key);
+  if (file) return Buffer.from(file);
+  // Saved by an older nuj as base64 text: move it to a file, a third smaller.
+  const old = await getKv(key);
+  if (!old) return null;
+  const buffer = Buffer.from(old, 'base64');
+  await setFile(key, buffer);
+  await deleteKv(key);
+  return buffer;
 }
+
+const forgetPdf = key => Promise.all([deleteFile(key), deleteKv(key)]);
 
 // The PDF no longer matches the version (its text came from another file): stop showing it.
 export async function removePdf(userId, versionId) {
-  await deleteKv(pdfKey(userId, versionId));
+  await forgetPdf(pdfKey(userId, versionId));
   return update(userId, versions => {
     const version = versions.find(v => v.id === versionId);
     if (version) delete version.pdf;
@@ -175,11 +244,21 @@ export async function removePdf(userId, versionId) {
 }
 
 // After a version is deleted its PDF waits out the Undo, then goes unless the version came
-// back. A restart in between leaves it until the account is deleted, which removes them all.
+// back. A restart in between is caught when the versions are next read (dropOrphanPdfs).
 export function dropPdfLater(userId, versionId, ms = 10 * 60_000) {
   setTimeout(async () => {
-    if (!(await listVersions(userId)).some(v => v.id === versionId)) await deleteKv(pdfKey(userId, versionId));
+    if (!(await listVersions(userId)).some(v => v.id === versionId)) await forgetPdf(pdfKey(userId, versionId));
   }, ms).unref?.();
+}
+
+// PDFs whose version is gone: a restart came during the Undo after a delete. They get the
+// same wait, in case the Undo still comes.
+async function dropOrphanPdfs(userId, versions) {
+  const prefix = `resume_pdf_${userId}_`;
+  for (const k of new Set([...await listFileKeys(prefix), ...await listKvKeys(prefix)])) {
+    const versionId = k.slice(prefix.length);
+    if (!versions.some(v => v.id === versionId)) dropPdfLater(userId, versionId);
+  }
 }
 
 // For an account being deleted.
@@ -189,24 +268,44 @@ export async function forgetResumes(userId) {
   chains.delete(userId);
   await deleteKv(key(userId));
   await deleteKvPrefix(`resume_pdf_${userId}_`);
+  await deleteFilePrefix(`resume_pdf_${userId}_`);
 }
 
-// What the page lists: everything but the text.
-export const versionMeta = ({ text, ...meta }) => meta;
+// What the page lists: everything but the text. `stale`: the text was edited after the PDF
+// was saved, so the PDF shows the old wording and the page marks suggestions on the text.
+export const versionMeta = ({ text, ...meta }) => (meta.pdf?.textHash && meta.pdf.textHash !== textHash(text)
+  ? { ...meta, pdf: { ...meta.pdf, stale: true } }
+  : meta);
 
 // ---- which version an application was sent with ---------------------------------------
+// The day a moment fell on where you are. Start dates are days on your own calendar, so an
+// application sent late in the evening has to be compared on your day, not London's.
+export function dayIn(iso, timeZone) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso ?? '').slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10); // a time zone this server doesn't know
+  }
+}
+
 // The one you picked for it; otherwise the latest version you'd started using by the day
 // you applied; otherwise (applied before your first version) the earliest.
 // `versions` are sorted by usedFrom, as stored.
-export function versionFor(app, versions) {
+export function versionFor(app, versions, timeZone) {
   if (!versions.length) return null;
   if (app.resumeId) {
     const picked = versions.find(v => v.id === app.resumeId);
     if (picked) return picked;
   }
-  const day = String(app.appliedAt ?? app.createdAt ?? '').slice(0, 10);
+  const day = dayIn(app.appliedAt ?? app.createdAt, timeZone);
   return versions.filter(v => v.usedFrom <= day).at(-1) ?? versions[0];
 }
 
-// The version you're sending now: the one with the latest start date.
-export const currentVersion = versions => versions.at(-1) ?? null;
+// The version you're sending now: the latest one you've started sending. One set to start
+// on a later day isn't current until then (unless no version has started yet).
+export function currentVersion(versions, { timeZone, now = Date.now() } = {}) {
+  const today = dayIn(new Date(now).toISOString(), timeZone);
+  return versions.filter(v => v.usedFrom <= today).at(-1) ?? versions[0] ?? null;
+}

@@ -9,19 +9,30 @@ import { poolOptions } from '../src/store.js';
 
 // A stand-in for Postgres that understands just the statements the copy uses, with
 // transactions: writes inside begin/commit only land on commit.
-function fakeDb(rows = {}, { failOnInsert = null } = {}) {
+function fakeDb(rows = {}, { failOnInsert = null, files = null } = {}) {
   let table = new Map(Object.entries(rows).map(([key, value]) => [key, { value, updated_at: '2026-10-01T00:00:00.000Z' }]));
-  let pending = null;
+  // null: an old database with no app_files table at all.
+  let fileTable = files && new Map(Object.entries(files).map(([key, data]) => [key, { data, updated_at: '2026-10-01T00:00:00.000Z' }]));
+  let pending = null, pendingFiles = null;
   const now = () => pending ?? table;
+  const nowFiles = () => pendingFiles ?? fileTable;
   const sql = [];
   return {
-    sql, table: () => table,
+    sql, table: () => table, files: () => fileTable,
     async query(text, params = []) {
       sql.push(text.split(/\s+/).slice(0, 2).join(' '));
+      if (/^create table if not exists app_files/.test(text)) { fileTable ??= new Map(); return { rows: [] }; }
       if (/^create table|^alter table/.test(text)) return { rows: [] };
-      if (text === 'begin') { pending = new Map(table); return { rows: [] }; }
-      if (text === 'commit') { table = pending; pending = null; return { rows: [] }; }
-      if (text === 'rollback') { pending = null; return { rows: [] }; }
+      if (text === 'begin') { pending = new Map(table); pendingFiles = new Map(fileTable); return { rows: [] }; }
+      if (text === 'commit') { table = pending; fileTable = pendingFiles; pending = pendingFiles = null; return { rows: [] }; }
+      if (text === 'rollback') { pending = pendingFiles = null; return { rows: [] }; }
+      if (/app_files/.test(text)) {
+        if (!nowFiles()) throw new Error('relation "app_files" does not exist');
+        if (text.startsWith('delete from')) { nowFiles().clear(); return { rows: [] }; }
+        if (text.startsWith('insert into')) { nowFiles().set(params[0], { data: params[1], updated_at: params[2] }); return { rows: [] }; }
+        if (text.startsWith('select key, data')) return { rows: [...nowFiles()].map(([key, r]) => ({ key, ...r })) };
+        if (text.startsWith('select key, md5')) return { rows: [...nowFiles()].map(([key, r]) => ({ key, sum: crypto.createHash('md5').update(r.data).digest('hex') })) };
+      }
       if (text.startsWith('select count')) return { rows: [{ n: now().size }] };
       if (text.startsWith('delete from')) { now().clear(); return { rows: [] }; }
       if (text.startsWith('insert into')) {
@@ -106,4 +117,14 @@ test('poolOptions: the CA can be a path to the certificate file', () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'nuj-ca-')), 'supabase-ca.crt');
   fs.writeFileSync(file, '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
   assert.match(poolOptions('postgresql://u:p@host/db', file).ssl.ca, /^-----BEGIN CERTIFICATE-----\nMIIB/);
+});
+
+test('resume PDFs are copied as files, and an old database without them is fine', async () => {
+  const pdf = Buffer.from('%PDF-1.4 a resume');
+  const from = fakeDb({ users: {} }, { files: { 'resume_pdf_sub-1_v1': pdf } }), to = fakeDb();
+  const r = await copyAppState(from, to, { log: quiet });
+  assert.equal(r.files, 1);
+  assert.ok(to.files().get('resume_pdf_sub-1_v1').data.equals(pdf));
+  const old = await copyAppState(neon(), fakeDb(), { log: quiet });
+  assert.equal(old.files, 0);
 });

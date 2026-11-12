@@ -6,11 +6,14 @@
 //
 // What the model says is checked before anyone sees it, the same way email sorting
 // treats Groq: a skill it calls missing has to be in the posting, a line it rewrites has
-// to be in your resume, and anything else is dropped.
+// to be in your resume, a rewrite can't add numbers the line didn't have (it would be
+// inventing a result), and anything else is dropped. Your name and contact details are
+// taken out of the resume before it's sent.
 import crypto from 'node:crypto';
 import { getKv, setKv } from './store.js';
 import { recordError } from './errors.js';
 import { findSkills } from './skills.js';
+import { withoutContact, MIN_GROUP } from './insights.js';
 
 export const AI_KEY = process.env.OPENAI_API_KEY || '';
 export const AI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
@@ -140,6 +143,10 @@ const clip = (s, n) => String(s ?? '').trim().slice(0, n);
 // Text compared loosely: case, punctuation and spacing don't matter.
 const loose = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, ' ').trim();
 
+// The numbers in some text ("40%", "3", "1.5"), to catch a rewrite that makes up a result.
+const numbersIn = s => new Set(String(s ?? '').match(/\d+(?:[.,]\d+)*/g) ?? []);
+export const addsNumbers = (from, to) => [...numbersIn(to)].some(n => !numbersIn(from).has(n));
+
 // Which line of the resume a quote from it is (-1 when it isn't one), so the preview can
 // highlight it. The model's copy may differ in case, punctuation or a cut-off end.
 export function findLine(text, quote) {
@@ -181,21 +188,31 @@ const SUGGESTIONS_SCHEMA = {
     },
   },
 };
-const SUGGESTIONS_SYSTEM = `You help a job seeker improve their resume. Each suggestion is shown beside their resume with the lines it's about highlighted, so name those lines (copied exactly) whenever a suggestion is about particular lines, and give a rewrite when the change is a rewording. You get their current resume, how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and the skills named in the postings they applied to, with whether their resume mentions each one.
+const SUGGESTIONS_SYSTEM = `You help a job seeker improve their resume. Each suggestion is shown beside their resume with the lines it's about highlighted, so name those lines (copied exactly) whenever a suggestion is about particular lines, and give a rewrite when the change is a rewording. You get their current resume (with their name and contact details replaced by placeholders), plain checks on it, how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and the skills named in the postings they applied to, with whether their resume mentions each one and which kinds of role asked for it.
 
-Give 3 to 6 suggestions, most useful first. Each must be specific to this person's resume and backed by the data given: name the number or skill it rests on. Prefer changes with evidence behind them (a skill many postings ask for that the resume never mentions, a version or kind of role that does better). Don't suggest adding skills the person may not have; suggest showing skills they plausibly have but don't mention, and say to add them only if true. Don't invent facts about the person. Write plainly, in the second person, without jargon.`;
+Give 3 to 6 suggestions, most useful first. Each must be specific to this person's resume and backed by the data given: name the number, check or skill it rests on. Read the numbers carefully:
+- movedForward counts online assessments, which some employers send to everyone who applies; reachedInterview is the stronger sign.
+- A group marked tooFewToCompare has too few finished applications to say anything; never call a version or kind of role better on the strength of one, and treat small differences between groups as luck.
+- Weigh a missing skill by whether the person's main kinds of role ask for it; one posting of another kind isn't a gap.
+- If there are no applications yet, review the resume on its own and the checks that failed.
+Don't suggest adding skills the person may not have; suggest showing skills they plausibly have but don't mention, and say to add them only if true. Don't invent facts about the person. A rewrite must never add a number or result the original line doesn't have: where a figure would help, write a placeholder such as [X%] for them to fill in. Write plainly, in the second person, without jargon.`;
 
-// What the model is told: the resume and numbers, never company names or emails.
+// What the model is told: the resume (without who you are) and numbers, never company
+// names or emails.
 export function suggestionsInput({ resumeText, versionName, insights, apps }) {
-  const rate = g => ({ applications: g.total, finished: g.counted, movedForward: g.forward });
+  const rate = g => ({
+    applications: g.total, finished: g.counted, movedForward: g.forward, reachedInterview: g.interviews,
+    ...(g.counted < MIN_GROUP && { tooFewToCompare: true }),
+  });
   return {
     currentVersion: versionName,
-    resume: resumeText,
-    overall: { applications: insights.total, finished: insights.counted, movedForward: insights.forward },
+    resume: withoutContact(resumeText),
+    overall: { applications: insights.total, finished: insights.counted, movedForward: insights.forward, reachedInterview: insights.interviews },
+    mainKindsOfRole: insights.mainKinds,
     byVersion: insights.byVersion.map(g => ({ version: g.name, ...rate(g) })),
     byKindOfRole: insights.byFunction.filter(g => g.counted).map(g => ({ kind: g.key, ...rate(g) })),
     byLevel: insights.byLevel.filter(g => g.counted).map(g => ({ level: g.key, ...rate(g) })),
-    skillsMissingFromResume: insights.keywords.missing.slice(0, 25).map(k => ({ skill: k.name, postings: k.postings, movedForward: k.forward })),
+    skillsMissingFromResume: insights.keywords.missing.slice(0, 25).map(k => ({ skill: k.name, postings: k.postings, movedForward: k.forward, askedForBy: k.kinds })),
     skillsInResume: insights.keywords.matched.slice(0, 25).map(k => ({ skill: k.name, postings: k.postings, movedForward: k.forward })),
     checksThatFailed: insights.checks.filter(c => !c.ok).map(c => `${c.title}: ${c.detail}`),
     // The most recent applications: title, how it went, and which version was sent.
@@ -218,7 +235,7 @@ export function checkSuggestions(out, input) {
       keywords: [...new Set((s.keywords || []).map(k => known.get(String(k).toLowerCase())).filter(Boolean))].slice(0, 6),
       lines: [...new Set((Array.isArray(s.lines) ? s.lines : []).map(l => clip(l, 400)).filter(inResume))].slice(0, 6),
       rewrites: (Array.isArray(s.rewrites) ? s.rewrites : [])
-        .filter(r => inResume(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from))
+        .filter(r => inResume(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from) && !addsNumbers(r.from, r.to))
         .map(r => ({ from: clip(r.from, 400), to: clip(r.to, 400) }))
         .slice(0, 2),
       state: 'open',
@@ -260,7 +277,7 @@ const FIT_SCHEMA = {
     },
   },
 };
-const FIT_SYSTEM = `You compare a job seeker's resume with one job description. Say how well it matches (strong, partial or weak) and why in plain words. List requirements from the posting that the resume shows and ones it doesn't, quoting short phrases from the posting itself. Then suggest up to 3 rewrites of existing resume lines that would speak better to this posting: copy each original line exactly, and keep every rewrite true to what the line says (reword and reorder, don't invent). Write in the second person.`;
+const FIT_SYSTEM = `You compare a job seeker's resume with one job description. Their name and contact details are replaced by placeholders. Say how well it matches (strong, partial or weak) and why in plain words. List requirements from the posting that the resume shows and ones it doesn't, quoting short phrases from the posting itself. Then suggest up to 3 rewrites of existing resume lines that would speak better to this posting: copy each original line exactly, and keep every rewrite true to what the line says (reword and reorder, don't invent, and never add a number the line doesn't have). Write in the second person.`;
 
 // Keep what can be checked: requirements quoted from the posting, rewrites of real lines.
 export function checkFit(out, { resumeText, posting }) {
@@ -273,7 +290,7 @@ export function checkFit(out, { resumeText, posting }) {
     matched: fromPosting(out?.matched),
     missing: fromPosting(out?.missing),
     rewrites: (Array.isArray(out?.rewrites) ? out.rewrites : [])
-      .filter(r => resumeHasLine(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from))
+      .filter(r => resumeHasLine(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from) && !addsNumbers(r.from, r.to))
       .map(r => ({ from: clip(r.from, 400), to: clip(r.to, 400), why: clip(r.why, 200) }))
       .slice(0, 3),
   };
@@ -282,7 +299,7 @@ export function checkFit(out, { resumeText, posting }) {
 export async function checkApplicationFit({ resumeText, posting, role }, { client: given } = {}) {
   const out = await ask({
     name: 'resume_fit', schema: FIT_SCHEMA, system: FIT_SYSTEM, client: given,
-    user: JSON.stringify({ role, jobDescription: posting, resume: resumeText }),
+    user: JSON.stringify({ role, jobDescription: posting, resume: withoutContact(resumeText) }),
   });
   return checkFit(out, { resumeText, posting });
 }
