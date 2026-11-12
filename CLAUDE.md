@@ -53,6 +53,11 @@ defines (functions called later can use anything). D3 is served from `node_modul
   rules (`src/rules.js`), and `mergeWithRules` treats LLM output as untrusted (company/job ID must literally
   appear in the email; rules' offer/rejection override). `Store.matchApplication` files the email to an
   application. Without a Groq key everything falls back to rules.
+- **Resume insights' AI (`src/ai.js`).** nuj doesn't judge resumes itself: OpenAI writes the review (score, rubric,
+  XYZ bullet audit) and the tailoring (Check fit / Check a job), and `checkReview`/`checkFit` keep only what holds up
+  (quoted lines really in the resume, keywords really in the posting, no rewrite adding numbers). Only the outcome
+  grouping in `src/insights.js` is worked out on the server. Sending OpenAI anything new means raising
+  `CONSENT_VERSION` (everyone is asked again) and updating the consent dialog and privacy policy.
 - **Re-scan keeps hand edits.** `Store.snapshotEdits()` / `restoreEdits()` re-attach edits by Gmail message ID
   after rebuilding applications. Anything new a user can edit must be included there to survive a re-scan.
   While `db.rescanStartedAt` is set, the `db_before_rescan_<id>` backup is the only good copy: a failed re-scan

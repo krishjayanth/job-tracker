@@ -1676,6 +1676,104 @@ table.apps { width: 100%; border-collapse: collapse; }
   .ln.flash, .suggestion.flash { animation-duration: 1.2s !important; }
 }
 
+/* The review: a score ring, the letter grade, rubric bars and bullet fixes. Good, fair and
+   poor reuse the offer, interview and rejected colours so they read the same in both themes. */
+.score-ring { position: relative; width: var(--size); height: var(--size); flex: none; display: grid; place-items: center; }
+.score-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.score-ring circle { fill: none; stroke-width: 8; }
+.score-ring .track { stroke: var(--accent-soft); }
+.score-ring .fill { stroke: var(--tone); stroke-linecap: round; stroke-dasharray: var(--dash); stroke-dashoffset: var(--to); }
+.score-ring.draw .fill { animation: ring-draw 1.1s var(--ease) both; }
+@keyframes ring-draw { from { stroke-dashoffset: var(--dash); } }
+.score-num { font-size: calc(var(--size) * .3); font-weight: 650; letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--text); }
+.good { --tone: var(--offer); }
+.fair { --tone: var(--interview); }
+.poor { --tone: var(--rejected); }
+
+.grade-card { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: center; padding: 16px; border-radius: 14px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.grade-text { display: grid; gap: 6px; min-width: 0; }
+.grade-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.grade-letter { min-width: 34px; height: 28px; padding: 0 8px; display: inline-grid; place-items: center; border-radius: 8px; font-weight: 700; font-size: 15px; color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 40%, transparent); }
+.grade-word { font-weight: 600; color: var(--text); }
+.grade-delta { padding: 1px 7px; border-radius: 999px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.grade-delta.up { color: var(--offer); background: color-mix(in srgb, var(--offer) 12%, transparent); }
+.grade-delta.down { color: var(--rejected); background: color-mix(in srgb, var(--rejected) 12%, transparent); }
+.grade-skim { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-2); }
+
+.weakness { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--rejected) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rejected) 28%, transparent); }
+.weakness > .icon { width: 16px; height: 16px; margin-top: 2px; color: var(--rejected); }
+.weakness strong { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
+.weakness p { margin: 2px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+
+.rv-block { display: grid; gap: 8px; }
+.rv-block h4 { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.rv-block h4 .num { padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--text-2); letter-spacing: 0; }
+.rv-block > .hint { margin: 0; line-height: 1.5; }
+
+.rubric { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.rb-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
+.rb-name { color: var(--text); font-weight: 500; }
+.rb-score { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rb-score b { color: var(--text); font-weight: 600; }
+/* A faint mark at every point of the 10, behind the bar. */
+.rb-track { height: 6px; margin-top: 6px; border-radius: 3px; overflow: hidden;
+  background: repeating-linear-gradient(90deg, var(--accent-soft) 0 calc(10% - 2px), transparent calc(10% - 2px) 10%); }
+.rb-track i { display: block; height: 100%; border-radius: 3px; background: var(--tone); transition: width .6s var(--ease); }
+.rb-note { margin: 5px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+
+.xyz-set { display: inline-flex; gap: 3px; flex: none; }
+.xyz { width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 5px; font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.xyz.ok { color: var(--offer); background: color-mix(in srgb, var(--offer) 12%, transparent); }
+.xyz.miss { color: var(--rejected); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rejected) 45%, transparent); text-decoration: line-through; }
+
+.fixes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.sg-decided .fixes { margin-top: 12px; }
+.fix { display: grid; gap: 8px; padding: 12px 14px 10px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); transition: box-shadow var(--fast); }
+.fix:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.fix-top { display: flex; align-items: center; gap: 10px; }
+.fix-note { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.fix-from { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.fix-to { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--text); background: color-mix(in srgb, var(--offer) 8%, transparent); box-shadow: inset 2px 0 var(--offer); }
+.fix.done, .fix.dismissed, .suggestion.done, .suggestion.dismissed { opacity: .7; }
+.sg-push { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.sg-actions .icon-btn { width: 28px; height: 28px; }
+.ln-note .xyz-set { margin-top: 6px; }
+.kw.ghost { background: none; box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--text); }
+
+/* While the AI grades: shimmering status text and the shape of the result. */
+.grading { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.grading-dot { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); }
+.grading-dot .icon { width: 14px; height: 14px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .4; transform: scale(.85); } }
+.shimmer {
+  color: transparent; background: linear-gradient(90deg, var(--muted) 0%, var(--text) 50%, var(--muted) 100%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; animation: shimmer 1.8s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+.grade-card.skeleton i { display: block; border-radius: 6px; background: var(--accent-soft); animation: pdf-wait 1.4s ease-in-out infinite alternate; }
+.grade-card.skeleton .sk-ring { width: 92px; height: 92px; border-radius: 50%; }
+.grade-card.skeleton div { display: grid; gap: 8px; }
+.grade-card.skeleton div i { height: 12px; }
+.grade-card.skeleton div i:first-child { width: 40%; height: 18px; }
+.grade-card.skeleton div i:last-child { width: 70%; }
+@media (prefers-reduced-motion: reduce) {
+  .score-ring.draw .fill, .shimmer, .grading-dot .icon { animation: none; }
+  .shimmer { color: var(--text-2); background: none; }
+}
+
+/* Tailoring: the match ring, red flags and sections that get skipped. */
+.fit-top { align-items: center; justify-content: flex-start; gap: 12px; }
+.fit-head-text { display: grid; gap: 2px; }
+.red-flags { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.red-flags li { display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.red-flags .icon { width: 14px; height: 14px; margin-top: 3px; color: var(--rejected); }
+.rewrite-use { display: flex; gap: 4px; margin-top: 4px; }
+.skip { display: grid; gap: 6px; padding: 10px 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--border); }
+.skip + .skip { margin-top: 8px; }
+.skip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.skip .why { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.skip-rewrite { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--surface); white-space: pre-wrap; font: inherit; font-size: 12.5px; line-height: 1.55; color: var(--text); }
+
 /* Wider: the page across the panel, the suggestions under it (for reading a PDF on a laptop). */
 .review-grid.wide { grid-template-columns: 1fr; }
 .review-grid.wide .review-page { width: 100%; max-width: 920px; justify-self: center; }

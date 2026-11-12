@@ -1,13 +1,13 @@
-// Resume insights: your versions, the resume preview, AI suggestions, comparing two
-// versions, Check a job, and Check fit.
+// Resume insights: your versions, the resume preview, the AI's review and grade, comparing
+// two versions, Check a job, and Check fit (tailoring your resume to one job).
 // The dashboard's scripts are plain scripts loaded in order (see index.html), sharing one
 // global scope: a file may use what an earlier one defines, and anything at all from inside
 // functions that run later.
 
 // ---------------------------------------------------------------- resume insights
-// Your resume versions and the AI's suggestions, from /api/resume. The server works it out
+// Your resume versions and the AI's review, from /api/resume. The server works it out
 // on every request, so it follows each sync and edit (the live update reloads it).
-let resume = null; // { versions, insights: { total, currentId, byVersion }, limits, ai, suggestions, review, jobFit }
+let resume = null; // { versions, insights: { total, currentId, byVersion }, limits, ai, review, preview, jobFit }
 let resumeShowAll = {}; // what you've opened ("Acted on or set aside"), kept across redraws
 
 // Live updates arrive often during a sync. Redrawing the page each time would drop your
@@ -18,8 +18,8 @@ async function loadResume() {
   try {
     data = await api('GET', '/api/resume');
     // Showing an older version in the preview: lay that one out instead.
-    if (reviewId && reviewId !== data.review?.versionId) {
-      if (data.versions.some(v => v.id === reviewId)) data.review = await api('GET', `/api/resume/${reviewId}?review=1`);
+    if (reviewId && reviewId !== data.preview?.versionId) {
+      if (data.versions.some(v => v.id === reviewId)) data.preview = await api('GET', `/api/resume/${reviewId}?preview=1`);
       else reviewId = null;
     }
   } catch (err) {
@@ -51,7 +51,7 @@ function renderResume() {
     $('#resume-body').innerHTML = resumeEmptyHtml();
     return;
   }
-  since.textContent = !ins.total && resume.ai?.available ? 'No applications yet, so AI suggestions look at your resume on its own for now.' : '';
+  since.textContent = !ins.total && resume.ai?.available ? 'No applications yet, so the AI grades your resume on its own for now.' : '';
   const key = focusKey();
   $('#resume-body').innerHTML = versionsHtml() + resumeReviewHtml() + jobCheckHtml();
   attachPdfPages();
@@ -277,7 +277,7 @@ resumeDialog.addEventListener('click', e => {
   if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) resumeDialog.close();
 });
 
-// ---- AI: suggestions for the resume, and the consent asked before anything is sent ----
+// ---- AI: the review of your resume, and the consent asked before anything is sent ----
 // How many AI runs are left today, in words ('' for the owner, who has no limit).
 function aiLeftText(ai) {
   if (!ai || ai.unlimited) return '';
@@ -288,56 +288,139 @@ const resetTime = iso => {
   const hours = Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 3_600_000));
   return hours >= 20 ? 'tomorrow' : `in about ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
 };
-const SG_STATE = { done: 'Done', dismissed: 'Not for me' };
+const SG_STATE = { done: 'Done', dismissed: 'Skipped' };
 
-// `here`: the preview shows the version it was written for, so its lines can be found.
-function suggestionHtml(s, here) {
-  const n = here ? s.lines.length : 0;
+// How a score reads, in words and as a colour.
+const gradeWord = n => (n >= 90 ? 'Excellent' : n >= 80 ? 'Strong' : n >= 70 ? 'Decent' : n >= 60 ? 'Needs work' : 'Weak');
+const gradeTone = n => (n >= 80 ? 'good' : n >= 65 ? 'fair' : 'poor');
+
+// A ring that fills to the score, with the number in the middle. It draws itself in the
+// first time a review is shown, not on every redraw.
+let ringsDrawn = new Set();
+function scoreRingHtml(score, { size = 92, label, key = '' } = {}) {
+  const r = 42, c = 2 * Math.PI * r;
+  const animate = key && !ringsDrawn.has(key);
+  if (animate) ringsDrawn.add(key);
+  return `<div class="score-ring ${gradeTone(score)}${animate ? ' draw' : ''}" style="--size:${size}px" role="img" aria-label="${esc(label ?? `${score} out of 100`)}">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><circle class="track" cx="50" cy="50" r="${r}"/><circle class="fill" cx="50" cy="50" r="${r}"
+      style="--dash:${c.toFixed(1)};--to:${(c * (1 - score / 100)).toFixed(1)}"/></svg>
+    <span class="score-num" aria-hidden="true">${score}</span></div>`;
+}
+
+// X, Y and Z of "Accomplished [X] as measured by [Y], by doing [Z]": the ones a bullet is
+// missing are crossed out.
+const XYZ_NAME = { X: 'the result', Y: 'a measure', Z: 'how' };
+function xyzHtml(missing = []) {
+  return `<span class="xyz-set">${['X', 'Y', 'Z'].map(p => {
+    const miss = missing.includes(p);
+    return `<span class="xyz ${miss ? 'miss' : 'ok'}" title="${miss ? 'Missing' : 'Has'} ${p}: ${XYZ_NAME[p]}">${p}<span class="sr-only">${miss ? ' missing' : ' present'}: ${XYZ_NAME[p]}</span></span>`;
+  }).join('')}</span>`;
+}
+
+function rubricHtml(rubric) {
+  return `<ul class="rubric">${rubric.map(r => `
+    <li>
+      <div class="rb-top"><span class="rb-name">${esc(r.name)}</span><span class="rb-score"><b>${r.score}</b>/10</span></div>
+      <div class="rb-track" aria-hidden="true"><i class="${gradeTone(r.score * 10)}" style="width:${r.score * 10}%"></i></div>
+      ${r.note ? `<p class="rb-note">${esc(r.note)}</p>` : ''}
+    </li>`).join('')}</ul>`;
+}
+
+const stateButtons = (id, state, name) => state === 'open'
+  ? `<button class="btn btn-sm btn-quiet" type="button" data-item="${esc(id)}" data-item-state="done" aria-label="Done: ${esc(name)}">${icon('check')}Done</button>
+     <button class="btn btn-sm btn-quiet" type="button" data-item="${esc(id)}" data-item-state="dismissed" aria-label="Skip: ${esc(name)}">Skip</button>`
+  : `<span class="dim">${SG_STATE[state]}</span>
+     <button class="btn btn-sm btn-quiet" type="button" data-item="${esc(id)}" data-item-state="open" aria-label="Undo: ${esc(name)}">Undo</button>`;
+
+// One bullet that fails the XYZ test: what's missing, the line, and its rewrite.
+// `here`: the preview shows the version it was graded on, so the line can be found.
+function bulletFixHtml(b, here, versionId) {
+  return `
+    <li class="fix ${b.state}" data-sg-card="${esc(b.id)}">
+      <div class="fix-top">${xyzHtml(b.missing)}<span class="fix-note">${esc(b.note)}</span></div>
+      <p class="fix-from">${esc(b.line)}</p>
+      ${b.rewrite ? `<p class="fix-to">${esc(b.rewrite)}</p>` : ''}
+      <div class="sg-actions">
+        ${b.state === 'open' && b.rewrite && here && b.at >= 0 ? useRewriteHtml(versionId, { from: b.line, to: b.rewrite }, b.id) : ''}
+        ${b.state === 'open' && b.rewrite ? `<button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(b.rewrite)}">${icon('check', 'icon copied')}<span>Copy</span></button>` : ''}
+        ${b.state === 'open' && here && b.at >= 0 ? `<button class="icon-btn" type="button" data-sg-locate="${esc(b.id)}" title="Show in your resume" aria-label="Show this bullet in your resume">${icon('search')}</button>` : ''}
+        <span class="sg-push">${stateButtons(b.id, b.state, b.line.slice(0, 60))}</span>
+      </div>
+    </li>`;
+}
+
+function appPointHtml(s) {
   return `
     <li class="suggestion ${s.state}" data-sg-card="${esc(s.id)}">
       <strong class="sg-title">${esc(s.title)}</strong>
       <p class="sg-why">${esc(s.why)}</p>
       <p class="sg-change">${esc(s.change)}</p>
-      ${s.keywords.length ? `<div class="kw-list">${s.keywords.map(k => `<span class="kw">${esc(k)}</span>`).join('')}</div>` : ''}
-      ${n && s.state === 'open' ? `<button class="meta-link sg-locate" type="button" data-sg-locate="${esc(s.id)}">${icon('search')}Show ${n === 1 ? 'the line' : `the ${n} lines`} in your resume</button>` : ''}
-      <div class="sg-actions">${s.state === 'open'
-        ? `<button class="btn btn-sm" type="button" data-sg="${esc(s.id)}" data-sg-state="done" aria-label="Done: ${esc(s.title)}">${icon('check')}Done</button>
-           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="dismissed" aria-label="Not for me: ${esc(s.title)}">Not for me</button>`
-        : `<span class="dim">${SG_STATE[s.state]}${s.decidedAt ? ` · ${timeAgo(s.decidedAt)}` : ''}</span>
-           <button class="btn btn-sm btn-quiet" type="button" data-sg="${esc(s.id)}" data-sg-state="open" aria-label="Undo: ${esc(s.title)}">Undo</button>`}
-        <span class="sg-for">${esc(s.section === 'Overall' ? 'Whole resume' : s.section === 'Layout' ? 'Layout' : `${s.section} section`)}</span>
-      </div>
+      <div class="sg-actions">${stateButtons(s.id, s.state, s.title)}</div>
     </li>`;
 }
 
-function suggestionsHtml(r) {
-  const { ai, suggestions: sg } = resume;
+// While the AI grades: what it's doing, in turn (the review takes a while).
+const GRADING_STEPS = ['Skimming it like a recruiter would', 'Scoring the rubric', 'Checking every bullet against XYZ', 'Cross-checking your skills', 'Writing the rewrites'];
+let grading = false, gradingTimer = null;
+function gradingHtml() {
+  return `<div class="grading" role="status"><span class="grading-dot" aria-hidden="true">${icon('sparkles')}</span><span class="grading-text shimmer">${GRADING_STEPS[0]}…</span></div>
+    <div class="grade-card skeleton" aria-hidden="true"><i class="sk-ring"></i><div><i></i><i></i><i></i></div></div>`;
+}
+
+function reviewHtml(r) {
+  const { ai, review: rv } = resume;
   if (!ai?.available) return '';
   const hasApps = resume.insights.total > 0;
-  const here = sg?.versionId === r.versionId;
-  const open = sg?.items.filter(s => s.state === 'open') ?? [];
-  const decided = sg?.items.filter(s => s.state !== 'open') ?? [];
-  const fresh = Boolean(sg?.upToDate && open.length);
   const noneLeft = !ai.unlimited && !ai.left;
-  const label = !sg ? 'Get suggestions' : fresh ? 'Up to date' : 'Get new suggestions';
+  const fresh = Boolean(rv?.upToDate);
+  const label = grading ? 'Grading' : !rv ? 'Grade my resume' : fresh ? 'Up to date' : 'Grade again';
+  const head = `
+      <div class="sg-head">
+        <h3 id="sg-title">Review</h3>
+        <button class="btn btn-sm${rv ? '' : ' btn-primary'}${grading ? ' busy' : ''}" type="button" data-grade ${fresh || noneLeft || grading ? 'disabled' : ''}
+          ${fresh ? 'title="Nothing has changed since this review"' : ''}>${icon('sparkles')}<span>${label}</span></button>
+      </div>`;
+  const revoke = ai.consent ? '<button class="meta-link sg-revoke" type="button" data-ai-revoke>Stop sending my resume to OpenAI</button>' : '';
+  if (grading) return `<div class="review-sg">${head}${gradingHtml()}</div>`;
+  if (!rv) {
+    return `<div class="review-sg">${head}
+      <p class="hint sg-intro">A strict recruiter's read of your resume: a score out of 100, five rubric scores, every bullet that fails the XYZ formula with a rewrite, and skills you list but never show.${hasApps ? ' It also looks at how your applications went.' : ''}${aiLeftText(ai) ? ` <span id="ai-left">${aiLeftText(ai)}.</span>` : ''}</p>
+      ${revoke}</div>`;
+  }
+  const here = rv.versionId === r.versionId;
+  const open = rv.bullets.filter(b => b.state === 'open');
+  const points = rv.fromApplications.filter(x => x.state === 'open');
+  const decided = [...rv.bullets, ...rv.fromApplications].filter(x => x.state !== 'open');
+  const delta = rv.previous ? rv.score - rv.previous.score : 0;
   return `
     <div class="review-sg">
-      <div class="sg-head">
-        <h3 id="sg-title">Suggestions</h3>
-        <button class="btn btn-sm${sg ? '' : ' btn-primary'}" type="button" data-suggest ${fresh || noneLeft ? 'disabled' : ''}
-          ${fresh ? 'title="Nothing has changed since these were written"' : ''}>${icon('sparkles')}<span>${label}</span></button>
+      ${head}
+      ${!here ? `<p class="sg-note">${icon('alert')}Graded on ${esc(rv.version)}. Show that version to see its bullets marked.</p>` : ''}
+      ${!rv.upToDate ? `<p class="sg-note">${icon('alert')}Your resume or applications have changed since this review ${timeAgo(rv.at)}. Grade again to see where you stand.</p>` : ''}
+      <div class="grade-card">
+        ${scoreRingHtml(rv.score, { label: `Score ${rv.score} out of 100, grade ${rv.grade}`, key: rv.at })}
+        <div class="grade-text">
+          <div class="grade-line"><span class="grade-letter ${gradeTone(rv.score)}">${esc(rv.grade)}</span><span class="grade-word">${gradeWord(rv.score)}</span>
+            ${delta ? `<span class="grade-delta ${delta > 0 ? 'up' : 'down'}" title="Since your last review (${esc(rv.previous.version)}, ${timeAgo(rv.previous.at)})">${delta > 0 ? '+' : '−'}${Math.abs(delta)}</span>` : ''}</div>
+          <p class="grade-skim">${esc(rv.skim)}</p>
+          <span class="hint">${esc(rv.version)} · ${timeAgo(rv.at)}${aiLeftText(ai) ? ` · <span id="ai-left">${aiLeftText(ai)}</span>` : ''}</span>
+        </div>
       </div>
-      <p class="hint sg-intro">${hasApps
-        ? 'Written by AI from your current resume, how your applications went and the skills your postings ask for.'
-        : 'Written by AI from your current resume. Once you add applications, they draw on how those went too.'} You choose which to act on.${aiLeftText(ai) ? ` <span id="ai-left">${aiLeftText(ai)}.</span>` : ''}</p>
-      ${sg && !here && open.length ? `<p class="sg-note">${icon('alert')}Written for ${esc(sg.version)}. Show that version to see their lines highlighted.</p>` : ''}
-      ${sg && !sg.upToDate && open.length ? `<p class="sg-note">${icon('alert')}Your resume or applications have changed since these were written ${timeAgo(sg.at)}.</p>` : ''}
-      ${open.length ? `<ul class="suggestions">${open.map(s => suggestionHtml(s, here)).join('')}</ul>`
-        : `<p class="dim sg-empty">${sg ? "You've gone through every suggestion. Get new ones after you change your resume or apply to more jobs."
-          : hasApps ? 'Get 3 to 6 changes to make, each based on your own numbers and the postings you applied to.' : 'Get 3 to 6 changes to make to your resume.'}</p>`}
-      ${decided.length ? `<details class="sg-decided" ${resumeShowAll.decided ? 'open' : ''}><summary>Acted on or set aside <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
-        <ul class="suggestions">${decided.map(s => suggestionHtml(s, here)).join('')}</ul></details>` : ''}
-      ${ai.consent ? '<button class="meta-link sg-revoke" type="button" data-ai-revoke>Stop sending my resume to OpenAI</button>' : ''}
+      ${rv.biggestWeakness ? `<div class="weakness">${icon('target')}<div><strong>Biggest thing holding it back</strong><p>${esc(rv.biggestWeakness)}</p></div></div>` : ''}
+      <section class="rv-block" aria-labelledby="rubric-title"><h4 id="rubric-title">Rubric</h4>${rubricHtml(rv.rubric)}</section>
+      ${rv.unprovenSkills.length ? `<section class="rv-block" aria-labelledby="ghost-title"><h4 id="ghost-title">Skills you list but never show <span class="num">${rv.unprovenSkills.length}</span></h4>
+        <p class="hint">Use each in a bullet that shows what you did with it, or take it off your skills line.</p>
+        <div class="kw-list">${rv.unprovenSkills.map(k => `<span class="kw ghost">${esc(k)}</span>`).join('')}</div></section>` : ''}
+      <section class="rv-block" aria-labelledby="fix-title"><h4 id="fix-title">Bullets to fix <span class="num">${open.length}</span></h4>
+        ${open.length ? `<p class="hint">Each misses part of “Accomplished <b>X</b> as measured by <b>Y</b>, by doing <b>Z</b>”. Swap the [X%] and [N] in a rewrite for your real numbers.</p>
+          <ul class="fixes">${open.map(b => bulletFixHtml(b, here, rv.versionId)).join('')}</ul>`
+          : `<p class="dim sg-empty">${rv.bullets.length ? "You've gone through every bullet. Grade again to see your new score." : 'Every bullet passes the XYZ test.'}</p>`}
+      </section>
+      ${points.length ? `<section class="rv-block" aria-labelledby="apps-title"><h4 id="apps-title">From your applications</h4>
+        <ul class="suggestions">${points.map(appPointHtml).join('')}</ul></section>` : ''}
+      ${decided.length ? `<details class="sg-decided" ${resumeShowAll.decided ? 'open' : ''}><summary>Done or skipped <span class="dim num">${decided.length}</span>${icon('chevron')}</summary>
+        <ul class="fixes">${decided.map(x => ('line' in x ? bulletFixHtml(x, here, rv.versionId) : appPointHtml(x))).join('')}</ul></details>` : ''}
+      ${revoke}
     </div>`;
 }
 
@@ -373,29 +456,38 @@ consentDialog.addEventListener('click', e => {
 });
 consentDialog.addEventListener('close', () => { afterConsent = null; });
 
-async function getSuggestions(btn) {
-  btn.disabled = true;
-  btn.classList.add('busy');
+async function gradeResume() {
+  grading = true;
+  renderResume();
+  let step = 0;
+  gradingTimer = setInterval(() => {
+    const el = $('#resume-body .grading-text');
+    step = (step + 1) % GRADING_STEPS.length;
+    if (el) el.textContent = `${GRADING_STEPS[step]}…`;
+  }, 2200);
+  let note;
   try {
-    const r = await api('POST', '/api/insights/suggestions');
-    await loadResume();
-    const n = resume.suggestions?.items.filter(s => s.state === 'open').length ?? 0;
-    toast(r.cached ? 'Your suggestions are already up to date' : `${n} new ${n === 1 ? 'suggestion' : 'suggestions'}`);
+    const r = await api('POST', '/api/insights/review');
+    note = r.cached ? 'Your review is already up to date' : null;
   } catch (err) {
-    toast(err.message);
-    await loadResume();
+    note = err.message;
   }
+  clearInterval(gradingTimer);
+  grading = false;
+  resumeJson = '';
+  await loadResume();
+  if (note) toast(note);
+  else if (resume.review) toast(`Graded ${resume.review.grade}, ${resume.review.score} out of 100`);
 }
 
 $('#view-resume').addEventListener('click', async e => {
   const t = e.target;
-  const run = t.closest('[data-suggest]');
-  if (run) return withConsent(() => getSuggestions($('[data-suggest]')));
-  const pick = t.closest('[data-sg-state]');
+  if (t.closest('[data-grade]')) return withConsent(gradeResume);
+  const pick = t.closest('[data-item-state]');
   if (pick) {
     pick.disabled = true;
     try {
-      await api('PATCH', `/api/insights/suggestions/${pick.dataset.sg}`, { state: pick.dataset.sgState });
+      await api('PATCH', `/api/insights/review/items/${pick.dataset.item}`, { state: pick.dataset.itemState });
     } catch (err) {
       toast(err.message);
     }
@@ -407,7 +499,7 @@ $('#view-resume').addEventListener('click', async e => {
     try {
       const { ai } = await api('POST', '/api/insights/consent', { allow: false });
       state.ai = ai;
-      toast("nuj won't send your resume to OpenAI. Your suggestions stay here");
+      toast("nuj won't send your resume to OpenAI. Your review stays here");
     } catch (err) {
       revoke.disabled = false;
       return toast(`Couldn't change that: ${err.message}`);
@@ -544,7 +636,7 @@ function pdfPagesHtml(r, doc) {
     const first = spot.line[0];
     const lastBox = spot.line.filter(b => b.page === first.page).at(-1);
     const hit = { ...first, h: lastBox.t + lastBox.h - first.t, w: Math.max(...spot.line.filter(b => b.page === first.page).map(b => b.l + b.w)) - first.l };
-    const why = `${sgs.length} ${sgs.length === 1 ? 'suggestion' : 'suggestions'}`;
+    const why = sgs[0]?.note || 'needs a fix';
     marks[first.page].push(`<button type="button" class="pdf-hit" data-ln="${i}"${ids} aria-expanded="${reviewOpen === i}" style="${boxStyle(hit)}"
       aria-label="${esc(l.text.slice(l.at).slice(0, 80))}: ${why}"></button>`);
     if (reviewOpen === i) {
@@ -585,7 +677,7 @@ function previewHtml(r) {
     </div>` : !v?.pdf ? `
     <div class="pdf-ask">
       <span class="drop-icon">${icon('file')}</span>
-      <div><strong>See your real resume here</strong><span>Upload the PDF of ${esc(r.name)} and nuj shows its pages, with the AI's suggestions marked on them.</span></div>
+      <div><strong>See your real resume here</strong><span>Upload the PDF of ${esc(r.name)} and nuj shows its pages, with the AI's review marked on them.</span></div>
       <button class="btn btn-sm" type="button" data-pdf-upload="${esc(r.versionId)}">${icon('upload')}<span>Upload PDF</span></button>
     </div>` : failed ? `<p class="pdf-foot">${icon('alert')}nuj couldn't open this PDF, so here's its text.</p>` : ''}
     <article class="paper" aria-label="${esc(r.name)}">${paperHtml(r)}</article>`;
@@ -640,20 +732,19 @@ async function uploadPdf(versionId, file) {
   return data;
 }
 
-// ---- the resume preview: your resume as a page, with the AI's suggestions marked ----
-// Lines come laid out from the server (src/insights.js layoutLines). The lines an open AI
-// suggestion is about are highlighted; select one to read the suggestion under it.
+// ---- the resume preview: your resume as a page, with the AI's review marked ----
+// Lines come laid out from the server (src/insights.js layoutLines). Bullets the review
+// says to fix are highlighted; select one to read what's missing and its rewrite.
 let reviewId = null;     // the version shown; null means the current one
 let reviewOpen = null;   // the line whose notes are open
 
-// Open suggestions about the version on show, by line.
+// Bullets still to fix on the version on show, by line.
 function suggestionsByLine(r) {
-  const sg = resume.suggestions;
+  const rv = resume.review;
   const byLine = new Map();
-  if (sg?.versionId !== r.versionId) return byLine;
-  for (const s of sg.items) {
-    if (s.state !== 'open') continue;
-    for (const i of s.lines) byLine.set(i, [...(byLine.get(i) || []), s]);
+  if (rv?.versionId !== r.versionId) return byLine;
+  for (const b of rv.bullets) {
+    if (b.state === 'open' && b.at >= 0) byLine.set(b.at, [...(byLine.get(b.at) || []), b]);
   }
   return byLine;
 }
@@ -661,16 +752,13 @@ function suggestionsByLine(r) {
 // A line's own text, after any bullet.
 const lineText = l => esc(l.text.slice(l.at));
 
-// The suggestions about one line, opened under it.
+// What the review says about one bullet, opened under it.
 function lineNoteHtml(l, i, sgs) {
-  const notes = sgs.map(s => {
-    const rewrite = s.rewrites.find(r => r.line === i);
-    return `<li class="ln-sg">${icon('sparkles')}<div><strong>${esc(s.title)}</strong>${esc(s.change)}
-      ${rewrite ? `<div class="ln-try"><span class="ln-try-label">Try</span><span>${esc(rewrite.to)}</span>
-        <span class="ln-try-actions">${useRewriteHtml(resume.review.versionId, rewrite)}
-          <button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(rewrite.to)}">${icon('check', 'icon copied')}<span>Copy</span></button></span></div>` : ''}
-      <button class="meta-link" type="button" data-sg-show="${esc(s.id)}">Go to this suggestion</button></div></li>`;
-  });
+  const notes = sgs.map(b => `<li class="ln-sg">${icon('sparkles')}<div><strong>${esc(b.note || "Doesn't pass the XYZ test")}</strong>${xyzHtml(b.missing)}
+      ${b.rewrite ? `<div class="ln-try"><span class="ln-try-label">Try</span><span>${esc(b.rewrite)}</span>
+        <span class="ln-try-actions">${useRewriteHtml(resume.preview.versionId, { from: b.line, to: b.rewrite }, b.id)}
+          <button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(b.rewrite)}">${icon('check', 'icon copied')}<span>Copy</span></button></span></div>` : ''}
+      <button class="meta-link" type="button" data-sg-show="${esc(b.id)}">Go to this in the review</button></div></li>`);
   return `<div class="ln-note" id="ln-note-${i}"><ul>${notes.join('')}</ul></div>`;
 }
 
@@ -686,19 +774,19 @@ function paperHtml(r) {
     const attrs = flagged
       ? ` role="button" tabindex="0" data-ln="${i}" aria-expanded="${open}" ${open ? `aria-controls="ln-note-${i}"` : ''} data-sg-ids="${sgs.map(s => esc(s.id)).join(' ')}"`
       : '';
-    const why = `${sgs.length} ${sgs.length === 1 ? 'suggestion' : 'suggestions'}`;
+    const why = sgs[0]?.note || 'needs a fix';
     return `<div class="${cls}"${attrs}>${l.kind === 'bullet' ? '<span class="ln-dot" aria-hidden="true"></span>' : ''}<span class="ln-text">${lineText(l)}</span>${
       flagged ? `<span class="ln-flag">${icon('sparkles')}<span class="sr-only">: ${why}</span></span>` : ''}</div>${open ? lineNoteHtml(l, i, sgs) : ''}`;
   }).join('');
 }
 
 function resumeReviewHtml() {
-  const r = resume.review;
+  const r = resume.preview;
   if (!r) return '';
   const hint = compareId
     ? 'What changed between the two versions: lines the later one added are marked +, lines it took out −.'
     : resume.ai?.available
-      ? 'Lines the AI suggests changing are highlighted. Select one to see the suggestion.'
+      ? 'Bullets the review says to fix are highlighted. Select one to see what it misses and a rewrite.'
       : 'Your resume as nuj read it.';
   return `
     <section class="panel review" aria-labelledby="review-title">
@@ -716,18 +804,18 @@ function resumeReviewHtml() {
           ${!compareId && resume.versions.find(v => v.id === r.versionId)?.pdf && !resume.versions.find(v => v.id === r.versionId).pdf.stale ? `<div class="review-mode" role="group" aria-label="Show">
             ${[['pdf', 'PDF'], ['text', 'Text']].map(([m, label]) => `<button type="button" data-review-mode="${m}" aria-pressed="${reviewMode === m}">${label}</button>`).join('')}
           </div>` : ''}
-          <button class="btn btn-sm btn-quiet review-wide" type="button" data-review-wide aria-pressed="${reviewWide}" title="${reviewWide ? 'Put the suggestions back beside the page' : 'Show the page wider, with the suggestions under it'}">${icon('expand')}<span>${reviewWide ? 'Narrower' : 'Wider'}</span></button>
+          <button class="btn btn-sm btn-quiet review-wide" type="button" data-review-wide aria-pressed="${reviewWide}" title="${reviewWide ? 'Put the review back beside the page' : 'Show the page wider, with the review under it'}">${icon('expand')}<span>${reviewWide ? 'Narrower' : 'Wider'}</span></button>
           <button class="btn btn-sm" type="button" data-version-edit="${esc(r.versionId)}" aria-label="Edit the text of ${esc(r.name)}">Edit text</button>
         </div>
       </div>
       <div class="review-grid${reviewWide ? ' wide' : ''}">
         <div class="review-page">${previewHtml(r)}</div>
-        <aside class="review-side" aria-label="What to change">${suggestionsHtml(r)}</aside>
+        <aside class="review-side" aria-label="Review">${reviewHtml(r)}</aside>
       </div>
     </section>`;
 }
 
-// Light up the lines a suggestion is about while you point at it or tab to it.
+// Light up the bullet a review card is about while you point at it or tab to it.
 function lightLines(id, on) {
   for (const el of document.querySelectorAll(`#resume-body [data-sg-ids~="${CSS.escape(id)}"]`)) el.classList.toggle('lit', on);
 }
@@ -775,17 +863,6 @@ $('#view-resume').addEventListener('click', async e => {
   if (upload) { pdfFor = upload.dataset.pdfUpload; return $('#rv-pdf').click(); }
   const ln = t.closest('[data-ln]');
   if (ln) return toggleLine(Number(ln.dataset.ln));
-  const copy = t.closest('[data-copy]');
-  if (copy) {
-    try {
-      await navigator.clipboard.writeText(copy.dataset.copy);
-      copy.classList.add('done');
-      copy.querySelector('span').textContent = 'Copied';
-    } catch {
-      toast("Couldn't copy. Select the text and copy it yourself");
-    }
-    return;
-  }
   const show = t.closest('[data-sg-show]');
   if (show) return flash($(`#resume-body [data-sg-card="${CSS.escape(show.dataset.sgShow)}"]`));
   const locate = t.closest('[data-sg-locate]');
@@ -818,36 +895,56 @@ $('#view-resume').addEventListener('change', async e => {
   await loadResume();
 });
 
-// The page shown wider, with the suggestions under it, for reading a PDF on a laptop.
+// The page shown wider, with the review under it, for reading a PDF on a laptop.
 let reviewWide = false;
 try { reviewWide = localStorage.getItem('nuj-review-wide') === '1'; } catch { /* private window */ }
 
 // ---- a suggested rewrite, put into the version's text ----
-// The same button for suggestions and Check fit. The server swaps the line (keeping its
-// bullet) and hands back the old text, so Undo can put it back.
-function useRewriteHtml(versionId, rewrite) {
+// The same button for the review and Check fit. The server swaps the line (keeping its
+// bullet) and hands back the old text, so Undo can put it back. `item`: the graded bullet
+// it fixes, marked done along with it.
+function useRewriteHtml(versionId, rewrite, item = '') {
   if (!versionId) return '';
   return `<button class="btn btn-sm" type="button" data-use-rewrite="${esc(versionId)}" data-from="${esc(rewrite.from)}" data-to="${esc(rewrite.to)}"
-    title="Put this line into your resume in place of the old one">Use this</button>`;
+    ${item ? `data-fixes="${esc(item)}"` : ''} title="Put this line into your resume in place of the old one">Use this</button>`;
 }
 document.addEventListener('click', async e => {
   const use = e.target.closest('[data-use-rewrite]');
   if (!use) return;
   use.disabled = true;
+  const item = use.dataset.fixes;
   try {
     const { version, before } = await api('POST', `/api/resume/${use.dataset.useRewrite}/rewrite`, { from: use.dataset.from, to: use.dataset.to });
+    if (item) await api('PATCH', `/api/insights/review/items/${item}`, { state: 'done' }).catch(() => {});
     reviewOpen = null;
     resumeJson = '';
     if (view === 'resume') await loadResume();
     use.textContent = 'Used';
-    toast(`Changed the line in ${version.name}${version.pdf?.stale ? '. Upload its new PDF when you have one' : ''}`, async () => {
+    // A rewrite can hold [X%] or [N] where only you know the real number.
+    const fillIn = /\[[^\]]{1,6}\]/.test(use.dataset.to) ? '. Edit its text to fill in the [ ] with your real number' : '';
+    toast(`Changed the line in ${version.name}${fillIn || (version.pdf?.stale ? '. Upload its new PDF when you have one' : '')}`, async () => {
       await api('PATCH', `/api/resume/${version.id}`, { text: before });
+      if (item) await api('PATCH', `/api/insights/review/items/${item}`, { state: 'open' }).catch(() => {});
       resumeJson = '';
       if (view === 'resume') await loadResume();
     }, { ms: 10_000 });
   } catch (err) {
     use.disabled = false;
     toast(err.message);
+  }
+});
+
+// Copy a rewrite, on the Resume page or in an application's panel.
+document.addEventListener('click', async e => {
+  const copy = e.target.closest('[data-copy]');
+  if (!copy) return;
+  try {
+    await navigator.clipboard.writeText(copy.dataset.copy);
+    copy.classList.add('done');
+    const label = copy.querySelector('span');
+    if (label) label.textContent = 'Copied';
+  } catch {
+    toast("Couldn't copy. Select the text and copy it yourself");
   }
 });
 
@@ -941,14 +1038,14 @@ $('#view-resume').addEventListener('click', e => {
 // ---- Check a job: how well your resume fits a job you haven't applied to yet ----
 let jobDraft = null; // what you've typed, kept across redraws (null: show the last one checked)
 function jobCheckHtml() {
-  const { ai, jobFit, review } = resume;
-  if (!ai?.available || !review) return '';
+  const { ai, jobFit, preview } = resume;
+  if (!ai?.available || !preview) return '';
   const text = jobDraft ?? jobFit?.posting ?? '';
   return `
     <section class="panel job-check" aria-labelledby="job-title">
       <div class="panel-head">
         <div class="head-text"><h2 id="job-title">Check a job</h2>
-          <span class="hint">Paste a job description to see how well ${esc(review.name)} fits it before you apply, and which lines to reword for it.</span></div>
+          <span class="hint">Paste a job description and a recruiter for that company scores how well ${esc(preview.name)} matches, names the missing keywords and red flags, and rewrites your bullets for it.</span></div>
       </div>
       <form class="job-form" data-job-form>
         <textarea name="posting" rows="6" maxlength="20000" data-job-posting placeholder="Paste the job description from the posting" aria-label="Job description">${esc(text)}</textarea>
@@ -974,7 +1071,7 @@ $('#view-resume').addEventListener('submit', e => {
     btn.disabled = true;
     btn.classList.add('busy');
     try {
-      const r = await api('POST', '/api/insights/fit', { posting, versionId: resume.review?.versionId });
+      const r = await api('POST', '/api/insights/fit', { posting, versionId: resume.preview?.versionId });
       if (r.cached) toast('Nothing has changed since you checked this job');
       jobDraft = null;
     } catch (err) {
@@ -999,18 +1096,30 @@ $('#view-resume').addEventListener('click', async e => {
 // ---- Check fit, in an application's panel ----
 const FIT_LABEL = { strong: 'Strong match', partial: 'Partial match', weak: 'Weak match' };
 // `versionId`: the version it was checked against, so a rewrite can be put straight into it.
+// Answers from before tailoring have no score, red flags or skipped sections.
 function fitHtml(fit, versionId) {
-  const label = FIT_LABEL[fit.match];
+  const scored = Number.isFinite(fit.score);
   const chips = (list, cls) => list.map(x => `<span class="fit-chip ${cls}">${esc(x)}</span>`).join('');
+  const missing = fit.missingKeywords ?? fit.missing ?? [];
   return `
     <div class="fit">
-      <div class="fit-top"><span class="fit-match ${fit.match}"><i aria-hidden="true"></i>${label}</span>
-        <span class="hint">Against ${esc(fit.versionName)} · ${timeAgo(fit.at)}</span></div>
+      <div class="fit-top">
+        ${scored ? scoreRingHtml(fit.score, { size: 58, label: `Match ${fit.score} out of 100`, key: `fit:${fit.at}` }) : ''}
+        <div class="fit-head-text"><span class="fit-match ${fit.match}"><i aria-hidden="true"></i>${FIT_LABEL[fit.match]}</span>
+          <span class="hint">Against ${esc(fit.versionName)} · ${timeAgo(fit.at)}</span></div>
+      </div>
       ${fit.summary ? `<p>${esc(fit.summary)}</p>` : ''}
-      ${fit.matched.length ? `<div class="fit-group"><span class="fit-label">Your resume shows</span><div class="fit-chips">${chips(fit.matched, 'have')}</div></div>` : ''}
-      ${fit.missing.length ? `<div class="fit-group"><span class="fit-label">Not in your resume</span><div class="fit-chips">${chips(fit.missing, 'gap')}</div></div>` : ''}
-      ${fit.rewrites.length ? `<div class="fit-group"><span class="fit-label">Lines to reword for this job</span>
-        <ol class="rewrites">${fit.rewrites.map(r => `<li><span class="from">${esc(r.from)}</span><span class="to">${esc(r.to)}</span>${r.why ? `<span class="why">${esc(r.why)}</span>` : ''}${versionId ? `<span class="rewrite-use">${useRewriteHtml(versionId, r)}</span>` : ''}</li>`).join('')}</ol></div>` : ''}
+      ${fit.redFlags?.length ? `<div class="fit-group"><span class="fit-label">Red flags a hiring manager spots in 10 seconds</span>
+        <ol class="red-flags">${fit.redFlags.map(f => `<li>${icon('alert')}<span>${esc(f)}</span></li>`).join('')}</ol></div>` : ''}
+      ${missing.length ? `<div class="fit-group"><span class="fit-label">${fit.missingKeywords ? 'Top missing keywords' : 'Not in your resume'}</span><div class="fit-chips">${chips(missing, 'gap')}</div></div>` : ''}
+      ${fit.matched?.length ? `<div class="fit-group"><span class="fit-label">Your resume shows</span><div class="fit-chips">${chips(fit.matched, 'have')}</div></div>` : ''}
+      ${fit.rewrites.length ? `<div class="fit-group"><span class="fit-label">Bullets rewritten for this job</span>
+        <ol class="rewrites">${fit.rewrites.map(r => `<li><span class="from">${esc(r.from)}</span><span class="to">${esc(r.to)}</span>${r.why ? `<span class="why">${esc(r.why)}</span>` : ''}
+          <span class="rewrite-use">${versionId ? useRewriteHtml(versionId, r) : ''}<button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(r.to)}">${icon('check', 'icon copied')}<span>Copy</span></button></span></li>`).join('')}</ol></div>` : ''}
+      ${fit.skipped?.length ? `<div class="fit-group"><span class="fit-label">What gets skipped by an ATS or a tired reader</span>
+        ${fit.skipped.map(x => `<div class="skip">
+          <div class="skip-head"><strong>${esc(x.section)}</strong><button class="btn btn-sm btn-quiet" type="button" data-copy="${esc(x.rewrite)}">${icon('check', 'icon copied')}<span>Copy rewrite</span></button></div>
+          <p class="why">${esc(x.why)}</p><pre class="skip-rewrite">${esc(x.rewrite)}</pre></div>`).join('')}</div>` : ''}
     </div>`;
 }
 
@@ -1020,7 +1129,7 @@ function fitFieldHtml(a) {
     <div class="field wide fit-field">
       <div class="fit-head">
         <button class="btn btn-sm" type="button" id="fit-btn">${icon('sparkles')}<span>${a.fit ? 'Check fit again' : 'Check fit'}</span></button>
-        <span class="hint" id="fit-left">${a.fit ? '' : 'Compares your resume with the job description, using AI.'} ${aiLeftText(state.ai)}</span>
+        <span class="hint" id="fit-left">${a.fit ? '' : 'A recruiter for this company scores your resume against the job description and rewrites your bullets for it, using AI.'} ${aiLeftText(state.ai)}</span>
       </div>
       <div id="fit-result" aria-live="polite">${a.fit ? fitHtml(a.fit, a.resumeVersion) : ''}</div>
     </div>`;

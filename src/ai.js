@@ -1,18 +1,19 @@
-// AI for Resume insights: written suggestions for your resume, and "Check fit" for one
-// application. It runs on the server's own OpenAI key (OPENAI_API_KEY), separate from
-// email sorting, so it costs the owner money: everyone but the owner gets a few runs a
-// day, and the server as a whole has a daily cap. A run that fails, or one that would
+// AI for Resume insights: a strict review and grade of your resume, and tailoring it to
+// one job description (Check fit on an application, Check a job on the Resume page). nuj
+// doesn't judge the resume itself; reading it, its skills and the postings is all the AI's.
+// It runs on the server's own OpenAI key (OPENAI_API_KEY), separate from email sorting, so
+// it costs the owner money: everyone but the owner gets a few runs a day, and the server as
+// a whole has a daily cap. A run that fails, or one that would
 // give the same answer as last time, doesn't count.
 //
 // What the model says is checked before anyone sees it, the same way email sorting
-// treats Groq: a skill it calls missing has to be in the posting, a line it rewrites has
-// to be in your resume, a rewrite can't add numbers the line didn't have (it would be
+// treats Groq: a keyword it calls missing has to be in the posting, a line it grades or
+// rewrites has to be in your resume, a skill it calls unproven has to be listed in it, a rewrite can't add numbers the line didn't have (it would be
 // inventing a result), and anything else is dropped. Your name and contact details are
 // taken out of the resume before it's sent.
 import crypto from 'node:crypto';
 import { getKv, setKv } from './store.js';
 import { recordError } from './errors.js';
-import { findSkills } from './skills.js';
 import { withoutContact, MIN_GROUP } from './insights.js';
 
 export const AI_KEY = process.env.OPENAI_API_KEY || '';
@@ -21,6 +22,9 @@ export const AI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
 const REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || '';
 export const DAILY_LIMIT = Number(process.env.INSIGHTS_DAILY_LIMIT || 3);
 export const SERVER_DAILY_LIMIT = Number(process.env.INSIGHTS_SERVER_DAILY_LIMIT || 100);
+// Which list of what's sent you agreed to. Raised when more is sent, so you're asked again:
+// 2 added the company name (Check fit) and your pasted job descriptions (the review).
+export const CONSENT_VERSION = 2;
 const SERVER_KEY = 'insights_usage'; // { day, runs, limited: [user ids that hit their limit today] }
 
 let client = null;
@@ -69,7 +73,7 @@ export function aiStatus(user, { demo = false } = {}) {
     limit: DAILY_LIMIT,
     left: user.owner ? null : Math.max(0, DAILY_LIMIT - userUsage(db)),
     resetsAt: tomorrow(),
-    consent: Boolean(db.insights?.consent),
+    consent: (db.insights?.consent?.version ?? 1) >= CONSENT_VERSION && Boolean(db.insights?.consent),
   };
 }
 
@@ -111,14 +115,14 @@ export const hashOf = value => crypto.createHash('sha256').update(JSON.stringify
 // ---- calling the model ------------------------------------------------------------
 
 // One structured answer, or throws an error whose message can be shown to the person.
-async function ask({ name, schema, system, user: content, client: given }) {
+async function ask({ name, schema, system, user: content, client: given, maxTokens = 4096 }) {
   const c = given ?? await openai();
   let res;
   try {
     res = await c.chat.completions.create({
       model: AI_MODEL,
       ...(REASONING_EFFORT && { reasoning_effort: REASONING_EFFORT }),
-      max_completion_tokens: 4096,
+      max_completion_tokens: maxTokens,
       response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } },
       messages: [{ role: 'system', content: system }, { role: 'user', content }],
     });
@@ -158,48 +162,93 @@ export function findLine(text, quote) {
   });
 }
 
-// ---- suggestions for the resume -------------------------------------------------------
+// ---- the review: a strict grade of the resume -----------------------------------------
+// A senior recruiter's read: a score and letter grade, what a 6-second skim catches, five
+// rubric scores, every bullet that fails the XYZ test with a rewrite, skills listed but
+// never shown in a bullet, and the biggest weakness. When there are applications, up to
+// three points from how they went too.
 
-export const SECTIONS = ['Summary', 'Experience', 'Projects', 'Skills', 'Education', 'Layout', 'Overall'];
-const SUGGESTIONS_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['suggestions'],
+export const RUBRIC = [
+  ['xyz', 'XYZ formula', 'How consistently bullets follow "Accomplished [X] as measured by [Y], by doing [Z]".'],
+  ['numbers', 'Hard numbers', 'Claims backed by concrete figures rather than "improved performance".'],
+  ['skills', 'Skills shown', 'Skills listed that are proven in Experience and Projects bullets.'],
+  ['ownership', 'Ownership', 'Strong, specific action verbs rather than "helped with" or "responsible for".'],
+  ['clarity', 'Clarity', 'Short, high-impact bullets with no filler.'],
+];
+const XYZ = ['X', 'Y', 'Z'];
+
+// The letter for a score, so the two never disagree.
+export function letterGrade(score) {
+  const steps = [[97, 'A+'], [93, 'A'], [90, 'A-'], [87, 'B+'], [83, 'B'], [80, 'B-'], [77, 'C+'], [73, 'C'], [70, 'C-'], [67, 'D+'], [63, 'D'], [60, 'D-']];
+  return steps.find(([min]) => score >= min)?.[1] ?? 'F';
+}
+
+const REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['score', 'skim', 'rubric', 'bullets', 'unprovenSkills', 'biggestWeakness', 'fromApplications'],
   properties: {
-    suggestions: {
-      type: 'array',
+    score: { type: 'integer', description: 'Overall score from 1 to 100, held to top-tier industry standards.' },
+    skim: { type: 'string', description: '2 to 3 sentences: what catches the eye in a 6-second skim, and where the resume loses momentum.' },
+    rubric: {
+      type: 'array', description: 'One entry for each rubric item, in the order given.',
       items: {
-        type: 'object', additionalProperties: false,
-        required: ['title', 'why', 'change', 'section', 'keywords', 'lines', 'rewrites'],
+        type: 'object', additionalProperties: false, required: ['id', 'score', 'note'],
         properties: {
-          title: { type: 'string', description: 'The change in a few words, like "Lead with your projects".' },
-          why: { type: 'string', description: 'One or two sentences on why, pointing at a number or skill from the data given.' },
-          change: { type: 'string', description: 'Exactly what to change in the resume, concrete enough to do in ten minutes.' },
-          section: { type: 'string', enum: SECTIONS },
-          keywords: { type: 'array', items: { type: 'string' }, description: 'Skills from the given lists this suggestion is about, spelled as given. Empty if none.' },
-          lines: { type: 'array', items: { type: 'string' }, description: 'Lines copied exactly from the resume that this suggestion is about, so they can be highlighted. Empty if it is about something the resume lacks.' },
-          rewrites: {
-            type: 'array', description: 'Up to 2 of those lines rewritten as suggested, keeping them true. Empty if the change is not a rewording.',
-            items: {
-              type: 'object', additionalProperties: false, required: ['from', 'to'],
-              properties: { from: { type: 'string', description: 'A line copied exactly from the resume.' }, to: { type: 'string' } },
-            },
-          },
+          id: { type: 'string', enum: RUBRIC.map(([id]) => id) },
+          score: { type: 'integer', description: '1 to 10.' },
+          note: { type: 'string', description: 'One or two sentences on why, naming specific bullets or skills.' },
+        },
+      },
+    },
+    bullets: {
+      type: 'array', description: 'Every bullet that fails the XYZ test or lacks metrics, in resume order.',
+      items: {
+        type: 'object', additionalProperties: false, required: ['line', 'missing', 'note', 'rewrite'],
+        properties: {
+          line: { type: 'string', description: 'The bullet copied exactly from the resume, without its bullet mark.' },
+          missing: { type: 'array', items: { type: 'string', enum: XYZ }, description: 'Which parts of X (the accomplishment), Y (the measure) and Z (how) are missing.' },
+          note: { type: 'string', description: 'What is missing, e.g. "Missing Y: no metric" or "Missing X: only lists the tech used, not the outcome".' },
+          rewrite: { type: 'string', description: 'The bullet rewritten in strict XYZ form. Use [X%] or [N] placeholders where a real metric is needed; never invent numbers.' },
+        },
+      },
+    },
+    unprovenSkills: { type: 'array', items: { type: 'string' }, description: 'Skills or tools from the skills section with no evidence in any bullet, spelled as in the resume.' },
+    biggestWeakness: { type: 'string', description: 'The single biggest thing holding the resume back from an A.' },
+    fromApplications: {
+      type: 'array', description: 'Up to 3 changes backed by how their applications went and the job descriptions given. Empty if there are no applications or nothing they show.',
+      items: {
+        type: 'object', additionalProperties: false, required: ['title', 'why', 'change'],
+        properties: {
+          title: { type: 'string', description: 'The change in a few words.' },
+          why: { type: 'string', description: 'The numbers or job descriptions it rests on.' },
+          change: { type: 'string', description: 'Exactly what to change.' },
         },
       },
     },
   },
 };
-const SUGGESTIONS_SYSTEM = `You help a job seeker improve their resume. Each suggestion is shown beside their resume with the lines it's about highlighted, so name those lines (copied exactly) whenever a suggestion is about particular lines, and give a rewrite when the change is a rewording. You get their current resume (with their name and contact details replaced by placeholders), plain checks on it, how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and the skills named in the postings they applied to, with whether their resume mentions each one and which kinds of role asked for it.
 
-Give 3 to 6 suggestions, most useful first. Each must be specific to this person's resume and backed by the data given: name the number, check or skill it rests on. Read the numbers carefully:
-- movedForward counts online assessments, which some employers send to everyone who applies; reachedInterview is the stronger sign.
-- A group marked tooFewToCompare has too few finished applications to say anything; never call a version or kind of role better on the strength of one, and treat small differences between groups as luck.
-- Weigh a missing skill by whether the person's main kinds of role ask for it; one posting of another kind isn't a gap.
-- If there are no applications yet, review the resume on its own and the checks that failed.
-Don't suggest adding skills the person may not have; suggest showing skills they plausibly have but don't mention, and say to add them only if true. Don't invent facts about the person. A rewrite must never add a number or result the original line doesn't have: where a figure would help, write a placeholder such as [X%] for them to fill in. Write plainly, in the second person, without jargon.`;
+const REVIEW_SYSTEM = `Act as a strict senior technical recruiter and hiring manager. Grade the resume objectively on its own merits. Do not soften your feedback: hold every bullet point to top-tier industry standards. The person's name and contact details are replaced by placeholders; don't mark them down for that.
 
-// What the model is told: the resume (without who you are) and numbers, never company
-// names or emails.
-export function suggestionsInput({ resumeText, versionName, insights, apps }) {
+1. Overall score (1 to 100), and in 2 to 3 sentences what catches your eye during a 6-second skim and where the resume loses momentum.
+2. Score each rubric item from 1 to 10:
+${RUBRIC.map(([, name, about], i) => `   ${i + 1}. ${name}: ${about}`).join('\n')}
+   For Hard numbers, flag vague claims like "improved performance" or "worked on scalability". For Skills shown, cross-check the skills section against Experience and Projects.
+3. List every bullet that fails the Google XYZ test ("Accomplished [X] as measured by [Y], by doing [Z]") or lacks metrics. Say what is missing and rewrite it in strict XYZ form, using [X%] or [N] placeholders where real metrics need to be added. Never invent numbers, employers, tools or results.
+4. List skills or tools in the skills section with no evidence in the bullets, and name the single biggest weakness holding the resume back from an A.
+
+You also get how their applications went (which reached an assessment or interview, which were rejected or got no reply), grouped by resume version and kind of role, and some job descriptions they pasted. If there are applications, give up to 3 changes these support. Read the numbers carefully: movedForward counts online assessments, which some employers send to everyone, while reachedInterview is the stronger sign; a group marked tooFewToCompare is too small to say anything, and small differences between groups are luck. Otherwise leave fromApplications empty.
+
+Write plainly, in the second person.`;
+
+// Pasted job descriptions, most recent first, cut short: enough for the AI to see what the
+// roles ask for without sending pages of text.
+const MAX_POSTINGS = 12;
+const POSTING_CHARS = 1500;
+
+// What the model is told: the resume (without who you are), how applications went, and the
+// job descriptions you pasted. Never your emails.
+export function reviewInput({ resumeText, versionName, insights, apps }) {
   const rate = g => ({
     applications: g.total, finished: g.counted, movedForward: g.forward, reachedInterview: g.interviews,
     ...(g.counted < MIN_GROUP && { tooFewToCompare: true }),
@@ -212,184 +261,231 @@ export function suggestionsInput({ resumeText, versionName, insights, apps }) {
     byVersion: insights.byVersion.map(g => ({ version: g.name, ...rate(g) })),
     byKindOfRole: insights.byFunction.filter(g => g.counted).map(g => ({ kind: g.key, ...rate(g) })),
     byLevel: insights.byLevel.filter(g => g.counted).map(g => ({ level: g.key, ...rate(g) })),
-    skillsMissingFromResume: insights.keywords.missing.slice(0, 25).map(k => ({ skill: k.name, postings: k.postings, movedForward: k.forward, askedForBy: k.kinds })),
-    skillsInResume: insights.keywords.matched.slice(0, 25).map(k => ({ skill: k.name, postings: k.postings, movedForward: k.forward })),
-    checksThatFailed: insights.checks.filter(c => !c.ok).map(c => `${c.title}: ${c.detail}`),
     // The most recent applications: title, how it went, and which version was sent.
-    applications: apps.slice(0, 60),
+    applications: apps.slice(0, 60).map(({ role, outcome, version }) => ({ role, outcome, version })),
+    jobDescriptions: apps.filter(a => a.posting).slice(0, MAX_POSTINGS)
+      .map(a => ({ role: a.role, outcome: a.outcome, text: clip(a.posting, POSTING_CHARS) })),
   };
 }
 
-// Only what holds up: known sections, keywords that were in the lists given, sane lengths.
-// Lines and rewrites only count when they really are lines of the resume.
-export function checkSuggestions(out, input) {
-  const known = new Map([...input.skillsMissingFromResume, ...input.skillsInResume].map(k => [k.skill.toLowerCase(), k.skill]));
-  const inResume = q => findLine(input.resume ?? '', q) >= 0;
-  return (Array.isArray(out?.suggestions) ? out.suggestions : [])
-    .map(s => ({
-      id: crypto.randomUUID(),
-      title: clip(s.title, 90),
-      why: clip(s.why, 400),
-      change: clip(s.change, 600),
-      section: SECTIONS.includes(s.section) ? s.section : 'Overall',
-      keywords: [...new Set((s.keywords || []).map(k => known.get(String(k).toLowerCase())).filter(Boolean))].slice(0, 6),
-      lines: [...new Set((Array.isArray(s.lines) ? s.lines : []).map(l => clip(l, 400)).filter(inResume))].slice(0, 6),
-      rewrites: (Array.isArray(s.rewrites) ? s.rewrites : [])
-        .filter(r => inResume(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from) && !addsNumbers(r.from, r.to))
-        .map(r => ({ from: clip(r.from, 400), to: clip(r.to, 400) }))
-        .slice(0, 2),
-      state: 'open',
-    }))
-    .filter(s => s.title && s.change)
-    .slice(0, 6);
+const clamp = (n, lo, hi, fallback) => (Number.isFinite(Number(n)) ? Math.min(hi, Math.max(lo, Math.round(Number(n)))) : fallback);
+
+// Only what holds up: rubric items it knows, bullets that are really in the resume,
+// rewrites that don't make up numbers, skills that the resume really lists.
+export function checkReview(out, input) {
+  const resume = input.resume ?? '';
+  const resumeLoose = loose(resume);
+  const score = clamp(out?.score, 1, 100, null);
+  if (score == null) return null;
+  const given = new Map((Array.isArray(out.rubric) ? out.rubric : []).map(r => [r?.id, r]));
+  const rubric = RUBRIC.map(([id, name]) => {
+    const r = given.get(id);
+    return { id, name, score: clamp(r?.score, 1, 10, null), note: clip(r?.note, 300) };
+  }).filter(r => r.score != null);
+  const seen = new Set();
+  const bullets = (Array.isArray(out.bullets) ? out.bullets : [])
+    .map(b => ({ line: clip(b?.line, 400), missing: XYZ.filter(p => (b?.missing || []).includes(p)), note: clip(b?.note, 200), rewrite: clip(b?.rewrite, 400) }))
+    .filter(b => {
+      const at = findLine(resume, b.line);
+      if (at < 0 || seen.has(at)) return false;
+      seen.add(at);
+      if (!b.rewrite || loose(b.rewrite) === loose(b.line) || addsNumbers(b.line, b.rewrite)) b.rewrite = '';
+      return true;
+    })
+    .slice(0, 25)
+    .map(b => ({ id: crypto.randomUUID(), ...b, state: 'open' }));
+  return {
+    score,
+    grade: letterGrade(score),
+    skim: clip(out.skim, 500),
+    rubric,
+    bullets,
+    unprovenSkills: [...new Set((Array.isArray(out.unprovenSkills) ? out.unprovenSkills : [])
+      .map(s => clip(s, 40)).filter(s => s && resumeLoose.includes(loose(s))))].slice(0, 12),
+    biggestWeakness: clip(out.biggestWeakness, 400),
+    fromApplications: input.overall?.applications
+      ? (Array.isArray(out.fromApplications) ? out.fromApplications : [])
+        .map(s => ({ id: crypto.randomUUID(), title: clip(s?.title, 90), why: clip(s?.why, 400), change: clip(s?.change, 600), state: 'open' }))
+        .filter(s => s.title && s.change).slice(0, 3)
+      : [],
+  };
 }
 
-export async function writeSuggestions(input, { client: given } = {}) {
+export async function writeReview(input, { client: given } = {}) {
   const out = await ask({
-    name: 'resume_suggestions', schema: SUGGESTIONS_SCHEMA, system: SUGGESTIONS_SYSTEM,
-    user: JSON.stringify(input), client: given,
+    name: 'resume_review', schema: REVIEW_SCHEMA, system: REVIEW_SYSTEM,
+    user: JSON.stringify(input), client: given, maxTokens: 12_000,
   });
-  const items = checkSuggestions(out, input);
-  if (!items.length) throw new Error("The AI didn't come up with anything useful this time. Try again later");
-  return items;
+  const review = checkReview(out, input);
+  if (!review || review.rubric.length < RUBRIC.length) throw new Error("The AI's review didn't come back complete. Try again later");
+  return review;
 }
 
-// ---- check one application's fit ------------------------------------------------------
+// ---- tailoring: the resume against one job description ---------------------------------
 
 const FIT_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['match', 'summary', 'matched', 'missing', 'rewrites'],
+  required: ['score', 'summary', 'matched', 'missingKeywords', 'redFlags', 'rewrites', 'skipped'],
   properties: {
-    match: { type: 'string', enum: ['strong', 'partial', 'weak'] },
-    summary: { type: 'string', description: 'Two sentences at most on how well the resume fits this posting.' },
-    matched: { type: 'array', items: { type: 'string' }, description: 'Requirements from the posting the resume shows, in the posting\'s own words.' },
-    missing: { type: 'array', items: { type: 'string' }, description: 'Requirements from the posting the resume doesn\'t show, in the posting\'s own words.' },
+    score: { type: 'integer', description: 'How well the resume matches this job, 0 to 100.' },
+    summary: { type: 'string', description: 'Two sentences at most on the match.' },
+    matched: { type: 'array', items: { type: 'string' }, description: "Requirements from the posting the resume shows, in the posting's own words." },
+    missingKeywords: { type: 'array', items: { type: 'string' }, description: "The top 5 keywords from the posting missing from the resume, in the posting's own words, most important first." },
+    redFlags: { type: 'array', items: { type: 'string' }, description: 'The 3 red flags a hiring manager would spot in under 10 seconds.' },
     rewrites: {
-      type: 'array',
+      type: 'array', description: 'Experience and project bullets rewritten to include the keywords naturally and remove the red flags, in XYZ form.',
       items: {
         type: 'object', additionalProperties: false, required: ['from', 'to', 'why'],
         properties: {
-          from: { type: 'string', description: 'A line copied exactly from the resume.' },
-          to: { type: 'string', description: 'That line rewritten for this posting, keeping it true.' },
-          why: { type: 'string', description: 'What the rewrite brings out for this posting.' },
+          from: { type: 'string', description: 'A bullet copied exactly from the resume.' },
+          to: { type: 'string', description: 'The rewrite, "Accomplished X as measured by Y by doing Z". Use [X%] or [N] where a real metric is needed; never invent numbers.' },
+          why: { type: 'string', description: 'Which keyword or red flag it handles.' },
+        },
+      },
+    },
+    skipped: {
+      type: 'array', description: 'Sections an ATS filter or a hiring manager reading 200 resumes would skip, with a rewrite that stops the scroll.',
+      items: {
+        type: 'object', additionalProperties: false, required: ['section', 'why', 'rewrite'],
+        properties: {
+          section: { type: 'string', description: 'The section heading as it appears in the resume.' },
+          why: { type: 'string', description: 'Why it gets skipped.' },
+          rewrite: { type: 'string', description: 'The section rewritten, lines separated by newlines. Placeholders for metrics; no invented facts.' },
         },
       },
     },
   },
 };
-const FIT_SYSTEM = `You compare a job seeker's resume with one job description. Their name and contact details are replaced by placeholders. Say how well it matches (strong, partial or weak) and why in plain words. List requirements from the posting that the resume shows and ones it doesn't, quoting short phrases from the posting itself. Then suggest up to 3 rewrites of existing resume lines that would speak better to this posting: copy each original line exactly, and keep every rewrite true to what the line says (reword and reorder, don't invent, and never add a number the line doesn't have). Write in the second person.`;
 
-// Keep what can be checked: requirements quoted from the posting, rewrites of real lines.
+const FIT_SYSTEM = `Act as a senior recruiter for the company hiring for this job. The person's name and contact details are replaced by placeholders.
+
+1. Analyse the resume against the job description: give a match score out of 100, the requirements it shows, the top 5 missing keywords and the 3 red flags a hiring manager would spot in under 10 seconds.
+2. Rewrite the experience (and project) bullets to naturally include those keywords and remove the red flags, using the Google XYZ formula: "Accomplished X as measured by Y by doing Z". Copy each original bullet exactly. Keep every rewrite true to what the bullet says: reword and reorder, use [X%] or [N] placeholders where a metric is needed, and never invent numbers, tools or results the person didn't mention.
+3. Act as an ATS filter and a hiring manager reading 200 resumes in one sitting. Name the sections that would get skipped and rewrite them so they stop the scroll, with the same rules.
+
+Quote keywords and requirements in the posting's own words. Write plainly, in the second person.`;
+
+// The label for a match score.
+export const matchOf = score => (score >= 75 ? 'strong' : score >= 50 ? 'partial' : 'weak');
+
+// Keep what can be checked: keywords and requirements quoted from the posting, rewrites of
+// real lines that don't make up numbers, sections the resume really has.
 export function checkFit(out, { resumeText, posting }) {
   const postingLoose = loose(posting);
-  const fromPosting = list => [...new Set((Array.isArray(list) ? list : []).map(x => clip(x, 80)).filter(x => x && postingLoose.includes(loose(x))))].slice(0, 8);
-  const resumeHasLine = from => findLine(resumeText, from) >= 0;
+  const fromPosting = (list, n) => [...new Set((Array.isArray(list) ? list : []).map(x => clip(x, 80)).filter(x => x && postingLoose.includes(loose(x))))].slice(0, n);
+  const lines = String(resumeText).split('\n');
+  const isHeading = name => lines.some(l => loose(l) === loose(name));
+  const score = clamp(out?.score, 0, 100, 50);
   return {
-    match: ['strong', 'partial', 'weak'].includes(out?.match) ? out.match : 'partial',
+    score,
+    match: matchOf(score),
     summary: clip(out?.summary, 400),
-    matched: fromPosting(out?.matched),
-    missing: fromPosting(out?.missing),
+    matched: fromPosting(out?.matched, 8),
+    missingKeywords: fromPosting(out?.missingKeywords, 5),
+    redFlags: (Array.isArray(out?.redFlags) ? out.redFlags : []).map(x => clip(x, 200)).filter(Boolean).slice(0, 3),
     rewrites: (Array.isArray(out?.rewrites) ? out.rewrites : [])
-      .filter(r => resumeHasLine(r?.from) && clip(r?.to, 400) && loose(r.to) !== loose(r.from) && !addsNumbers(r.from, r.to))
+      .filter(r => findLine(resumeText, r?.from) >= 0 && clip(r?.to, 400) && loose(r.to) !== loose(r.from) && !addsNumbers(r.from, r.to))
       .map(r => ({ from: clip(r.from, 400), to: clip(r.to, 400), why: clip(r.why, 200) }))
-      .slice(0, 3),
+      .slice(0, 10),
+    skipped: (Array.isArray(out?.skipped) ? out.skipped : [])
+      .filter(s => clip(s?.section, 60) && isHeading(s.section) && clip(s?.rewrite, 3000) && !addsNumbers(sectionText(lines, s.section), s.rewrite))
+      .map(s => ({ section: clip(s.section, 60), why: clip(s.why, 300), rewrite: clip(s.rewrite, 3000) }))
+      .slice(0, 4),
   };
 }
 
-export async function checkApplicationFit({ resumeText, posting, role }, { client: given } = {}) {
+// The text under a heading, up to the next heading-looking line, to check a section rewrite
+// against.
+function sectionText(lines, heading) {
+  const at = lines.findIndex(l => loose(l) === loose(heading));
+  const rest = lines.slice(at + 1);
+  const end = rest.findIndex(l => /^[^a-z]{3,40}$/.test(l.trim()) && /[A-Z]/.test(l));
+  return (end < 0 ? rest : rest.slice(0, end)).join('\n');
+}
+
+export async function checkApplicationFit({ resumeText, posting, role, company }, { client: given } = {}) {
   const out = await ask({
-    name: 'resume_fit', schema: FIT_SCHEMA, system: FIT_SYSTEM, client: given,
-    user: JSON.stringify({ role, jobDescription: posting, resume: withoutContact(resumeText) }),
+    name: 'resume_fit', schema: FIT_SCHEMA, system: FIT_SYSTEM, client: given, maxTokens: 10_000,
+    user: JSON.stringify({ company: company || undefined, role: role || undefined, jobDescription: posting, resume: withoutContact(resumeText) }),
   });
   return checkFit(out, { resumeText, posting });
 }
 
-// ---- demo mode: no key, so answers are put together from the same data -----------------
+// ---- demo mode: no key, so answers are put together from the same text ------------------
+// Rough stand-ins so the page can be tried without an OpenAI key. Real answers come from the
+// model; nothing here is used when there is one.
 
-export function demoSuggestions(input) {
-  const bullets = (input.resume ?? '').split('\n').filter(l => /^\s*•/.test(l)).map(l => l.replace(/^\s*•\s*/, ''));
+const demoBullets = resume => resume.split('\n').filter(l => /^\s*•/.test(l)).map(l => l.replace(/^\s*•\s*/, ''));
+const WEAK_START = /^(responsible for|helped|assisted|worked on|participated in|involved in)\b/i;
+
+export function demoReview(input) {
+  const resume = input.resume ?? '';
+  const bullets = demoBullets(resume);
   const noNumber = bullets.filter(b => !/\d/.test(b));
-  // Bullets whose result comes at the end ("…, raising sign-ups by 18%"), and the line
-  // under the Skills heading.
-  const resultLast = bullets.filter(b => frontResult(b));
-  const lines = (input.resume ?? '').split('\n');
+  const weak = bullets.filter(b => WEAK_START.test(b));
+  const long = bullets.filter(b => b.split(/\s+/).length > 30);
+  const share = bullets.length ? 1 - noNumber.length / bullets.length : 0;
+  const lines = resume.split('\n');
   const skillsAt = lines.findIndex(l => /^\s*(technical )?skills\s*:?\s*$/i.test(l));
-  const skillsLine = skillsAt >= 0 ? lines[skillsAt + 1] ?? '' : '';
-  const missing = input.skillsMissingFromResume.filter(k => k.movedForward).slice(0, 3);
-  // Only groups with enough finished applications to mean something, as on the page.
-  const rate = g => g.movedForward / g.finished;
-  const best = input.byKindOfRole.filter(g => g.finished >= 5 && g.kind !== 'Not known').sort((a, b) => rate(b) - rate(a))[0];
-  const current = input.byVersion.find(g => g.version === input.currentVersion);
-  const older = input.byVersion.filter(g => g !== current && g.finished >= 5);
-  const items = [
-    missing.length && {
-      title: `Show ${missing.map(k => k.skill).join(', ')} if you've used ${missing.length > 1 ? 'them' : 'it'}`,
-      why: `${missing[0].skill} is in ${missing[0].postings} of your postings, and ${missing[0].movedForward} of those moved forward, but your resume never names it.`,
-      change: `If you've used ${missing.length > 1 ? 'these' : 'it'} in a project or job, name ${missing.length > 1 ? 'them' : 'it'} in that bullet and add ${missing.length > 1 ? 'them' : 'it'} to your Skills line. If not, leave ${missing.length > 1 ? 'them' : 'it'} out.`,
-      section: 'Skills', keywords: missing.map(k => k.skill), lines: [skillsLine], rewrites: [],
-    },
-    current?.finished >= 5 && older.length && rate(current) > rate(older[0]) && {
-      title: `Keep the shape of ${current.version}`,
-      why: `${current.version} moved forward ${current.movedForward} of ${current.finished} times, against ${older[0].movedForward} of ${older[0].finished} for ${older[0].version}.`,
-      change: 'When you write your next version, start from this one: keep its order of sections and its bullets with numbers, and change one thing at a time so you can see what helps.',
-      section: 'Overall', keywords: [], lines: [], rewrites: [],
-    },
-    best && {
-      title: `Aim more applications at ${best.kind.toLowerCase()} roles`,
-      why: `${best.kind} roles moved forward ${best.movedForward} of ${best.finished} times, your best kind of role so far.`,
-      change: `Put the bullet most relevant to ${best.kind.toLowerCase()} work first under each job, so it's the first thing read.`,
-      section: 'Experience', keywords: [], lines: [], rewrites: [],
-    },
-    noNumber.length && {
-      title: 'Give these bullets a result',
-      why: `${noNumber.length} of your ${bullets.length} bullets have no number in them, so they say what you did but not how it went.`,
-      change: 'Add how many, how much or how fast, where you know it. A rough number ("about 20 users") still helps.',
-      section: 'Experience', keywords: [], lines: noNumber, rewrites: [],
-    },
-    resultLast.length && {
-      title: 'Open these bullets with the result',
-      why: 'Bullets that start with the outcome ("Raised sign-ups by 18%") are easier to skim than ones that end with it.',
-      change: 'Move the result to the front of these bullets, then say how you got it.',
-      section: 'Experience', keywords: [], lines: resultLast.slice(0, 3),
-      rewrites: resultLast.slice(0, 2).map(b => ({ from: b, to: frontResult(b) })),
-    },
-  ].filter(Boolean);
-  return checkSuggestions({ suggestions: items }, input);
-}
-
-// "Rebuilt 6 member pages in JavaScript, raising mobile sign-ups by 18%" ->
-// "Raised mobile sign-ups by 18% by rebuilding…": only for the demo, and only that shape.
-function frontResult(bullet) {
-  const m = bullet.match(/^(.+?),\s+(raising|cutting|saving|reducing|increasing|growing)\s+(.+)$/i);
-  if (!m) return '';
-  const verb = { raising: 'Raised', cutting: 'Cut', saving: 'Saved', reducing: 'Reduced', increasing: 'Increased', growing: 'Grew' }[m[2].toLowerCase()];
-  // "Rebuilt 6 pages" -> "rebuilding 6 pages"
-  const IRREGULAR = { rebuilt: 'rebuilding', built: 'building', led: 'leading', wrote: 'writing', ran: 'running', made: 'making', cut: 'cutting' };
-  const [first, ...rest] = m[1].split(' ');
-  const lower = first.toLowerCase();
-  const doing = IRREGULAR[lower] ?? (lower.endsWith('ed') ? `${lower.slice(0, -2)}ing` : '');
-  if (!doing) return '';
-  return `${verb} ${m[3].replace(/\.$/, '')} by ${[doing, ...rest].join(' ')}`;
+  const listed = skillsAt >= 0 ? (lines[skillsAt + 1] ?? '').split(/[,;|·]/).map(s => s.trim()).filter(Boolean) : [];
+  const shown = bullets.join(' ').toLowerCase();
+  const unproven = listed.filter(s => !shown.includes(s.toLowerCase()));
+  const ten = n => Math.max(1, Math.min(10, Math.round(n)));
+  const rubric = {
+    xyz: ten(2 + share * 7), numbers: ten(1 + share * 9), skills: ten(10 - unproven.length * 1.5),
+    ownership: ten(9 - weak.length * 2), clarity: ten(9 - long.length * 2),
+  };
+  const score = Math.round(Object.values(rubric).reduce((a, b) => a + b, 0) * 2);
+  const xyz = b => `${b.replace(/\.$/, '')}, raising [X] by [Y%]`;
+  return checkReview({
+    score,
+    skim: `The projects with named tools stand out first. ${noNumber.length} of ${bullets.length} bullets have no number, so the resume loses momentum in the middle.`,
+    rubric: [
+      { id: 'xyz', score: rubric.xyz, note: `${bullets.length - noNumber.length} of ${bullets.length} bullets give a result with a measure.` },
+      { id: 'numbers', score: rubric.numbers, note: noNumber.length ? `"${noNumber[0]}" makes a claim with nothing to measure it by.` : 'Every bullet has a figure.' },
+      { id: 'skills', score: rubric.skills, note: unproven.length ? `${unproven.slice(0, 3).join(', ')} ${unproven.length === 1 ? 'is' : 'are'} listed but never used in a bullet.` : 'Every listed skill shows up in a bullet.' },
+      { id: 'ownership', score: rubric.ownership, note: weak.length ? `"${weak[0].match(WEAK_START)[0]}" hides what you did yourself.` : 'Bullets open with what you did.' },
+      { id: 'clarity', score: rubric.clarity, note: long.length ? `${long.length} bullets run past two lines.` : 'Bullets are short enough to skim.' },
+    ],
+    bullets: [...new Set([...weak, ...noNumber])].map(b => ({
+      line: b,
+      missing: WEAK_START.test(b) ? ['X', 'Y'] : ['Y'],
+      note: WEAK_START.test(b) ? 'Missing X: describes a duty, not an outcome' : 'Missing Y: no metric',
+      rewrite: xyz(b.replace(WEAK_START, '').trim()),
+    })),
+    unprovenSkills: unproven,
+    biggestWeakness: noNumber.length > unproven.length
+      ? 'Too many bullets say what you did without how it turned out. Numbers on those would move this to the next grade.'
+      : 'Your skills line claims more than your bullets show. Prove each skill in a bullet, or cut it.',
+    fromApplications: input.overall?.applications ? [{
+      title: 'Lead with your projects',
+      why: `${input.overall.reachedInterview} of your ${input.overall.finished} finished applications reached an interview.`,
+      change: 'Move Projects above Experience so the work with the most named tools is read first.',
+    }] : [],
+  }, input);
 }
 
 export function demoFit({ resumeText, posting }) {
-  const inPosting = [...findSkills(posting)];
-  const inResume = findSkills(resumeText);
-  const matched = inPosting.filter(s => inResume.has(s));
-  const missing = inPosting.filter(s => !inResume.has(s));
-  const share = inPosting.length ? matched.length / inPosting.length : 0;
-  const line = resumeText.split('\n').find(l => /^\s*•/.test(l) && /\d/.test(l));
-  // The posting's own spelling, so the result passes the same checks a real one does.
-  const asWritten = name => posting.match(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))?.[0] ?? name;
+  // Words the posting writes like tools (capitalised or with . + #) that the resume never names.
+  const resume = loose(resumeText);
+  const terms = [...new Set(posting.match(/\b[A-Z][\w.+#-]*[\w+#]|\b\w+\.js\b/g) ?? [])].filter(t => t.length > 1 && !/^(We|You|The|Our|This|In|An|And|To|With|For|A|I)$/.test(t));
+  const have = terms.filter(t => resume.includes(loose(t)));
+  const missing = terms.filter(t => !resume.includes(loose(t)));
+  const score = terms.length ? Math.round(30 + (have.length / terms.length) * 60) : 50;
+  const bullets = demoBullets(resumeText);
   return checkFit({
-    match: share >= 0.6 ? 'strong' : share >= 0.3 ? 'partial' : 'weak',
-    summary: `Your resume shows ${matched.length} of the ${inPosting.length} skills this posting names.${missing.length ? ` The biggest gap is ${missing[0]}.` : ''}`,
-    matched: matched.map(asWritten),
-    missing: missing.map(asWritten),
-    rewrites: line ? [{
-      from: line.replace(/^\s*•\s*/, ''),
-      to: `${line.replace(/^\s*•\s*/, '').replace(/\.$/, '')}${matched[0] ? `, using ${matched[0]}` : ''}`,
-      why: matched[0] ? `Names ${matched[0]}, which this posting asks for.` : 'Puts the result first.',
-    }] : [],
+    score,
+    summary: `Your resume names ${have.length} of the ${terms.length} tools this posting mentions.${missing.length ? ` The biggest gap is ${missing[0]}.` : ''}`,
+    matched: have,
+    missingKeywords: missing,
+    redFlags: [
+      bullets.some(b => !/\d/.test(b)) ? 'Several bullets have no result a reader can measure.' : 'Results are there but buried at the end of bullets.',
+      missing.length ? `${missing[0]} is in the posting but nowhere in your resume.` : 'The summary is generic rather than written for this role.',
+      'Skills are listed without showing where you used them.',
+    ],
+    rewrites: bullets.filter(b => /\d/.test(b)).slice(0, 2).map(b => ({
+      from: b, to: `${b.replace(/\.$/, '')}${have[0] ? `, using ${have[0]}` : ''}`, why: have[0] ? `Names ${have[0]}, which this posting asks for.` : 'Puts the result first.',
+    })),
+    skipped: [],
   }, { resumeText, posting });
 }

@@ -69,113 +69,144 @@ test('asking with the same inputs gives the same fingerprint, so it isn\'t run a
   assert.notEqual(ai.hashOf(input), ai.hashOf({ ...input, resume: 'new text' }));
 });
 
-const input = {
-  skillsMissingFromResume: [{ skill: 'Kubernetes', postings: 3, movedForward: 2 }],
-  skillsInResume: [{ skill: 'React', postings: 2, movedForward: 1 }],
-};
 
-test('suggestions keep only known sections and keywords that were in the lists given', () => {
-  const items = ai.checkSuggestions({ suggestions: [
-    { title: 'Name Kubernetes', why: 'In 3 postings', change: 'Add it to Skills if true', section: 'Skills', keywords: ['kubernetes', 'Rust'] },
-    { title: 'Whatever', why: '', change: 'Do a thing', section: 'Hobbies', keywords: [] },
-    { title: '', why: 'No title', change: 'x', section: 'Skills', keywords: [] },
-  ] }, input);
-  assert.equal(items.length, 2);
-  assert.deepEqual(items[0].keywords, ['Kubernetes']); // Rust was never in the data
-  assert.equal(items[1].section, 'Overall');
-  assert.ok(items.every(s => s.state === 'open' && s.id));
+const resume = '[Name]\n[Contact details]\nExperience\n• Responsible for the sign-up page\n• Cut load time by 40% across 3 pages\nSkills\nReact, Kubernetes, Figma';
+const reviewOut = (extra = {}) => ({
+  score: 64,
+  skim: 'Clean layout; loses momentum in Experience.',
+  rubric: [
+    { id: 'xyz', score: 4, note: 'Half the bullets are duties.' },
+    { id: 'numbers', score: 5, note: 'One figure.' },
+    { id: 'skills', score: 3, note: 'Kubernetes is never used.' },
+    { id: 'ownership', score: 12, note: 'Scores past 10 are capped.' },
+    { id: 'clarity', score: 7, note: '' },
+    { id: 'charisma', score: 9, note: 'Not a rubric item.' },
+  ],
+  bullets: [
+    { line: 'Responsible for the sign-up page', missing: ['X', 'Y', 'Q'], note: 'Missing X: a duty, not an outcome', rewrite: 'Raised sign-ups by [X%] by rebuilding the sign-up page' },
+    { line: 'responsible for the sign-up page', missing: ['Y'], note: 'Same bullet again', rewrite: 'x' },
+    { line: 'Led a team of 40 engineers', missing: ['Y'], note: 'Not in the resume', rewrite: 'y' },
+    { line: 'Cut load time by 40% across 3 pages', missing: ['Z'], note: 'Missing Z', rewrite: 'Cut load time by 40% across 3 pages for 10,000 users by caching' },
+  ],
+  unprovenSkills: ['Kubernetes', 'Rust'],
+  biggestWeakness: 'Duties, not results.',
+  fromApplications: [{ title: 'Lead with projects', why: 'Interviews came from project-heavy roles', change: 'Move Projects up' }],
+  ...extra,
 });
 
-test('suggestions come back from the model, and a cut-off or failed answer is a plain error', async () => {
-  const out = { suggestions: [{ title: 'Name Kubernetes', why: 'In 3 postings', change: 'Add it', section: 'Skills', keywords: ['Kubernetes'] }] };
-  const items = await ai.writeSuggestions(input, { client: fakeClient(out) });
-  assert.equal(items[0].title, 'Name Kubernetes');
+test('a review keeps what holds up: known rubric items, real bullets, honest rewrites, listed skills', () => {
+  const rv = ai.checkReview(reviewOut(), { resume, overall: { applications: 4 } });
+  assert.equal(rv.score, 64);
+  assert.equal(rv.grade, 'D'); // from the score, so the two agree
+  assert.deepEqual(rv.rubric.map(r => r.id), ['xyz', 'numbers', 'skills', 'ownership', 'clarity']);
+  assert.equal(rv.rubric.find(r => r.id === 'ownership').score, 10);
+  assert.equal(rv.bullets.length, 2); // the repeat and the made-up line are dropped
+  assert.deepEqual(rv.bullets[0].missing, ['X', 'Y']);
+  assert.match(rv.bullets[0].rewrite, /\[X%\]/); // a placeholder is fine
+  assert.equal(rv.bullets[1].rewrite, ''); // "10,000 users" was made up
+  assert.ok(rv.bullets.every(b => b.id && b.state === 'open'));
+  assert.deepEqual(rv.unprovenSkills, ['Kubernetes']); // Rust isn't on the resume at all
+  assert.equal(rv.fromApplications.length, 1);
+  assert.equal(ai.checkReview(reviewOut(), { resume, overall: { applications: 0 } }).fromApplications.length, 0);
+  assert.equal(ai.checkReview({ ...reviewOut(), score: 'great' }, { resume }), null);
+});
+
+test('letter grades follow the score', () => {
+  assert.deepEqual([98, 93, 90, 85, 72, 61, 40].map(ai.letterGrade), ['A+', 'A', 'A-', 'B', 'C-', 'D-', 'F']);
+});
+
+test('a review comes back from the model, and a cut-off or incomplete one is a plain error', async () => {
+  const input = { resume, overall: { applications: 0 } };
+  const rv = await ai.writeReview(input, { client: fakeClient(reviewOut()) });
+  assert.equal(rv.grade, 'D');
   assert.equal(fakeClient.last.response_format.json_schema.strict, true);
-  assert.ok(!JSON.stringify(fakeClient.last.messages).includes('company'), 'no company names are sent');
-  await assert.rejects(ai.writeSuggestions(input, { client: fakeClient(out, { finish: 'length' }) }), /couldn't finish/);
-  await assert.rejects(ai.writeSuggestions(input, { client: fakeClient(out, { fail: 429 }) }), /busy/);
-  await assert.rejects(ai.writeSuggestions(input, { client: fakeClient({ suggestions: [] }) }), /anything useful/);
+  assert.ok(fakeClient.last.max_completion_tokens > 4096, 'a full review needs room');
+  assert.match(fakeClient.last.messages[0].content, /XYZ/);
+  await assert.rejects(ai.writeReview(input, { client: fakeClient(reviewOut(), { finish: 'length' }) }), /couldn't finish/);
+  await assert.rejects(ai.writeReview(input, { client: fakeClient(reviewOut(), { fail: 429 }) }), /busy/);
+  await assert.rejects(ai.writeReview(input, { client: fakeClient(reviewOut({ rubric: [] })) }), /complete/);
 });
 
-test('check fit keeps requirements from the posting and rewrites of real resume lines', () => {
-  const resumeText = 'Experience\n• Built a REST API used by 1,200 people\n• Fixed bugs';
-  const posting = 'You will build REST APIs in Node.js. Experience with Kubernetes is a plus.';
+test('tailoring keeps keywords from the posting, real bullets, sections the resume has, and no made-up numbers', () => {
+  const resumeText = 'Experience\n• Built a REST API used by 1,200 people\n• Fixed bugs\nSKILLS\nReact';
+  const posting = 'You will build REST APIs in Node.js with GraphQL. Experience with Kubernetes and Terraform is a plus. Agile teams.';
   const fit = ai.checkFit({
-    match: 'great', summary: 'Close.',
-    matched: ['REST APIs', 'Python'], missing: ['Kubernetes', 'ten years of Rust'],
+    score: 140, summary: 'Close.',
+    matched: ['REST APIs', 'Python'],
+    missingKeywords: ['Kubernetes', 'Node.js', 'GraphQL', 'Terraform', 'Agile', 'Rust'],
+    redFlags: ['No metrics on half the bullets', 'No cloud work', 'Generic skills line', 'A fourth'],
     rewrites: [
       { from: 'Built a REST API used by 1,200 people', to: 'Built a Node.js REST API used by 1,200 people', why: 'Names Node.js' },
-      { from: 'Led a team of 40 engineers', to: 'Led a team', why: 'Made up' },
-      { from: 'Built a REST API used by 1,200 people', to: 'built a rest api used by 1,200 people', why: 'No change' },
+      { from: 'Fixed bugs', to: 'Fixed 30 bugs', why: 'Made up' },
+      { from: 'Led a team of 40 engineers', to: 'Led a team', why: 'Not a line' },
+    ],
+    skipped: [
+      { section: 'Skills', why: 'A bare list', rewrite: 'Languages: React\nTools: [N] more' },
+      { section: 'Awards', why: 'There is no such section', rewrite: 'x' },
     ],
   }, { resumeText, posting });
-  assert.equal(fit.match, 'partial'); // not one of the three answers
+  assert.equal(fit.score, 100);
+  assert.equal(fit.match, 'strong');
   assert.deepEqual(fit.matched, ['REST APIs']);
-  assert.deepEqual(fit.missing, ['Kubernetes']);
-  assert.equal(fit.rewrites.length, 1);
-  assert.match(fit.rewrites[0].to, /Node\.js/);
+  assert.deepEqual(fit.missingKeywords, ['Kubernetes', 'Node.js', 'GraphQL', 'Terraform', 'Agile']);
+  assert.equal(fit.redFlags.length, 3);
+  assert.deepEqual(fit.rewrites.map(r => r.from), ['Built a REST API used by 1,200 people']);
+  assert.deepEqual(fit.skipped.map(x => x.section), ['Skills']);
+  assert.equal(ai.matchOf(60), 'partial');
+  assert.equal(ai.matchOf(20), 'weak');
+});
+
+test('tailoring tells the model the company and role, but not your name', async () => {
+  await ai.checkApplicationFit({ resumeText: 'Sam Example\nsam@example.com\nExperience\n• Built things', posting: 'React', role: 'Frontend Intern', company: 'Contoso' },
+    { client: fakeClient({ score: 50, summary: '', matched: [], missingKeywords: [], redFlags: [], rewrites: [], skipped: [] }) });
+  const sent = JSON.parse(fakeClient.last.messages[1].content);
+  assert.equal(sent.company, 'Contoso');
+  assert.equal(sent.role, 'Frontend Intern');
+  assert.ok(!sent.resume.includes('Sam') && !sent.resume.includes('@'));
 });
 
 test('demo answers pass the same checks', () => {
-  const resumeText = 'Projects\n• Built a REST API in Node.js used by 1,200 people\nSkills\nReact';
-  const posting = 'React, Node.js and Kubernetes';
-  const fit = ai.demoFit({ resumeText, posting });
-  assert.deepEqual(fit.missing, ['Kubernetes']);
-  assert.equal(fit.rewrites.length, 1);
-  const items = ai.demoSuggestions({
-    ...input, byVersion: [], checksThatFailed: [],
-    byKindOfRole: [{ kind: 'Frontend', applications: 6, finished: 5, movedForward: 3 }],
-  });
-  assert.ok(items.length >= 2);
-  assert.deepEqual(items[0].keywords, ['Kubernetes']);
+  const text = 'Sam\nsam@example.com\nExperience\n• Helped with the website\n• Built a REST API in Node.js used by 1,200 people\nSkills\nReact, Node.js, Kubernetes';
+  const rv = ai.demoReview({ resume: text, overall: { applications: 3, finished: 2, reachedInterview: 1 } });
+  assert.ok(rv.score >= 1 && rv.score <= 100);
+  assert.equal(rv.rubric.length, 5);
+  assert.ok(rv.bullets.some(b => b.line === 'Helped with the website'));
+  assert.ok(rv.unprovenSkills.includes('Kubernetes'));
+  const fit = ai.demoFit({ resumeText: text, posting: 'We want React, Node.js and Terraform experience.' });
+  assert.deepEqual(fit.missingKeywords, ['Terraform']);
+  assert.equal(fit.redFlags.length, 3);
 });
 
-test('suggestions keep the resume lines they point at, and drop lines that are not there', () => {
-  const resume = 'Experience\n• Rebuilt 6 member pages in JavaScript, raising sign-ups by 18%\n• Fixed bugs';
-  const [s] = ai.checkSuggestions({ suggestions: [{
-    title: 'Lead with results', why: 'Easier to skim', change: 'Put the result first', section: 'Experience', keywords: [],
-    lines: ['rebuilt 6 member pages in javascript, raising sign-ups by 18%', 'Led a team of 40 engineers'],
-    rewrites: [
-      { from: 'Rebuilt 6 member pages in JavaScript, raising sign-ups by 18%', to: 'Raised sign-ups by 18% by rebuilding 6 pages' },
-      { from: 'Invented the internet in a weekend', to: 'Invented it' },
-    ],
-  }] }, { ...input, resume });
-  assert.equal(s.lines.length, 1);
-  assert.equal(s.rewrites.length, 1);
-  assert.equal(ai.findLine(resume, s.lines[0]), 1);
-  assert.equal(ai.findLine(resume, 'Fixed bugs'), -1); // too short to tell apart
-});
-
-test('a rewrite that adds a number the line did not have is dropped, as made up', () => {
+test('a rewrite that adds a number the line did not have counts as made up', () => {
   assert.equal(ai.addsNumbers('Built the sign-up page', 'Built the sign-up page, raising sign-ups by 40%'), true);
   assert.equal(ai.addsNumbers('Cut load time by 40% across 3 pages', 'Across 3 pages, cut load time by 40%'), false);
   assert.equal(ai.addsNumbers('Built the sign-up page', 'Built the sign-up page, raising sign-ups by [X%]'), false);
-  const resume = 'Experience\n• Built the sign-up page';
-  const [s] = ai.checkSuggestions({ suggestions: [{
-    title: 'Add results', why: 'x', change: 'Say how it went', section: 'Experience', keywords: [], lines: [],
-    rewrites: [{ from: 'Built the sign-up page', to: 'Built the sign-up page, raising sign-ups by 40%' }],
-  }] }, { ...input, resume });
-  assert.equal(s.rewrites.length, 0);
-  const fit = ai.checkFit({ match: 'weak', summary: '', matched: [], missing: [],
-    rewrites: [{ from: 'Built the sign-up page', to: 'Built the sign-up page for 10,000 users', why: '' }] }, { resumeText: resume, posting: 'x' });
-  assert.equal(fit.rewrites.length, 0);
 });
 
-test('the AI is told about small groups and interviews, and never sees your name or contact details', () => {
-  const group = (key, counted, extra = {}) => ({ key, name: key, total: counted, counted, forward: 1, interviews: 1, ...extra });
-  const sent = ai.suggestionsInput({
+test('the review is told how applications went and the job descriptions you pasted, never your name', () => {
+  const group = (key, counted) => ({ key, name: key, total: counted, counted, forward: 1, interviews: 1 });
+  const sent = ai.reviewInput({
     resumeText: 'Sam Example\nsam@example.com · 555-123-4567\nExperience\n• Built things',
-    versionName: 'v1', apps: [],
-    insights: {
-      total: 8, counted: 8, forward: 3, interviews: 1, mainKinds: ['Data'],
-      byVersion: [group('v1', 6), group('v0', 2)], byFunction: [], byLevel: [],
-      keywords: { missing: [{ name: 'SQL', postings: 2, forward: 1, kinds: ['Data'] }], matched: [] }, checks: [],
-    },
+    versionName: 'v1',
+    apps: [
+      { role: 'Data Analyst', outcome: 'forward', version: 'v1', posting: `SQL and Tableau. ${'More. '.repeat(400)}` },
+      { role: 'Data Engineer', outcome: 'stalled', version: 'v1', posting: '' },
+    ],
+    insights: { total: 8, counted: 8, forward: 3, interviews: 1, mainKinds: ['Data'], byVersion: [group('v1', 6), group('v0', 2)], byFunction: [], byLevel: [] },
   });
   assert.ok(!sent.resume.includes('Sam') && !sent.resume.includes('@') && !sent.resume.includes('555'));
   assert.equal(sent.overall.reachedInterview, 1);
-  assert.equal(sent.byVersion[0].tooFewToCompare, undefined);
   assert.equal(sent.byVersion[1].tooFewToCompare, true);
-  assert.deepEqual(sent.skillsMissingFromResume[0].askedForBy, ['Data']);
-  assert.deepEqual(sent.mainKindsOfRole, ['Data']);
+  assert.equal(sent.jobDescriptions.length, 1);
+  assert.ok(sent.jobDescriptions[0].text.length <= 1500);
+  assert.ok(!('posting' in sent.applications[0]));
+  assert.ok(!('skillsMissingFromResume' in sent) && !('checksThatFailed' in sent), 'nuj no longer judges skills or checks itself');
+});
+
+test('agreeing to an older list of what is sent asks again', () => {
+  const friend = person('consent');
+  friend.store.db.insights = { consent: { at: '2026-10-01T00:00:00Z' } }; // before the job descriptions were sent
+  assert.equal(ai.aiStatus(friend).consent, false);
+  friend.store.db.insights.consent.version = ai.CONSENT_VERSION;
+  assert.equal(ai.aiStatus(friend).consent, true);
 });

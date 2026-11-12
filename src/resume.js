@@ -272,7 +272,7 @@ export async function forgetResumes(userId) {
 }
 
 // What the page lists: everything but the text. `stale`: the text was edited after the PDF
-// was saved, so the PDF shows the old wording and the page marks suggestions on the text.
+// was saved, so the PDF shows the old wording and the page marks the review on the text.
 export const versionMeta = ({ text, ...meta }) => (meta.pdf?.textHash && meta.pdf.textHash !== textHash(text)
   ? { ...meta, pdf: { ...meta.pdf, stale: true } }
   : meta);

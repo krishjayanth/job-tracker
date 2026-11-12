@@ -13,7 +13,7 @@ before(async () => {
     env: { ...process.env, PORT: String(PORT), ALLOWED_EMAIL: '', RENDER: '', DATABASE_URL: '' },
     stdio: 'ignore',
   });
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) { // up to 20 seconds: slower while every suite runs at once
     try {
       if ((await fetch(`${BASE}/healthz`)).ok) return;
     } catch { /* not up yet */ }
@@ -96,8 +96,8 @@ test('moving an email with odd fields is refused plainly, not a crash', async ()
 
 test('a suggested rewrite goes into the version text, keeping its bullet, and Undo puts it back', async () => {
   const { body: page } = await call('GET', '/api/resume');
-  const id = page.review.versionId;
-  const line = page.review.lines.find(l => l.kind === 'bullet');
+  const id = page.preview.versionId;
+  const line = page.preview.lines.find(l => l.kind === 'bullet');
   const from = line.text.slice(line.at);
   const done = await call('POST', `/api/resume/${id}/rewrite`, { from, to: 'Rewritten by a test' });
   assert.equal(done.status, 200);
@@ -116,6 +116,8 @@ test('a job can be checked from the Resume page, and the answer is kept', async 
   const { status, body } = await call('POST', '/api/insights/fit', { posting });
   assert.equal(status, 200);
   assert.ok(['strong', 'partial', 'weak'].includes(body.jobFit.match));
+  assert.ok(Number.isInteger(body.jobFit.score));
+  assert.equal(body.jobFit.redFlags.length, 3);
   assert.equal((await call('POST', '/api/insights/fit', { posting })).body.cached, true);
   assert.equal((await call('GET', '/api/resume')).body.jobFit.posting, posting);
   await call('DELETE', '/api/insights/fit');
@@ -131,4 +133,23 @@ test('deleting a version says where its applications go', async () => {
   assert.ok(page.versions.some(v => v.name === body.moved.to));
   await call('POST', '/api/resume', body.removed); // Undo
   assert.equal((await call('GET', '/api/resume')).body.versions.length, page.versions.length);
+});
+
+test('the AI grades the resume, keeps the review, and marks its bullets done or skipped', async () => {
+  await call('POST', '/api/insights/consent', { allow: true });
+  const first = await call('POST', '/api/insights/review');
+  assert.equal(first.status, 200);
+  const { body: page } = await call('GET', '/api/resume');
+  const rv = page.review;
+  assert.ok(rv.score >= 1 && rv.score <= 100 && /^[A-F][+-]?$/.test(rv.grade));
+  assert.equal(rv.rubric.length, 5);
+  assert.equal(rv.upToDate, true);
+  assert.ok(rv.bullets.length && rv.bullets.every(b => b.at >= 0), 'each graded bullet is found in the resume');
+  assert.ok(!('inputHash' in rv));
+  assert.equal((await call('POST', '/api/insights/review')).body.cached, true); // nothing changed: no run used
+  const id = rv.bullets[0].id;
+  assert.equal((await call('PATCH', `/api/insights/review/items/${id}`, { state: 'done' })).status, 200);
+  assert.equal((await call('GET', '/api/resume')).body.review.bullets[0].state, 'done');
+  assert.equal((await call('PATCH', `/api/insights/review/items/${id}`, { state: 'maybe' })).status, 400);
+  assert.equal((await call('PATCH', '/api/insights/review/items/nope', { state: 'done' })).status, 404);
 });
