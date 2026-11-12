@@ -5,6 +5,7 @@ import { computeStatus } from './stages.js';
 import { buildDemoDb } from './demo.js';
 import { senderDomain } from './jobcheck.js';
 import { endOfDayIn } from './zones.js';
+import { recordError } from './errors.js';
 
 // Storage: Postgres when DATABASE_URL is set (hosted, e.g. Supabase), otherwise JSON
 // files in data/ (local). Either way it's a key-value table of JSON values, and each
@@ -14,6 +15,8 @@ import { endOfDayIn } from './zones.js';
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const SAVE_DELAY_MS = 800;
 const UNDO_MS = 10 * 60_000; // how long an action can be undone
+const RETRY_MS = 5_000; // a failed save tries again after this (longer each time)
+const RETRY_LIMIT = 5;
 
 export const emptyDb = () => ({ applications: [], processed: {}, ignored: {}, assignments: {}, lastSync: null, lastSyncError: null });
 let pool = null;
@@ -116,11 +119,14 @@ export const newId = () => crypto.randomUUID();
 // ---- one tracker per person ---------------------------------------------------------
 
 const stores = new Map(); // user id -> Promise<Store>
+const releasing = new Map(); // user id -> Promise of the last write before it was let go
 
-// The tracker for this user, loaded once and kept in memory.
+// The tracker for this user, loaded once and kept in memory until it's released.
 export function openStore(userId) {
   if (!stores.has(userId)) {
     stores.set(userId, (async () => {
+      // Let go of a moment ago: its last write lands before it's read back.
+      await releasing.get(userId);
       const key = `db_${userId}`;
       let db = await getKv(key);
       if (!db && demoMode) {
@@ -138,6 +144,21 @@ export async function closeStore(userId) {
   const store = await stores.get(userId);
   store?.discard();
   stores.delete(userId);
+}
+
+// Take a tracker out of memory, writing its pending changes first. It's out of the list
+// at once, so anyone asking for it from now on loads it fresh, after that write.
+export async function releaseStore(userId) {
+  const loaded = stores.get(userId);
+  if (!loaded) return;
+  stores.delete(userId);
+  const write = loaded.then(store => store.flush().then(() => store.discard()));
+  releasing.set(userId, write.catch(() => {}));
+  try {
+    await write;
+  } finally {
+    if (releasing.get(userId) && stores.get(userId) === undefined) releasing.delete(userId);
+  }
 }
 
 // Write every tracker's pending changes (before shutdown).
@@ -227,7 +248,9 @@ export class Store {
     this.db = db;
     this.db.ignored ??= {};
     this.db.assignments ??= {};
-    this.undoable = new Map(); // token -> how things looked before an action (see checkpoint)
+    // token -> how things looked before an action (see checkpoint). Kept in the tracker
+    // too (db.undo), so a restart (every deploy) doesn't take away an Undo just offered.
+    this.undoable = new Map(Object.entries(this.db.undo || {}));
     this.persist = persist;
     this.saveTimer = null;
     this.writing = Promise.resolve();
@@ -242,13 +265,25 @@ export class Store {
   }
 
   // Write pending changes now (before shutdown, or when a step must be durable).
+  // A failed write is noted for the Developer page and tried again shortly (with the latest
+  // data), so a database hiccup doesn't lose changes that nothing else would save later.
   flush() {
     clearTimeout(this.saveTimer);
     if (!this.persist) return Promise.resolve();
     const value = JSON.stringify(this.db);
     this.writing = this.writing
       .then(() => setKv(this.key, value, true))
-      .catch(err => console.error(`[store] saving ${this.key} failed: ${err.message}`));
+      .then(() => { this.failures = 0; })
+      .catch(err => {
+        this.failures = (this.failures || 0) + 1;
+        console.error(`[store] saving ${this.key} failed: ${err.message}`);
+        recordError('server', err, { userId: this.key.replace(/^db_/, ''), detail: 'Saving a tracker' });
+        if (this.persist && this.failures <= RETRY_LIMIT) {
+          clearTimeout(this.saveTimer);
+          this.saveTimer = setTimeout(() => this.flush(), RETRY_MS * this.failures);
+          this.saveTimer.unref?.();
+        }
+      });
     return this.writing;
   }
 
@@ -274,6 +309,13 @@ export class Store {
     Object.assign(this.db, structuredClone(value));
     this.db.ignored ??= {};
     this.db.assignments ??= {};
+    this.undoable = new Map(Object.entries(this.db.undo || {}));
+  }
+
+  // Copy the undo list into the tracker, so it's saved with it.
+  keepUndo() {
+    if (this.undoable.size) this.db.undo = Object.fromEntries(this.undoable);
+    else delete this.db.undo;
   }
 
   // Snapshot the hand-made parts of Gmail-built applications before a re-scan.
@@ -328,7 +370,7 @@ export class Store {
   // ---- undo ----------------------------------------------------------------------
   // Before an action that removes or moves things, remember how the applications it
   // touches looked. undo(token) puts them back exactly: their emails, what you'd
-  // said about those emails, and the counts. Kept in memory for UNDO_MS.
+  // said about those emails, and the counts. Kept for UNDO_MS, saved with the tracker.
   checkpoint(appIds, { blockedSender } = {}) {
     this.pruneUndo();
     const apps = appIds.map(id => this.db.applications.find(a => a.id === id)).filter(Boolean).map(a => structuredClone(a));
@@ -340,6 +382,7 @@ export class Store {
       assignments: Object.fromEntries(messageIds.map(m => [m, structuredClone(this.db.assignments[m])])),
       corrections: structuredClone(this.db.corrections || {}),
     });
+    this.keepUndo();
     return token;
   }
 
@@ -358,6 +401,7 @@ export class Store {
     const cp = this.undoable.get(token);
     if (!cp) return false;
     this.undoable.delete(token);
+    this.keepUndo();
     const db = this.db;
     const putBack = new Set(cp.apps.map(a => a.id));
     // Emails that moved elsewhere come back with their application, so take them out
@@ -386,6 +430,7 @@ export class Store {
 
   pruneUndo() {
     for (const [token, cp] of this.undoable) if (Date.now() - cp.at > UNDO_MS) this.undoable.delete(token);
+    this.keepUndo();
   }
 
   // Each time you fix how an email was sorted, counted by kind, so the owner can see
@@ -508,6 +553,11 @@ export class Store {
   //   ignore           it isn't about an application at all
   // Returns {app} (where the email is now, or null), or {error, status}.
   reassignEmail(eventId, { action, to, company, role = '', jobId = '', also = [] }) {
+    // Sent by the page, but anyone could send anything: only text is used as text.
+    const text = (v, n) => (typeof v === 'string' ? v : '').slice(0, n);
+    company = text(company, 200);
+    role = text(role, 300);
+    jobId = text(jobId, 100);
     const db = this.db;
     const from = db.applications.find(a => a.events.some(e => e.id === eventId));
     if (!from) return { error: 'Email not found', status: 404 };

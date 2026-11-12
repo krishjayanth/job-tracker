@@ -107,6 +107,22 @@ function bodyText(payload) {
   return plain || htmlToText(html);
 }
 
+// What went wrong reading Gmail, in words for the person (the page shows it as "Gmail sync
+// failed: …"). Google's own message goes to the Developer page instead. The one kept
+// nearly as is: the Gmail API being off, whose link the page turns into a button.
+export function plainSyncError(err) {
+  const message = String(err?.message || err || '');
+  const enable = message.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/gmail\.googleapis\.com\/\S+/)?.[0];
+  if (enable) return `The Gmail API isn't turned on for this Google Cloud project. Turn it on at ${enable}`;
+  const status = err?.code ?? err?.status ?? err?.response?.status;
+  if (isRateLimit(err || {})) return 'Gmail asked nuj to slow down. It will try again in a few minutes';
+  if (/ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network/i.test(`${status} ${message}`)) {
+    return "nuj couldn't reach Gmail. It will try again in a few minutes";
+  }
+  if (Number(status) >= 500) return 'Gmail had a problem on its side. nuj will try again in a few minutes';
+  return 'Something went wrong reading your emails. nuj will try again in a few minutes';
+}
+
 // Gmail allows a limited number of quota units per user per minute (messages.get
 // costs 5). Pace requests, and back off and retry when Google says to slow down.
 const REQUEST_GAP_MS = 150;
@@ -211,6 +227,11 @@ export class Mailbox {
     await this.syncing?.catch(() => {});
   }
 
+  // Reading Gmail right now (a sync, a re-scan, or one application's emails again).
+  busy() {
+    return Boolean(this.syncing || this.progress || this.appRescans);
+  }
+
   isRescanning() {
     return this.progress?.mode === 'rescan';
   }
@@ -278,6 +299,15 @@ export class Mailbox {
   // was read (stage, deadline, summary). Emails stay on this application; your status
   // changes, notes and "yes, it's this one" answers are kept.
   async rescanApplication(app) {
+    this.appRescans = (this.appRescans || 0) + 1;
+    try {
+      return await this.rescanOne(app);
+    } finally {
+      this.appRescans--;
+    }
+  }
+
+  async rescanOne(app) {
     if (this.syncing) await this.syncing.catch(() => {});
     const gmail = google.gmail({ version: 'v1', auth: this.getClient() });
     const emails = app.events.filter(e => !e.manual && e.messageId);
@@ -454,7 +484,7 @@ export class Mailbox {
         db.lastSyncError = EXPIRED;
         recordError('gmail', EXPIRED, { userId: this.user.id, level: 'warning' });
       } else {
-        db.lastSyncError = err.message;
+        db.lastSyncError = plainSyncError(err);
         recordError('sync', err, { userId: this.user.id, detail: mode === 'rescan' ? 'during a re-scan' : '' });
       }
       store.save();

@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { isWebLink } from './input.js';
 
 const STAGE_LABEL = {
   applied: 'Applied', oa: 'Assessment', interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn',
@@ -52,7 +53,7 @@ export async function buildWorkbook(applications) {
       latest: decode(a.events.at(-1)?.subject),
       emails: a.events.filter(e => e.messageId).length,
       source: a.source === 'gmail' ? 'Gmail' : 'Manual',
-      url: a.url ? { text: a.url, hyperlink: a.url } : '',
+      url: isWebLink(a.url) ? { text: a.url, hyperlink: a.url } : a.url || '', // older links may not be web links
       notes: a.notes,
     });
     row.getCell('status').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: STAGE_FILL[a.status] } };

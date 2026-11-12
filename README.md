@@ -35,9 +35,11 @@ into memory, so you can click around, edit, filter and export without a Google a
   application email with an LLM that rule-based checks verify.
 - **Shows where applications went.** A Sankey chart traces every application from *Applied* through
   *Assessment* and *Interview* to *Offer*, *Rejected*, *Withdrawn* or *No response*. Click a stage to filter.
-- **Lists what needs your action.** Assessments to finish, interviews in progress and offers, with deadlines
-  parsed from the emails ("expires in 5 days", "complete by Oct 9 at 11:59 PM"). You can set or change a
-  deadline's date and time yourself; a date with no time means the end of that day.
+- **Lists what needs your action.** Deadlines parsed from the emails ("expires in 5 days", "complete by Oct 9
+  at 11:59 PM"), interviews in the next two weeks, new offers, and any email nuj wasn't sure how to file. You
+  can set or change a deadline's date and time yourself; a date with no time means the end of that day.
+- **Nudges about silence.** Applications with no reply for three weeks move to *No response*, where you can
+  close them all at once (with Undo) or follow up.
 - **Keeps your corrections.** Renames, status changes, notes and deadlines survive a full re-scan of the inbox.
 - **Updates live and exports.** Changes stream to every open tab, and the table exports to Excel.
 - **Acts on several at once.** Tick applications in the table (Shift-click for a range, Space on a focused
@@ -158,14 +160,14 @@ No frontend framework or build step: the browser loads plain scripts, and D3 is 
 npm test
 ```
 
-There are 158 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 217 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
 - matching emails to applications, and confirming or moving an email you've checked
 - merging the LLM's answer with the rules (AI/HireVue interviews as assessments, review flags, deadlines)
 - the job check and the sorting steps, with a stand-in Groq client: non-job "applications" never reach the model
-- a labeled set of 24 emails, which the rules must sort with no misses
+- a labeled set of 32 emails, which the rules must sort with no misses
 - ignoring senders, problem reports, and counting fixes to sorting
 - the error log (grouping, no email addresses, reopening when an error comes back) and account health summaries
 - feedback questions: who sees them, answering once, "Not now", asking again, and the summary
@@ -173,6 +175,9 @@ There are 158 tests, written with the built-in `node:test` runner and no test de
 - re-scan edit preservation
 - session cookies, including tampered, unauthorized and pre-accounts ones
 - accounts: separate data per person, moving single-user data to the owner, encrypted Groq keys, account deletion
+- letting go of idle trackers (saved first, loaded again later), and Undo surviving a restart
+- the API routes, against the server in demo mode: what they accept and refuse, bulk actions and Undo
+- checks on what the API is sent (text, lengths, web links only) and plain-worded sync errors
 
 CI runs them on every push, then boots the app in demo mode and checks the API.
 
@@ -208,7 +213,8 @@ also shows how often people fix sorting across all accounts.
 | [`src/secrets.js`](src/secrets.js) | Encryption for stored Groq keys |
 | [`src/export.js`](src/export.js) | Excel export |
 | [`src/demo.js`](src/demo.js) | Sample data for demo mode |
-| [`public/`](public/) | Dashboard (HTML, CSS, JS) |
+| [`public/`](public/) | Dashboard: `index.html`, `styles.css`, and its scripts in `public/js/` (one per page or part, loaded in order) |
+| [`src/input.js`](src/input.js) | Checks on the text fields the API is sent |
 | [`test/`](test/) | Test suites, and the labeled emails in `test/fixtures/` |
 | [`scripts/eval.js`](scripts/eval.js) | Scores sorting on the labeled emails |
 

@@ -227,6 +227,25 @@ test('undo puts back a deleted application, and its emails can sync again', () =
   assert.equal(s.undo(token), false); // once only
 });
 
+test('an Undo offered before a restart still works after it', () => {
+  const a = gmailApp({ company: 'Northwind', events: [['2026-09-01', 'applied']] });
+  const token = s.checkpoint([a.id]);
+  s.deleteApplication(a.id);
+  // What was saved, loaded by a fresh server.
+  const reloaded = new Store('db_test', JSON.parse(JSON.stringify(s.db)));
+  assert.equal(reloaded.undo(token), true);
+  assert.ok(reloaded.applications.some(x => x.id === a.id));
+  assert.equal(reloaded.db.undo, undefined); // used up, so nothing left to save
+});
+
+test('reassigning an email ignores fields that are not text', () => {
+  const a = gmailApp({ company: 'Tailspin', events: [['2026-09-01', 'applied']] });
+  const { app, error } = s.reassignEmail(a.events[0].id, { action: 'new', company: 'Tailspin', role: 42, jobId: {} });
+  assert.equal(error, undefined);
+  assert.equal(app.role, '');
+  assert.equal(app.jobId, '');
+});
+
 test('undo moves an email back, and removes an application the move created', () => {
   const a = gmailApp({ company: 'Contoso', events: [['2026-09-01', 'applied'], ['2026-09-05', 'oa']] });
   const b = gmailApp({ company: 'Fabrikam' });

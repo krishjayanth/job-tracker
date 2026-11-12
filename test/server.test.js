@@ -1,0 +1,95 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+
+// The routes, against the real server in demo mode (sample data in memory, no sign-in).
+// Each run uses its own port, so it can't collide with a server you have open.
+const PORT = 5600 + Math.floor(Math.random() * 300);
+const BASE = `http://127.0.0.1:${PORT}`;
+let server;
+
+before(async () => {
+  server = spawn(process.execPath, ['server.js', '--demo'], {
+    env: { ...process.env, PORT: String(PORT), ALLOWED_EMAIL: '', RENDER: '', DATABASE_URL: '' },
+    stdio: 'ignore',
+  });
+  for (let i = 0; i < 100; i++) {
+    try {
+      if ((await fetch(`${BASE}/healthz`)).ok) return;
+    } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error('the demo server did not start');
+});
+after(() => server?.kill());
+
+async function call(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+const firstApp = async () => (await call('GET', '/api/state')).body.applications[0];
+
+test('the state has the demo applications, each with its chart path', async () => {
+  const { status, body } = await call('GET', '/api/state');
+  assert.equal(status, 200);
+  assert.ok(body.applications.length >= 30);
+  assert.ok(body.applications.every(a => Array.isArray(a.path) && a.path[0] === 'applied'));
+});
+
+test('adding an application checks what it was sent', async () => {
+  assert.equal((await call('POST', '/api/applications', {})).status, 400);
+  assert.equal((await call('POST', '/api/applications', { company: { x: 1 } })).status, 400);
+  assert.equal((await call('POST', '/api/applications', { company: 'Acme', url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await call('POST', '/api/applications', { company: 'Acme', status: 'hired' })).status, 400);
+  const ok = await call('POST', '/api/applications', { company: '  Acme  ', role: 'Intern', status: 'interview' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.company, 'Acme');
+  assert.equal(ok.body.status, 'interview');
+});
+
+test('a bad field changes nothing, even alongside good ones', async () => {
+  const a = await firstApp();
+  const r = await call('PATCH', `/api/applications/${a.id}`, { role: 'Changed role', interviewAt: 'next tuesday' });
+  assert.equal(r.status, 400);
+  assert.equal((await firstApp()).role, a.role);
+  assert.equal((await call('PATCH', `/api/applications/${a.id}`, { company: '' })).status, 400);
+  assert.equal((await call('PATCH', `/api/applications/${a.id}`, { notes: 'x'.repeat(10_001) })).status, 400);
+  assert.equal((await call('PATCH', `/api/applications/${a.id}`, { status: 'nope' })).status, 400);
+});
+
+test('an edit saves, and an empty request body is fine', async () => {
+  const a = await firstApp();
+  const r = await call('PATCH', `/api/applications/${a.id}`, { notes: 'Recruiter: Pat', url: 'https://jobs.example.com/1' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.notes, 'Recruiter: Pat');
+  const res = await fetch(`${BASE}/api/applications/${a.id}`, { method: 'PATCH' });
+  assert.equal(res.status, 200);
+});
+
+test('deleting several at once is put back by one Undo', async () => {
+  const { body } = await call('GET', '/api/state');
+  const ids = body.applications.slice(0, 3).map(a => a.id);
+  const del = await call('POST', '/api/applications/bulk', { action: 'delete', ids });
+  assert.equal(del.status, 200);
+  assert.equal(del.body.count, 3);
+  const gone = (await call('GET', '/api/state')).body.applications;
+  assert.ok(!gone.some(a => ids.includes(a.id)));
+  assert.equal((await call('POST', `/api/undo/${del.body.undo}`)).status, 200);
+  const back = (await call('GET', '/api/state')).body.applications;
+  assert.ok(ids.every(id => back.some(a => a.id === id)));
+  assert.equal((await call('POST', `/api/undo/${del.body.undo}`)).status, 410); // once only
+});
+
+test('bulk actions refuse what they do not know', async () => {
+  assert.equal((await call('POST', '/api/applications/bulk', { action: 'delete', ids: [] })).status, 400);
+  const a = await firstApp();
+  assert.equal((await call('POST', '/api/applications/bulk', { action: 'explode', ids: [a.id] })).status, 400);
+  assert.equal((await call('POST', '/api/applications/bulk', { action: 'status', status: 'hired', ids: [a.id] })).status, 400);
+});
+
+test('moving an email with odd fields is refused plainly, not a crash', async () => {
+  const r = await call('POST', '/api/emails/no-such-email/assign', { action: 'new', company: 3 });
+  assert.equal(r.status, 404);
+});

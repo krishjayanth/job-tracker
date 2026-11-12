@@ -182,4 +182,5 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 | `SYNC_INTERVAL_MINUTES` | 5 | How often Gmail is checked while awake |
 | `INITIAL_SYNC_DAYS` | 90 | How far back the first sync looks |
 | `GHOST_AFTER_DAYS` | 21 | Days of silence before "No response" |
+| `IDLE_MINUTES` | 30 | How long someone's tracker stays in memory after they last used nuj (with no tab open); it's saved and loaded again when needed |
 | `MAX_EMAILS_PER_SYNC` | 500 | Batch size per sync pass |

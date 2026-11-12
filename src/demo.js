@@ -268,7 +268,7 @@ export function buildDemoErrors(now = Date.now()) {
     group('demo-e2', 'sync', 'error', 'Request failed with status code 503', 4, 30, 2.2, ['demo-ava'],
       [[2.2, 'demo-ava', ''], [11, 'demo-ava', 'during a re-scan']]),
     group('demo-e3', 'browser', 'error', "Cannot read properties of undefined (reading 'events')", 3, 26, 5, ['demo-sam', 'demo-ava'],
-      [[5, 'demo-sam', 'app.js:1488 · Calendar'], [19, 'demo-ava', 'app.js:1488 · Calendar']], { regressed: true }),
+      [[5, 'demo-sam', 'calendar.js:120 · Calendar'], [19, 'demo-ava', 'calendar.js:120 · Calendar']], { regressed: true }),
     group('demo-e4', 'groq', 'warning', "Groq rejected this person's key; using the rules until it's replaced", 1, 36, 36, ['demo-sam'],
       [[36, 'demo-sam', '']]),
     group('demo-e5', 'gmail', 'warning', 'Google sign-in for Gmail expired or was revoked', 1, 216, 216, ['demo-mei'],

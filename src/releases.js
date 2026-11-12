@@ -2,26 +2,28 @@
 // (see whatsNewFor in server.js). Give each release a new id; people who've seen
 // that id don't see it again. Write it for the people using nuj, not for developers.
 export const LATEST_RELEASE = {
-  id: '2026-10-resume-insights',
+  id: '2026-11-needs-your-action',
   title: "What's new in nuj",
   items: [
     {
-      title: 'Resume insights',
-      text: 'Add your resume (a PDF, a Word file or pasted text) and see how often your applications move forward, by resume version and by kind of role. Find it in the sidebar.',
+      title: 'Interviews and offers in Needs your action',
+      text: "Interviews in the next two weeks and new offers now show up in Needs your action, next to your deadlines. Add an interview's date and time in its application to see it there.",
     },
     {
-      title: 'Keywords from your postings',
-      text: "See which skills the jobs you applied to ask for, and which of them your resume doesn't mention. Paste a job description into any application for better results.",
+      title: 'Clearer stages',
+      text: 'The tab for applications still waiting on a first reply is now called Awaiting reply, and the chart shows Ongoing for ones still under way.',
     },
     {
-      title: 'Resume versions',
-      text: 'Keep up to five versions. Each application counts toward the one you were sending when you applied, so you can see which version does better.',
+      title: 'Close quiet applications at once',
+      text: "On the No response tab you can mark everything that's gone quiet as withdrawn in one go, and undo it if you change your mind.",
     },
     {
-      // Only shown when this server has AI for Resume insights (see whatsNewFor).
-      needs: 'ai',
-      title: 'Suggestions and Check fit',
-      text: "Ask the AI what to change first, or how well your resume fits one job. It asks before sending anything, and you get a few a day.",
+      title: 'Applications has its own page',
+      text: 'Applications in the sidebar now opens just your list, without the chart and summary above it.',
+    },
+    {
+      title: 'Undo keeps working after an update',
+      text: 'If nuj is updated right after you delete or move something, Undo still puts it back.',
     },
   ],
 };

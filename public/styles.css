@@ -207,6 +207,7 @@ input, textarea { caret-color: var(--accent); }
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .action-side { display: grid; justify-items: end; gap: 5px; }
+.action-side .due { white-space: nowrap; }
 /* Always there, not only on hover: every row can be cleared, on touch too. */
 .done-btn {
   display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 7px;
@@ -617,6 +618,11 @@ table.apps { width: 100%; border-collapse: collapse; }
 .timeline .tlinks { display: flex; gap: 14px; flex-wrap: wrap; }
 .timeline button.tlink { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .timeline button.tlink:hover { color: var(--accent); }
+/* "Wrong application?" is on every email, so where there's a mouse it waits until you
+   point at that email (or tab to it). Touch screens always show it. */
+@media (hover: hover) {
+  .timeline li:not(:hover):not(:focus-within) .quiet-fix { opacity: 0; }
+}
 .timeline button[data-remove-event]:hover { color: var(--danger); }
 .timeline li { transition: opacity .2s ease; }
 .timeline li.leaving { opacity: .35; pointer-events: none; }
@@ -640,7 +646,11 @@ table.apps { width: 100%; border-collapse: collapse; }
 .saved-note.ok { color: color-mix(in srgb, var(--offer) 85%, var(--text)); }
 .saved-note.err { color: var(--danger); }
 .drawer-body > section { min-width: 0; }
-.drawer-meta .status-select select { height: 26px; }
+/* In the panel the status is the main thing you'd change, so it looks like a control:
+   an outline and its arrow always showing, not only on hover as in the table. */
+.drawer-meta .status-select { margin-left: 0; }
+.drawer-meta .status-select select { height: 26px; border-color: var(--border-strong); background: var(--surface-2); }
+.drawer-meta .status-select .icon { opacity: .8; }
 .drawer-foot { justify-content: space-between; }
 .drawer-foot .meta-link { margin-left: 0; }
 .blocked-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
@@ -1784,3 +1794,31 @@ table.apps { width: 100%; border-collapse: collapse; }
   .pdf-skeleton { animation: none; }
   .pdf-line.flash { animation-duration: 1.2s !important; }
 }
+
+/* #/applications: the dashboard's table on its own. */
+#view-dashboard.apps-only > .summary,
+#view-dashboard.apps-only > .overview { display: none; }
+
+/* The line under the deadline and interview boxes, and what went wrong saving them. */
+.field-note { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.field-note.err { color: var(--danger); }
+
+/* Between phone and wide screens the table had every column squeezed until Role and Latest
+   update were a few letters each. The applied date gives way first: it's also in each
+   application's panel, and the month filter still narrows by it. */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .col-applied, .apps td.col-applied { display: none; }
+}
+
+/* More stage tabs off to the right: fade the edge so it's clear the strip scrolls. */
+.stage-tabs.more { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+
+/* The confirm sheet's form is only there for Enter-to-confirm; it lays out like the sheet. */
+#confirm-form { display: contents; }
+#confirm-text { max-width: 46ch; }
+
+/* A gentle suggestion: applications that have gone quiet (No response tab, and a panel). */
+.nudge { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.nudge > span { flex: 1 1 260px; }
+.nudge .icon { width: 14px; height: 14px; flex: none; color: var(--muted); }
+p.nudge { margin: 0 0 14px; }

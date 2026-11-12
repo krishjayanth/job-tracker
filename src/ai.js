@@ -79,19 +79,25 @@ export async function reserveRun(user) {
     await updateServer(u => { if (!u.limited.includes(user.id)) u.limited.push(user.id); });
     return { status: 429, error: `You've used today's ${DAILY_LIMIT} AI runs. You'll get more tomorrow` };
   }
+  // Counted before anything is awaited: a second request arriving meanwhile sees this one.
+  const giveBack = () => {
+    if (db.insights.usage?.day === today()) db.insights.usage.count = Math.max(0, db.insights.usage.count - 1);
+    user.store.save();
+  };
+  db.insights.usage = { day: today(), count: userUsage(db) + 1 };
+  user.store.save();
   const ok = await updateServer(u => {
     if (u.runs >= SERVER_DAILY_LIMIT && !user.owner) return false;
     u.runs++;
     return true;
-  });
-  if (!ok) return { status: 503, error: "nuj's AI has done all it can for today. Try again tomorrow" };
-  const count = userUsage(db) + 1;
-  db.insights.usage = { day: today(), count };
-  user.store.save();
+  }).catch(err => { giveBack(); throw err; });
+  if (!ok) {
+    giveBack();
+    return { status: 503, error: "nuj's AI has done all it can for today. Try again tomorrow" };
+  }
   return {
     release: async () => {
-      if (db.insights.usage?.day === today()) db.insights.usage.count = Math.max(0, db.insights.usage.count - 1);
-      user.store.save();
+      giveBack();
       await updateServer(u => { u.runs = Math.max(0, u.runs - 1); });
     },
   };

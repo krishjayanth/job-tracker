@@ -41,3 +41,10 @@ test('the form allows a few tries per visitor an hour', () => {
   for (let i = 0; i < 5; i++) assert.equal(tooMany(ip), false);
   assert.equal(tooMany(ip), true);
 });
+
+test('lots of other visitors never reset a visitor who is over the limit', () => {
+  const key = 'flooder';
+  for (let i = 0; i < 6; i++) tooMany(key, { max: 5 });
+  for (let i = 0; i < 10_500; i++) tooMany(`other-${i}`);
+  assert.equal(tooMany(key, { max: 5 }), true);
+});

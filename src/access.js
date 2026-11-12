@@ -65,12 +65,21 @@ export function setRequestStatus(id, status) {
 
 // A small per-visitor limit on the public form, kept in memory (it resets on restart,
 // which is fine: it only has to stop someone hammering the button).
+// The map is capped so it can't grow without bound, but never by wiping it: that would let
+// someone reset everyone's limit by flooding it with new visitors. Keys stay in the order
+// they were last seen; past the cap, what goes first is expired, then one-off visitors.
 const hits = new Map(); // key -> [timestamps]
-export function tooMany(key, { max = 5, windowMs = 60 * 60_000 } = {}) {
-  const now = Date.now();
+const MAX_KEYS = 10_000;
+export function tooMany(key, { max = 5, windowMs = 60 * 60_000, now = Date.now() } = {}) {
   const recent = (hits.get(key) || []).filter(t => now - t < windowMs);
   recent.push(now);
+  hits.delete(key);
   hits.set(key, recent);
-  if (hits.size > 10_000) hits.clear(); // don't let the map grow without bound
+  if (hits.size > MAX_KEYS) {
+    for (const [k, times] of hits) if (now - times.at(-1) >= windowMs) hits.delete(k); // expired
+    // Then one-off visitors, quietest first, so someone hammering the form stays counted.
+    for (const [k, times] of hits) { if (hits.size <= MAX_KEYS) break; if (times.length === 1 && k !== key) hits.delete(k); }
+    for (const k of hits.keys()) { if (hits.size <= MAX_KEYS) break; hits.delete(k); }
+  }
   return recent.length > max;
 }
