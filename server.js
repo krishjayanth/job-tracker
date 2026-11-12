@@ -14,12 +14,13 @@ import { looksLikeGroqKey, checkGroqKey, SERVER_KEY } from './src/groq.js';
 import { initSecrets } from './src/secrets.js';
 import { canBlockDomain, senderDomain } from './src/jobcheck.js';
 import { addReport, listReports, openCount, setReportStatus, deleteReport, deleteReportsBy } from './src/reports.js';
-import { getUser, knownUser, allUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
+import { getUser, knownUser, allUsers, userIds, releaseIdleUsers, deleteUser, joinDates, LOCAL_ID, DEMO_ID } from './src/users.js';
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
 import { extractText, cleanText, listVersions, addVersion, updateVersion, deleteVersion, versionMeta, versionFor, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
 import { textPdf } from './src/textpdf.js';
+import { textFields } from './src/input.js';
 import { computeInsights, outcomeOf, reviewLines, quickChecks } from './src/insights.js';
 import { aiStatus, reserveRun, hashOf, findLine, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
@@ -42,6 +43,9 @@ app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
 // A pasted resume can be up to 40,000 characters, more than the default 100kb allows once
 // it's JSON with escapes.
 app.use(express.json({ limit: '200kb' }));
+// Express 5 leaves req.body undefined when nothing (or no JSON) was sent; routes read
+// fields from it, so an empty object instead of a crash. Upload routes still get their file.
+app.use((req, res, next) => { req.body ??= {}; next(); });
 
 // --- public routes (no sign-in needed) ---------------------------------------
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -152,6 +156,7 @@ app.use('/api', async (req, res, next) => {
   try {
     const id = req.user?.id ?? (DEMO ? DEMO_ID : LOCAL_ID);
     req.account = live(await getUser(id, req.user?.email ?? null));
+    req.account.lastUsedAt = Date.now(); // see releaseIdle
     noteSeen(req.account);
     next();
   } catch (err) {
@@ -164,9 +169,22 @@ const clients = new Map(); // user id -> Set of open responses
 function broadcast(userId) {
   for (const res of clients.get(userId) || []) res.write('data: update\n\n');
 }
-// Sync progress reaches that person's open tabs.
+// Sync progress reaches that person's open tabs, at most every PROGRESS_MS: each message
+// makes every open tab fetch the whole tracker again, which is a lot during a big sync.
+// The last one in a burst still goes out, so the page never stops short of the real count.
+const PROGRESS_MS = 1500;
 function live(user) {
-  user.mailbox.onProgress = () => broadcast(user.id);
+  if (!user.mailbox.onProgress?.throttled) {
+    let last = 0, timer = null;
+    const send = () => { last = Date.now(); timer = null; broadcast(user.id); };
+    user.mailbox.onProgress = () => {
+      if (timer) return;
+      const wait = PROGRESS_MS - (Date.now() - last);
+      if (wait <= 0) send();
+      else timer = setTimeout(send, wait);
+    };
+    user.mailbox.onProgress.throttled = true;
+  }
   return user;
 }
 app.get('/api/events', (req, res) => {
@@ -178,7 +196,12 @@ app.get('/api/events', (req, res) => {
   if (canSeeReports(req.account)) ownerClients.add(res);
   // Comment pings keep proxies (like Render's) from closing an idle stream.
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-  req.on('close', () => { clearInterval(ping); clients.get(id)?.delete(res); ownerClients.delete(res); });
+  req.on('close', () => {
+    clearInterval(ping);
+    clients.get(id)?.delete(res);
+    if (!clients.get(id)?.size) clients.delete(id);
+    ownerClients.delete(res);
+  });
 });
 
 // The owner reads everyone's problem reports (in demo mode, whoever is looking).
@@ -231,15 +254,11 @@ app.get('/api/state', async (req, res) => {
 });
 
 // The latest release notes, for someone who used nuj before this update and hasn't seen
-// them. Someone new has nothing to compare against, so they're marked as seen instead.
+// them. Only reads: someone new is marked as having seen them when their account loads
+// (see noteReleaseForNewcomer in src/users.js), so loading the page never writes.
 function whatsNewFor(user) {
   const db = user.store.db;
   if (DEMO || db.seenRelease === LATEST_RELEASE.id) return null;
-  if (!db.applications.length && !db.lastSync) {
-    db.seenRelease = LATEST_RELEASE.id;
-    user.store.save();
-    return null;
-  }
   // Tell people whose emails are re-read with the new sorting (see rescanEveryoneOnce).
   const rescanned = db.rescanned === RESCAN_ID;
   const rereading = rescanned || (!user.owner && user.mailbox.connected());
@@ -328,9 +347,11 @@ function addManualStatus(a, stage) {
 }
 
 app.post('/api/applications', (req, res) => {
-  const { company, role, jobId, url, notes, status = 'applied' } = req.body;
-  if (!company?.trim()) return res.status(400).json({ error: 'Company is required' });
-  const a = req.account.store.createApplication({ company: company.trim(), role: role?.trim(), jobId: jobId?.trim(), url, notes });
+  const { fields, error } = textFields(req.body, ['company', 'role', 'jobId', 'url', 'notes'], { required: ['company'] });
+  if (error) return res.status(400).json({ error });
+  const status = req.body.status ?? 'applied';
+  if (!isStage(status)) return res.status(400).json({ error: 'Unknown status' });
+  const a = req.account.store.createApplication(fields);
   a.events.push({ id: newId(), date: new Date().toISOString(), stage: 'applied', manual: true, subject: 'Added manually' });
   if (status !== 'applied') addManualStatus(a, status);
   refresh(a);
@@ -352,19 +373,26 @@ app.patch('/api/applications/:id', async (req, res) => {
   if (typeof posting === 'string' && cleanText(posting).length > MAX_POSTING) {
     return res.status(400).json({ error: `That job description is very long. Keep it under ${MAX_POSTING.toLocaleString('en-US')} characters` });
   }
+  const { fields, error } = textFields(req.body, ['company', 'role', 'jobId', 'url', 'notes']);
+  if (error) return res.status(400).json({ error });
+  if (fields.company === '') return res.status(400).json({ error: "The company name can't be empty" });
+  if (req.body.status !== undefined && !isStage(req.body.status)) return res.status(400).json({ error: 'Unknown status' });
+  if (req.body.deadline !== undefined && typeof req.body.deadline !== 'string') return res.status(400).json({ error: 'Not a valid deadline' });
+  if (typeof req.body.deadline === 'string' && req.body.deadline && !typedDeadline(req.body.deadline, req.account.store.db.timeZone)) {
+    return res.status(400).json({ error: 'Give the deadline a date' });
+  }
+  const interviewAt = typeof req.body.interviewAt === 'string' ? typedInterview(req.body.interviewAt) : undefined;
+  if (req.body.interviewAt && !interviewAt) return res.status(400).json({ error: 'Give the interview a date and a time' });
   // A Check fit answer was about the old job description or resume, so it goes.
   if (typeof resumeId === 'string' && (resumeId || null) !== (a.resumeId ?? null)) delete a.fit;
   if (typeof posting === 'string' && cleanText(posting) !== (a.posting ?? '')) delete a.fit;
   if (typeof resumeId === 'string') a.resumeId = resumeId || null;
   if (typeof posting === 'string') a.posting = cleanText(posting);
-  const newCompany = req.body.company?.trim();
-  if (newCompany && newCompany !== a.company) {
+  if (fields.company && fields.company !== a.company) {
     a.aliases = [...new Set([...(a.aliases || []), a.company])];
     a.renamed = true;
   }
-  for (const key of ['company', 'role', 'jobId', 'url', 'notes']) {
-    if (typeof req.body[key] !== 'string') continue;
-    const value = req.body[key].trim();
+  for (const [key, value] of Object.entries(fields)) {
     // Remember hand-corrected role/ID so a re-scan doesn't overwrite them.
     if ((key === 'role' || key === 'jobId') && value !== (a[key] || '')) a.edited = { ...a.edited, [key]: true };
     a[key] = value;
@@ -392,11 +420,7 @@ app.patch('/api/applications/:id', async (req, res) => {
   }
   if (req.body.deadlineDone === false) a.deadlineDone = null; // undo "done" on an email's deadline
   // Interview: a date and time sets it; "" clears it.
-  if (typeof req.body.interviewAt === 'string') {
-    const at = typedInterview(req.body.interviewAt);
-    if (req.body.interviewAt && !at) return res.status(400).json({ error: 'Give the interview a date and a time' });
-    a.interviewAt = at;
-  }
+  if (interviewAt !== undefined) a.interviewAt = interviewAt;
   refresh(a);
   changed(req.account);
   res.json(a);
@@ -743,7 +767,7 @@ app.post('/api/sync', async (req, res) => {
     res.json(result);
   } catch (err) {
     broadcast(user.id);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: user.store.db.lastSyncError || gmail.plainSyncError(err) });
   }
 });
 
@@ -784,7 +808,8 @@ app.post('/api/applications/:id/rescan', async (req, res) => {
     broadcast(user.id);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    recordError('rescan', err, { userId: user.id, detail: "One application's emails" });
+    res.status(500).json({ error: gmail.plainSyncError(err) });
   }
 });
 
@@ -805,7 +830,7 @@ app.post('/api/reports', async (req, res) => {
   res.json({ ok: true });
 });
 
-const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the owner can see reports' });
+const ownerOnly = (req, res, next) => canSeeReports(req.account) ? next() : res.status(403).json({ error: 'Only the person who runs this nuj can do that' });
 app.get('/api/reports', ownerOnly, async (req, res) => res.json({ reports: await listReports() }));
 // Re-read someone's emails with the current sorting, from their problem report. Their own
 // edits are kept and a backup is made first, as with their Settings button.
@@ -1047,24 +1072,45 @@ async function runSync(user) {
 
 // One person at a time, so syncs don't pile up on Groq or Gmail. People taken off
 // ALLOWED_EMAIL keep their data but stop syncing.
+// Loaded one at a time and let go again when idle, so a pass never holds everyone's tracker.
 let syncingAll = null;
 function runSyncAll() {
   if (DEMO || syncingAll) return syncingAll;
   syncingAll = (async () => {
-    const users = authEnabled
-      ? (await allUsers()).filter(u => u.id !== LOCAL_ID && isAllowed(u.email))
-      : [await getUser(LOCAL_ID)];
-    for (const user of users) await runSync(live(user));
+    const ids = authEnabled ? (await userIds()).filter(id => id !== LOCAL_ID) : [LOCAL_ID];
+    for (const id of ids) {
+      const user = await getUser(id);
+      if (authEnabled && !isAllowed(user.email)) continue;
+      await runSync(live(user));
+      await releaseIdle();
+    }
     lastSyncPassAt = new Date().toISOString();
   })().catch(err => console.error(`[sync] ${err.message}`)).finally(() => { syncingAll = null; });
   return syncingAll;
+}
+
+// Trackers nobody has used for IDLE_MINUTES (and with no tab open) leave memory; see
+// releaseIdleUsers. The next request or sync loads them again.
+const IDLE_MS = Number(process.env.IDLE_MINUTES || 30) * 60_000;
+async function releaseIdle() {
+  try {
+    await releaseIdleUsers({ idleMs: IDLE_MS, keep: user => clients.has(user.id) });
+  } catch (err) {
+    recordError('server', err, { detail: 'Letting go of idle trackers' });
+  }
 }
 
 // Once after an update to sorting, everyone else's emails are read again (src/rescan-all.js).
 async function rescanAll() {
   try {
     const people = (await allUsers()).filter(u => u.id !== LOCAL_ID && isAllowed(u.email));
-    await rescanEveryoneOnce(people.map(live), { onUser: user => broadcast(user.id) });
+    // Each waits its turn, so none may be let go of meanwhile (see releaseIdle).
+    for (const u of people) u.holds++;
+    try {
+      await rescanEveryoneOnce(people.map(live), { onUser: user => broadcast(user.id) });
+    } finally {
+      for (const u of people) u.holds--;
+    }
   } catch (err) {
     console.error(`[rescan-all] ${err.message}`);
   }
@@ -1094,6 +1140,7 @@ app.listen(PORT, HOST, () => {
   console.log(`Storage: ${process.env.DATABASE_URL ? 'Postgres' : 'local files in data/'} · Groq: ${SERVER_KEY ? 'server key for the owner, others add their own' : 'each person adds their own key'} · sign-in: ${authEnabled ? 'Google' : 'off (local)'}`);
   runSyncAll();
   setInterval(runSyncAll, SYNC_MINUTES * 60_000);
+  setInterval(releaseIdle, 10 * 60_000).unref();
   // After the start-up sync has had its turn.
   if (authEnabled) setTimeout(rescanAll, 60_000);
 });

@@ -93,3 +93,13 @@ test("knownUser: finds someone registered, and never registers an ID it's given"
   assert.equal(await users.knownUser('sub-nobody'), null);
   assert.equal(((await store.getKv('users')) || {})['sub-nobody'], undefined);
 });
+
+test('someone with nothing tracked starts having seen the release notes; others still get them', async () => {
+  const { LATEST_RELEASE } = await import('../src/releases.js');
+  const fresh = await users.getUser('sub-fresh', 'friend@example.com');
+  assert.equal(fresh.store.db.seenRelease, LATEST_RELEASE.id);
+  const busy = { store: new store.Store('db_busy') };
+  busy.store.createApplication({ company: 'Contoso' });
+  assert.equal(users.noteReleaseForNewcomer(busy), false);
+  assert.equal(busy.store.db.seenRelease, undefined);
+});

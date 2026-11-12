@@ -25,8 +25,9 @@ or bundler. CI (`.github/workflows/ci.yml`) runs `npm test` on Node 22 and 24, t
 
 ## Architecture
 
-Node 22+ ES modules, Express 5, one process. Frontend is vanilla JS (`public/app.js`, one large file) with D3
-served from `node_modules` via `/vendor/*`. No framework.
+Node 22+ ES modules, Express 5, one process. Frontend is vanilla JS in `public/js/`: plain (non-module) scripts
+loaded in order by `index.html`, sharing one global scope, so top-level code may only use what an earlier file
+defines (functions called later can use anything). D3 is served from `node_modules` via `/vendor/*`. No framework.
 
 - **`server.js`** holds every route. Order matters: public routes (`/healthz`, `public-site/` landing pages,
   `/login`, OAuth callback, `/api/cron/sync`, `/cal/:file` calendar feed) come first, then `requireLogin`, then
@@ -56,7 +57,12 @@ served from `node_modules` via `/vendor/*`. No framework.
   While `db.rescanStartedAt` is set, the `db_before_rescan_<id>` backup is the only good copy: a failed re-scan
   reverts to the pre-scan state, and `Mailbox.recoverRescan()` restores the backup on load after a restart.
 - **Live updates.** Any change should end with `broadcast(user.id)` (SSE `data: update`), which makes open tabs
-  refetch `/api/state`. Undo-able actions use `store.checkpoint(...)` and return an undo token.
+  refetch `/api/state` (the page merges overlapping loads). Undo-able actions use `store.checkpoint(...)` and
+  return an undo token; checkpoints are saved in the tracker (`db.undo`), so they survive a restart.
+- **Input.** Check request fields with `textFields` (`src/input.js`) before changing anything, so a bad field
+  never leaves an application half-updated. Links must be http(s).
+- **Memory.** Idle trackers are released (`releaseIdleUsers`); work that waits its turn on a user bumps
+  `user.holds` so it isn't released meanwhile. Don't keep `User` objects past a request or task.
 - **Errors and the Developer page.** Call `recordError(source, err, { userId, level, detail })` from
   `src/errors.js` where something fails; it groups by a fingerprint of the message, strips email addresses and
   never throws. The owner-only `/api/dev/overview` combines it with `accountSummary()` (`src/accounts.js`). Keep

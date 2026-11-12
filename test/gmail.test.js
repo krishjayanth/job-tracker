@@ -1,7 +1,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { initStorage, getKv, setKv, Store, refresh, newId } from '../src/store.js';
-import { Mailbox } from '../src/gmail.js';
+import { Mailbox, plainSyncError } from '../src/gmail.js';
 
 before(() => initStorage({ inMemory: true }));
 
@@ -114,4 +114,14 @@ test('a re-scan cut off by a restart is put back from its backup when the accoun
   const fine = await mailboxFor('fine', tracker());
   await fine.mailbox.load();
   assert.equal(fine.store.db.applications.length, 2);
+});
+
+test("sync errors are told in plain words, keeping the Gmail API's turn-on link", () => {
+  const off = plainSyncError(new Error('Gmail API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=123 then retry.'));
+  assert.match(off, /isn't turned on/);
+  assert.match(off, /https:\/\/console\.developers\.google\.com\/apis\/api\/gmail\.googleapis\.com\/overview\?project=123/);
+  assert.match(plainSyncError(Object.assign(new Error('Too many requests'), { code: 429 })), /slow down/);
+  assert.match(plainSyncError(new Error('getaddrinfo ENOTFOUND gmail.googleapis.com')), /couldn't reach Gmail/);
+  assert.match(plainSyncError(Object.assign(new Error('Backend Error'), { code: 503 })), /on its side/);
+  assert.doesNotMatch(plainSyncError(new Error('Cannot read properties of undefined')), /undefined/);
 });

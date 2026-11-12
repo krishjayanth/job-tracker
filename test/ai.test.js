@@ -37,6 +37,13 @@ test('everyone but the owner gets a few runs a day', async () => {
   assert.equal(ai.aiStatus(owner).left, null);
 });
 
+test('runs asked for all at once still stop at the limit', async () => {
+  const friend = person('rush');
+  const runs = await Promise.all([1, 2, 3, 4, 5].map(() => ai.reserveRun(friend)));
+  assert.equal(runs.filter(r => r.release).length, 3);
+  assert.equal(runs.filter(r => r.status === 429).length, 2);
+});
+
 test('a run that fails is given back', async () => {
   const friend = person('refund');
   const run = await ai.reserveRun(friend);

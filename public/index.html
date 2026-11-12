@@ -78,8 +78,6 @@
       <a class="side-link" href="#/reports" data-view="reports" id="reports-link" hidden><svg class="icon"><use href="#i-flag"/></svg>Reports<span class="side-badge num" id="reports-count"></span></a>
       <a class="side-link" href="#/developer" data-view="developer" id="developer-link" hidden><svg class="icon"><use href="#i-terminal"/></svg>Developer<span class="side-badge num" id="developer-count" title="Open errors and new feedback"></span></a>
       <a class="side-link" href="#/settings" data-view="settings"><svg class="icon"><use href="#i-sliders"/></svg>Settings<i class="dot err side-alert" id="settings-dot" title="Something in Settings needs you" hidden></i></a>
-      <div class="side-label">Coming soon</div>
-      <div id="soon-links"></div>
     </nav>
     <div class="side-bottom">
       <button id="report-open" class="side-link side-report" type="button" data-report><svg class="icon"><use href="#i-flag"/></svg>Report a problem</button>
@@ -176,6 +174,7 @@
       <div class="stage-tabs" id="stage-tabs" role="tablist" aria-label="Filter by status"><span class="tab-indicator" id="tab-indicator" aria-hidden="true"></span></div>
       <div class="stage-bar" id="stage-bar" aria-hidden="true"></div>
       <div class="filter-chips" id="filter-chips" hidden></div>
+      <div class="nudge" id="quiet-nudge" hidden></div>
       <!-- Shows once rows are ticked: act on all of them at once (after 21st.dev's Data Table Toolbar). -->
       <div class="bulk-bar" id="bulk-bar" role="group" aria-label="Selected applications" hidden>
         <span class="bulk-count num" id="bulk-count"></span>
@@ -378,7 +377,7 @@
 
     <section class="panel settings-group" aria-labelledby="set-blocked-title">
       <h2 id="set-blocked-title">Ignored senders</h2>
-      <p class="settings-intro">nuj skips email from these. To add one, open an email's "Filed correctly?" and choose Not a job. Emails removed when you ignored a sender stay removed.</p>
+      <p class="settings-intro">nuj skips email from these. To add one, open an email's "Wrong application?" and choose Not a job. Emails removed when you ignored a sender stay removed.</p>
       <ul id="blocked-list" class="blocked-list"></ul>
       <p id="blocked-empty" class="settings-empty">You haven't ignored any senders.</p>
     </section>
@@ -662,6 +661,33 @@
     </div>
   </dialog>
 
+  <!-- Asks before something slow or permanent (see confirmAction in js/settings.js). -->
+  <dialog id="confirm-dialog" class="sheet" aria-labelledby="confirm-title">
+    <form method="dialog" id="confirm-form">
+      <div class="sheet-head">
+        <span class="sheet-icon"><svg class="icon"><use href="#i-alert"/></svg></span>
+        <div class="sheet-title">
+          <h2 id="confirm-title"></h2>
+          <p id="confirm-text"></p>
+        </div>
+        <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+          <svg class="icon"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <div class="sheet-body" id="confirm-type-row" hidden>
+        <div class="field"><label for="confirm-type" id="confirm-type-label"></label>
+          <input id="confirm-type" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="sheet-foot">
+        <span></span>
+        <div class="foot-actions">
+          <button class="btn btn-quiet" type="button" data-close-dialog>Cancel</button>
+          <button class="btn btn-primary" type="submit" id="confirm-go"></button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="report-dialog" class="sheet" aria-labelledby="report-title">
     <div class="sheet-head">
       <span class="sheet-icon"><svg class="icon"><use href="#i-flag"/></svg></span>
@@ -731,6 +757,19 @@
 
   <script src="/vendor/d3/d3.min.js"></script>
   <script src="/vendor/d3-sankey/d3-sankey.min.js"></script>
-  <script src="app.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/drawer.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/selection.js"></script>
+  <script src="js/calendar.js"></script>
+  <script src="js/soon.js"></script>
+  <script src="js/resume.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/reports.js"></script>
+  <script src="js/developer.js"></script>
+  <script src="js/shell.js"></script>
+  <script src="js/cmdk.js"></script>
+  <script src="js/start.js"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 // can subscribe to. The feed's address is a long random token, so it works without
 // signing in; resetting it stops the old address.
 import crypto from 'node:crypto';
+import { isWebLink } from './input.js';
 import { validTimeZone } from './zones.js';
 
 const CLOSED = new Set(['rejected', 'withdrawn']);
@@ -96,7 +97,7 @@ export function buildIcs(applications, { timeZone = 'UTC', link = '', now = Date
     }
     lines.push(`SUMMARY:${text(`${what} · ${app.company}`)}`);
     if (details) lines.push(`DESCRIPTION:${text(details)}`);
-    if (app.url) lines.push(`URL:${app.url.replace(/\s/g, '')}`);
+    if (isWebLink(app.url)) lines.push(`URL:${app.url.replace(/\s/g, '')}`);
     lines.push('END:VEVENT');
   }
   lines.push('END:VCALENDAR');

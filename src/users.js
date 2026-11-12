@@ -1,7 +1,7 @@
 // Everyone who uses this nuj, each with their own tracker, Gmail connection and Groq key.
 // Users are keyed by Google's stable account id; running locally without sign-in
 // there's one user, "local", and the demo has "demo".
-import { getKv, setKv, deleteKv, openStore, closeStore } from './store.js';
+import { getKv, setKv, deleteKv, openStore, closeStore, releaseStore } from './store.js';
 import { Mailbox } from './gmail.js';
 import { encrypt, decrypt } from './secrets.js';
 import { groqClient, forgetClient, SERVER_KEY } from './groq.js';
@@ -9,6 +9,7 @@ import { ownerEmail } from './auth.js';
 import { recordError, forgetUserErrors } from './errors.js';
 import { forgetUserFeedback } from './feedback.js';
 import { forgetResumes } from './resume.js';
+import { LATEST_RELEASE } from './releases.js';
 
 export const LOCAL_ID = 'local';
 export const DEMO_ID = 'demo';
@@ -40,8 +41,33 @@ export async function joinDates() {
 
 // Everyone registered, loaded.
 export async function allUsers() {
-  const registry = (await getKv(REGISTRY)) || {};
-  return Promise.all(Object.keys(registry).map(id => getUser(id)));
+  return Promise.all((await userIds()).map(id => getUser(id)));
+}
+
+// Everyone registered, by ID, without loading anyone.
+export async function userIds() {
+  return Object.keys((await getKv(REGISTRY)) || {});
+}
+
+// Each tracker is one document held in memory, so with many people the server would hold
+// all of them forever. Someone who hasn't used nuj for a while (`idleMs`), isn't syncing,
+// has nothing left to undo and isn't kept by `keep` (an open tab, say) is let go: their
+// tracker is written and dropped, and loaded again the next time it's needed.
+// Returns how many were let go.
+export async function releaseIdleUsers({ idleMs, keep = () => false, now = Date.now() }) {
+  let released = 0;
+  for (const [id, loading] of [...users]) {
+    const user = await loading.catch(() => null);
+    // Kept only in memory (the demo, tests): letting go would lose it.
+    if (!user || users.get(id) !== loading || !user.store.persist) continue;
+    if (now - (user.lastUsedAt || 0) < idleMs || user.holds > 0 || keep(user) || user.mailbox.busy()) continue;
+    user.store.pruneUndo();
+    if (user.store.undoable.size) continue;
+    users.delete(id);
+    await releaseStore(id);
+    released++;
+  }
+  return released;
 }
 
 // Changes to the list of users, one at a time so two sign-ins can't overwrite each other.
@@ -64,7 +90,19 @@ async function loadUser(id, email) {
   if (isOwner(id, email)) await adoptSingleUserData(id);
   const user = new User(id, email, await openStore(id), !known);
   await user.load();
+  noteReleaseForNewcomer(user);
   return user;
+}
+
+// Someone with nothing tracked yet has nothing to compare an update against, so they start
+// having seen the latest release notes. Done when the account loads, not while answering a
+// request for the page, so reading the page never changes anything.
+export function noteReleaseForNewcomer(user) {
+  const db = user.store.db;
+  if (db.seenRelease === LATEST_RELEASE.id || db.applications.length || db.lastSync) return false;
+  db.seenRelease = LATEST_RELEASE.id;
+  user.store.save();
+  return true;
 }
 
 // Before accounts, there was one tracker ("db") and one Gmail sign-in ("gmail_token").
@@ -111,6 +149,8 @@ export class User {
     this.keyRecord = null; // { sealed, last4, savedAt, rejected? }
     this.apiKey = null;    // the decrypted Groq key, in memory only
     this.serverKeyRejected = false;
+    this.lastUsedAt = 0; // the last API request (see releaseIdleUsers)
+    this.holds = 0;      // work waiting its turn on this user: never let go meanwhile
   }
 
   get keyName() { return `groq_key_${this.id}`; }
