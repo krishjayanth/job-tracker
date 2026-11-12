@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { initStorage, flushAll, refresh, newId, typedDeadline, getKv, setKv, deleteKv, setFile } from './src/store.js';
@@ -187,10 +188,30 @@ function live(user) {
   }
   return user;
 }
+// A fingerprint of the dashboard's own files, sent first on every live-update stream. A tab
+// opened before a deploy compares it when it reconnects: different files mean it's running
+// old code against a new server, so it asks to reload instead of drawing new data with old
+// code (an old Resume page once crashed reading fields the server had stopped sending).
+// Worked out from the files, not the start time, so a restart with no change doesn't count.
+function dashboardBuild(dir = 'public') {
+  const hash = crypto.createHash('sha1');
+  const walk = d => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(js|css|html)$/.test(entry.name)) hash.update(entry.name).update(fs.readFileSync(full));
+    }
+  };
+  walk(dir);
+  return hash.digest('hex').slice(0, 12);
+}
+const BUILD = dashboardBuild();
+
 app.get('/api/events', (req, res) => {
   const id = req.account.id;
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.flushHeaders();
+  res.write(`event: build\ndata: ${BUILD}\n\n`);
   if (!clients.has(id)) clients.set(id, new Set());
   clients.get(id).add(res);
   if (canSeeReports(req.account)) ownerClients.add(res);

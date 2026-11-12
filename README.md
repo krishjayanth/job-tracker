@@ -90,8 +90,8 @@ free tier awake):
    minus any senders you've chosen to ignore.
 2. **Is it about a job at all?** Free checks run first: hiring software counts as a job, and housing, utility,
    banking, school and similar wording with nothing about a job is dropped, so a landlord's "thank you for your
-   application" never becomes an application. When that's unclear and there's a Groq key, a small, fast model
-   (`llama-3.1-8b-instant`) answers just that question before the full read is spent on it.
+   application" never becomes an application. When that's unclear and there's a Groq key, a quick question to the
+   model, with a short excerpt and little thinking, answers just that before the full read is spent on it.
    ([`src/jobcheck.js`](src/jobcheck.js))
 3. **Classify each email.** Groq first writes out its reasoning (who is hiring, what the email asks, which job), then
    returns the stage, company, role, job ID, deadline, a one-line summary and its confidence as strict JSON. AI and

@@ -42,14 +42,17 @@ test('classify: deadlines in the email are read in your time zone', async () => 
   assert.equal(r.deadline, '2026-10-10T06:59:00.000Z');
 });
 
+// The job check, told apart from the full read by its instructions (both can use one model).
+const isGate = req => req.messages[0].content.startsWith('You decide whether an email');
+
 // A stand-in for the Groq client: answers the job check and the full read, and records calls.
 function fakeGroq({ gate, read }) {
   const calls = [];
   return {
     calls,
     chat: { completions: { create: async req => {
-      calls.push(req.model);
-      const content = req.model === GATE_MODEL ? JSON.stringify({ job: gate, why: 'test' }) : JSON.stringify(read);
+      calls.push(isGate(req) ? 'gate' : 'read');
+      const content = isGate(req) ? JSON.stringify({ job: gate, why: 'test' }) : JSON.stringify(read);
       return { choices: [{ finish_reason: 'stop', message: { content } }] };
     } } },
   };
@@ -71,7 +74,7 @@ test('pipeline: a utility "application" is dropped before any AI call', async ()
 test('pipeline: an unclear email asks the small model first, and stops if it says no', async () => {
   const groq = fakeGroq({ gate: false, read: fullRead });
   assert.equal(await classify(vague, { groq }), null);
-  assert.deepEqual(groq.calls, [GATE_MODEL]);
+  assert.deepEqual(groq.calls, ['gate']);
 });
 
 test('pipeline: when the small model says yes, the full read files it without a flag', async () => {
@@ -92,7 +95,7 @@ test('pipeline: emails from hiring software skip the job check', async () => {
   const groq = fakeGroq({ gate: false, read: fullRead });
   const r = await classify({ ...vague, from: 'Contoso <no-reply@us.greenhouse-mail.io>' }, { groq });
   assert.equal(r.company, 'Contoso');
-  assert.ok(!groq.calls.includes(GATE_MODEL));
+  assert.ok(!groq.calls.includes('gate'));
 });
 
 test('picking an application: uses the model\'s choice only when it is sure and in range', async () => {
@@ -171,7 +174,7 @@ const club = { from: 'Horizons Finance Guild <horizonsfinance@gmail.com>', subje
 test('pipeline: a club email goes to the job check, which can turn it away', async () => {
   const groq = fakeGroq({ gate: false, read: { ...fullRead, stage: 'interview', company: 'Horizons Finance Guild' } });
   assert.equal(await classify(club, { groq }), null);
-  assert.ok(groq.calls.includes(GATE_MODEL));
+  assert.ok(groq.calls.includes('gate'));
 });
 
 test('pipeline: without a key, a club email is flagged as maybe not a job', async () => {
@@ -183,7 +186,7 @@ test('both prompts tell the model student clubs are not jobs', async () => {
   const prompts = [];
   const groq = { chat: { completions: { create: async req => {
     prompts.push(req.messages[0].content);
-    const content = req.model === GATE_MODEL ? JSON.stringify({ job: true, why: 'test' }) : JSON.stringify(fullRead);
+    const content = isGate(req) ? JSON.stringify({ job: true, why: 'test' }) : JSON.stringify(fullRead);
     return { choices: [{ finish_reason: 'stop', message: { content } }] };
   } } } };
   await classify(vague, { groq });
@@ -191,12 +194,27 @@ test('both prompts tell the model student clubs are not jobs', async () => {
   for (const p of prompts) assert.match(p, /student clubs/i);
 });
 
-test('job check: when Groq has retired the small model, it moves to the main model and keeps working', async () => {
+test('job check: uses the main model by default, with room to think', async () => {
   resetGateModelForTests();
+  assert.equal(GATE_MODEL, MODEL); // llama-3.1-8b-instant is retired
+  const calls = [];
+  const groq = { chat: { completions: { create: async req => {
+    calls.push(req);
+    return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ job: false, why: 'test' }) } }] };
+  } } } };
+  assert.equal(await isJobEmailWithGroq(groq, vague), false);
+  assert.equal(calls[0].model, MODEL);
+  assert.equal(calls[0].reasoning_effort, 'low');
+  assert.ok(calls[0].max_completion_tokens >= 400);
+});
+
+test('job check: when Groq has retired a small model you chose, it moves to the main model and keeps working', async () => {
+  const SMALL = 'some-small-model';
+  resetGateModelForTests(SMALL);
   const calls = [];
   const groq = { chat: { completions: { create: async req => {
     calls.push([req.model, req.max_completion_tokens]);
-    if (req.model === GATE_MODEL) {
+    if (req.model === SMALL) {
       // The shape groq-sdk throws for a model that doesn't exist.
       throw Object.assign(new Error('404 The model does not exist'), { status: 404, error: { error: { code: 'model_not_found' } } });
     }
@@ -206,7 +224,8 @@ test('job check: when Groq has retired the small model, it moves to the main mod
   assert.equal(gateModel(), MODEL);
   // The next email goes straight to the main model, with room for it to think.
   assert.equal(await isJobEmailWithGroq(groq, vague), true);
-  assert.deepEqual(calls.map(c => c[0]), [GATE_MODEL, MODEL, MODEL]);
+  assert.deepEqual(calls.map(c => c[0]), [SMALL, MODEL, MODEL]);
+  assert.equal(calls[0][1], 60); // a small plain model needs only a few tokens
   assert.ok(calls[1][1] > 60);
   resetGateModelForTests();
 });
