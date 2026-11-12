@@ -2,20 +2,16 @@
 // (see whatsNewFor in server.js). Give each release a new id; people who've seen
 // that id don't see it again. Write it for the people using nuj, not for developers.
 export const LATEST_RELEASE = {
-  id: '2026-11-resume-grade',
+  id: '2026-11-pdf-edits',
   title: "What's new in nuj",
   items: [
     {
-      title: 'Your resume, graded',
-      text: 'Select "Grade my resume" for a strict recruiter\'s read: a score out of 100 and a letter grade, five rubric scores, every bullet that misses the XYZ formula with a rewrite, skills you list but never show, and the biggest thing holding it back.',
+      title: 'Your PDF stays on screen as you fix it',
+      text: "When you select \"Use this\" on a rewrite, your resume's PDF stays up with the new line drawn over the old one, instead of switching to plain text.",
     },
     {
-      title: 'Tailor it to a job',
-      text: 'Check fit and Check a job now act as a recruiter for that company: a match score out of 100, the top missing keywords, three red flags, bullets rewritten for the job, and the sections a busy reader would skip.',
-    },
-    {
-      title: 'Asked again before it runs',
-      text: "The review now reads the job descriptions you've pasted, and Check fit tells the AI the company's name, so nuj asks your permission again the next time you use them. Your name and contact details are still never sent.",
+      title: 'Download your edited PDF',
+      text: 'Select "Download edited PDF" under your resume for a copy of your own file with the new lines written in, ready to send. The old wording is taken out, not just covered.',
     },
   ],
 };

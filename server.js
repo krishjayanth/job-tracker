@@ -19,10 +19,11 @@ import { getUser, knownUser, allUsers, userIds, releaseIdleUsers, deleteUser, jo
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
-import { extractText, cleanText, listVersions, addVersion, updateVersion, editText, deleteVersion, versionMeta, versionFor, currentVersion, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, editText, deleteVersion, versionMeta, pdfLineChanges, versionFor, currentVersion, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
 import { textPdf } from './src/textpdf.js';
 import { textFields } from './src/input.js';
 import { computeInsights, outcomeOf, layoutLines } from './src/insights.js';
+import { writePdfEdits, PdfEditError } from './src/pdfedit.js';
 import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
@@ -600,8 +601,13 @@ async function resumePicture(user) {
 }
 
 // One version laid out for the preview. The only highlights are the bullets the AI's
-// review is about, which the page adds itself.
-const previewOf = version => ({ versionId: version.id, name: version.name, lines: layoutLines(version.text) });
+// review is about, which the page adds itself. `pdfEdits`: lines changed by rewrites you
+// accepted since its PDF was saved, with the words the PDF still shows there, so the page
+// can draw the new ones over them.
+const previewOf = version => ({
+  versionId: version.id, name: version.name, lines: layoutLines(version.text),
+  pdfEdits: version.pdf ? pdfLineChanges(version) : [],
+});
 
 // What the page needs from the numbers: how many applications there are, which version is
 // current, and which applications went out with each version (for "Show applications").
@@ -703,8 +709,9 @@ app.post('/api/resume/:id/rewrite', async (req, res) => {
     const i = findLine(text, from);
     if (i < 0) return { error: "That line isn't in this version any more" };
     const bullet = lines[i].match(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/)?.[0] ?? '';
+    const was = lines[i].slice(bullet.length).trim();
     lines[i] = bullet + to.trim();
-    return lines.join('\n');
+    return { text: lines.join('\n'), pdfEdit: { from: was, to: to.trim() } };
   });
   if (result.error) return res.status(result.status || 400).json({ error: result.error });
   broadcast(req.account.id);
@@ -726,6 +733,39 @@ app.put('/api/resume/:id/pdf', express.raw({ type: () => true, limit: UPLOAD_LIM
   if (error) return res.status(status || 400).json({ error });
   broadcast(req.account.id);
   res.json(versionMeta(version));
+});
+
+// A copy of the PDF with the rewrites you accepted written into it: the old lines' text is
+// taken out of the page and the new wording put in its place (see pdfedit.js). Where each
+// line sits comes from the page, which already worked it out to draw the preview.
+app.post('/api/resume/:id/pdf/edited', async (req, res) => {
+  if (tooMany(`resume-pdf-edit:${req.account.id}`, { max: 30 })) return res.status(429).json({ error: "That's a lot of downloads. Try again in an hour" });
+  const version = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
+  if (!version?.pdf) return res.status(404).json({ error: 'This version has no PDF' });
+  const changes = pdfLineChanges(version);
+  if (!changes.length) return res.status(400).json({ error: "You haven't changed any lines since this PDF was saved" });
+  const share = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1.5;
+  const places = Array.isArray(req.body?.places) ? req.body.places : [];
+  const edits = [];
+  for (const c of changes) {
+    const place = places.find(x => x?.at === c.at);
+    const boxes = Array.isArray(place?.boxes) ? place.boxes.slice(0, 6) : [];
+    if (!boxes.length || !boxes.every(b => Number.isInteger(b?.page) && b.page >= 0 && ['l', 't', 'w', 'h'].every(k => share(b[k])))) {
+      return res.status(400).json({ error: "nuj couldn't find every changed line in this PDF, so it didn't write a copy. Upload the new PDF instead" });
+    }
+    edits.push({ right: share(place.right) ? place.right : 0, from: c.from, to: version.text.split('\n')[c.at].replace(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/, '').trim(), boxes });
+  }
+  const pdf = await loadPdf(req.account.id, version.id);
+  if (!pdf) return res.status(404).json({ error: 'This version has no PDF' });
+  try {
+    const out = await writePdfEdits(pdf, edits);
+    const name = `${version.name.replace(/[^\w .,()-]+/g, '').trim() || 'Resume'} (edited).pdf`;
+    res.set({ 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store', 'Content-Disposition': `attachment; filename="${name}"` });
+    res.send(out);
+  } catch (err) {
+    if (!(err instanceof PdfEditError)) recordError('server', err, { userId: req.account.id, detail: 'Writing an edited PDF' });
+    res.status(422).json({ error: err instanceof PdfEditError ? err.message : "nuj couldn't write the edited PDF. Upload the new PDF instead" });
+  }
 });
 
 app.delete('/api/resume/:id/pdf', async (req, res) => {

@@ -1823,6 +1823,20 @@ table.apps { width: 100%; border-collapse: collapse; }
   position: relative; width: 100%; border-radius: 4px; background: #fff;
   box-shadow: 0 0 0 1px var(--border), 0 24px 48px -28px rgba(0, 0, 0, .6);
 }
+/* Rewrites you accepted, over the old lines: covered in the page's white, the new words in
+   a standard font sized as a share of the page (cqw), with a thin green mark beside them. */
+.pdf-page { container-type: inline-size; }
+.pdf-edit-cover { background: #fff; }
+.pdf-edit-text {
+  display: flex; align-items: center; white-space: nowrap; overflow: visible;
+  font-family: Helvetica, Arial, sans-serif; font-size: calc(var(--fs) * 100cqw); line-height: 1; color: #141414;
+  box-shadow: -3px 0 0 -1px rgba(34, 197, 94, .9); cursor: help;
+}
+.pdf-edits-foot { display: grid; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
+.pdf-edits-foot p { display: grid; grid-template-columns: auto 1fr; gap: 8px; margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.pdf-edits-foot p .icon { width: 14px; height: 14px; margin-top: 2px; color: var(--muted); }
+.pdf-edits-foot p.warn .icon { color: var(--interview); }
+.pdf-edits-foot .btn { justify-self: start; }
 .pdf-slot { position: absolute; inset: 0; overflow: hidden; border-radius: 4px; }
 .pdf-canvas { display: block; width: 100%; height: 100%; }
 .pdf-marks { position: absolute; inset: 0; }

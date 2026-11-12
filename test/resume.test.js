@@ -2,7 +2,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { initStorage, getKv, setKv, getFile } from '../src/store.js';
-import { extractText, cleanText, addVersion, updateVersion, editText, deleteVersion, listVersions, releaseResumes, versionMeta, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
+import { extractText, cleanText, addVersion, updateVersion, editText, deleteVersion, listVersions, releaseResumes, versionMeta, pdfLineChanges, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
 import { textPdf } from '../src/textpdf.js';
 
 before(() => initStorage({ inMemory: true }));
@@ -156,4 +156,34 @@ test('a PDF is kept as a file, and one saved as text by an older nuj moves over 
   assert.ok((await loadPdf(user, old.id)).equals(fixture('resume.pdf')));
   assert.ok((await getFile(oldKey)).equals(fixture('resume.pdf')));
   assert.equal(await getKv(oldKey), null);
+});
+
+test('accepted rewrites are kept against the PDF, and Undo or a change by hand is read off the text', async () => {
+  const user = 'u-pdf-edits';
+  const start = 'Experience\n• Helped with the sign-up page\n• Fixed bugs in the app';
+  const { version } = await addVersion(user, { text: start });
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  const swap = (from, to) => editText(user, version.id, text => ({ text: text.replace(from, to), pdfEdit: { from, to } }));
+  const now = async () => (await listVersions(user))[0];
+
+  await swap('Helped with the sign-up page', 'Rebuilt the sign-up page');
+  await swap('Rebuilt the sign-up page', 'Rebuilt the sign-up page for [N] users'); // the same line again
+  const { before } = await swap('Fixed bugs in the app', 'Fixed [N] bugs in the app');
+  assert.equal(versionMeta(await now()).pdf.edited, 3);
+  // The PDF still shows the original words on both lines.
+  assert.deepEqual(pdfLineChanges(await now()), [{ at: 1, from: 'Helped with the sign-up page' }, { at: 2, from: 'Fixed bugs in the app' }]);
+
+  await updateVersion(user, version.id, { text: before }); // Undo the last
+  assert.equal(versionMeta(await now()).pdf.edited, 2);
+  assert.deepEqual(pdfLineChanges(await now()).map(c => c.at), [1]);
+
+  await updateVersion(user, version.id, { text: start }); // back to how the PDF was saved
+  assert.equal(versionMeta(await now()).pdf.edited, undefined);
+  assert.equal(versionMeta(await now()).pdf.stale, undefined);
+
+  await updateVersion(user, version.id, { text: `${start}\nA line typed by hand` });
+  assert.equal(versionMeta(await now()).pdf.stale, true);
+  await swap('Fixed bugs in the app', 'Fixed [N] bugs'); // not noted: the PDF is already out of date
+  assert.equal(versionMeta(await now()).pdf.stale, true);
+  assert.ok(!('edits' in versionMeta(await now()).pdf) && !('textHash' in versionMeta(await now()).pdf), 'the page sees counts, not the record');
 });
