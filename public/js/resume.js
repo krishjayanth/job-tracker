@@ -619,11 +619,68 @@ function placeLines(doc, lines) {
 
 const boxStyle = b => `left:${(b.l * 100).toFixed(2)}%;top:${(b.t * 100).toFixed(2)}%;width:${(b.w * 100).toFixed(2)}%;height:${(b.h * 100).toFixed(2)}%`;
 
+// ---- rewrites you accepted, drawn over the PDF ----
+// The PDF still shows the old words on lines you changed with "Use this" (the server says
+// which, in r.pdfEdits), so lines are found by those words, then each changed one is covered
+// and the new wording drawn on it. It wraps and shrinks by the same rule the edited copy is
+// written with (pdfedit.js fitWording), so the preview is what the download will look like.
+const EDIT_MIN_SHRINK = 0.7;
+const pdfShownLines = r => (r.pdfEdits?.length
+  ? r.lines.map((l, i) => {
+    const e = r.pdfEdits.find(x => x.at === i);
+    return e ? { ...l, text: l.text.slice(0, l.at) + e.from } : l;
+  })
+  : r.lines);
+
+// The right edge of the text on a page, as a share of its width: how far a longer line can run.
+const textRight = page => Math.max(0, ...page.items.map(i => i.l + i.w));
+
+function fitEdit(text, width, rows, base) {
+  // Widths in shares of the page width: the measurer draws at 100px.
+  const widthOf = (s, size) => (measure(s) / 100) * size;
+  for (let size = base; size >= base * EDIT_MIN_SHRINK - 1e-9; size *= 0.97) {
+    const lines = [];
+    let row = '';
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+      const next = row ? `${row} ${word}` : word;
+      if (row && widthOf(next, size) > width) { lines.push(row); row = word; } else row = next;
+    }
+    if (row) lines.push(row);
+    if (lines.length <= rows) return { size, lines };
+  }
+  return null;
+}
+
+// Each changed line: where it is, and how the new wording fits there (null: too long).
+function pdfEditPlaces(r, doc, placed) {
+  return (r.pdfEdits ?? []).map(e => {
+    const boxes = placed.get(e.at)?.line ?? [];
+    if (!boxes.length) return { at: e.at, boxes };
+    const page = doc.pages[boxes[0].page];
+    const right = textRight(page);
+    const rows = boxes.filter(b => b.page === boxes[0].page);
+    const width = Math.max(right, ...rows.map(b => b.l + b.w)) - rows[0].l;
+    const base = rows[0].h * page.ratio * 0.8; // the old font size, in shares of the page width
+    const to = r.lines[e.at].text.slice(r.lines[e.at].at);
+    return { at: e.at, from: e.from, to, boxes, right, rows, fit: fitEdit(to, width, rows.length, base) };
+  });
+}
+
+function pdfEditHtml(place, page) {
+  const cover = place.rows.map(b => `<span class="pdf-edit-cover" style="${boxStyle({ ...b, l: b.l - 0.002, w: b.w + 0.004 })}"></span>`).join('');
+  if (!place.fit) return cover;
+  const { size, lines } = place.fit;
+  return cover + lines.map((line, i) => `<span class="pdf-edit-text" style="${boxStyle({ ...place.rows[i], w: 1 - place.rows[i].l })};--fs:${size.toFixed(5)}"
+    title="Changed from: ${esc(place.from)}">${esc(line)}</span>`).join('');
+}
+
 function pdfPagesHtml(r, doc) {
-  const placed = placeLines(doc, r.lines);
+  const placed = placeLines(doc, pdfShownLines(r));
+  const edits = pdfEditPlaces(r, doc, placed);
   const bySg = suggestionsByLine(r);
   const marks = doc.pages.map(() => []);
   const notes = doc.pages.map(() => '');
+  for (const e of edits) if (e.boxes.length) marks[e.boxes[0].page].push(pdfEditHtml(e, doc.pages[e.boxes[0].page]));
   let missing = 0;
   r.lines.forEach((l, i) => {
     const sgs = bySg.get(i) || [];
@@ -648,7 +705,15 @@ function pdfPagesHtml(r, doc) {
     <div class="pdf-page" data-page="${n}" style="aspect-ratio:1/${p.ratio.toFixed(4)}">
       <div class="pdf-slot"></div><div class="pdf-marks">${marks[n].join('')}</div>${notes[n]}
     </div>`).join('');
+  const lost = edits.filter(e => !e.boxes.length).length;
+  const tooLong = edits.filter(e => e.boxes.length && !e.fit);
   return `${pages}
+    ${edits.length ? `<div class="pdf-edits-foot">
+      <p>${icon('file')}<span>${edits.length} ${edits.length === 1 ? 'line you changed is' : 'lines you changed are'} drawn over your PDF in a standard font. Your original file hasn't changed.</span></p>
+      ${tooLong.length ? `<p class="warn">${icon('alert')}<span>${tooLong.length === 1 ? `“${esc(tooLong[0].to.slice(0, 50))}…” is` : `${tooLong.length} changed lines are`} too long to fit where the old line was. Shorten ${tooLong.length === 1 ? 'it' : 'them'} with Edit text to download the edited PDF.</span></p>` : ''}
+      ${lost ? `<p class="warn">${icon('alert')}<span>nuj couldn't find ${lost === 1 ? 'one changed line' : `${lost} changed lines`} in this PDF, so the edited PDF can't be made. Upload the new PDF instead.</span></p>` : ''}
+      ${!tooLong.length && !lost ? `<button class="btn btn-sm" type="button" data-pdf-download="${esc(r.versionId)}">${icon('download')}<span>Download edited PDF</span></button>` : ''}
+    </div>` : ''}
     ${doc.total > doc.pages.length ? `<p class="pdf-foot">Showing the first ${doc.pages.length} of ${doc.total} pages.</p>` : ''}
     ${missing ? `<p class="pdf-foot">${icon('alert')}${missing} highlighted ${missing === 1 ? 'line isn\'t' : 'lines aren\'t'} where nuj expected in this PDF. <button class="meta-link" type="button" data-review-mode="text">See them in the text view</button></p>` : ''}`;
 }
@@ -704,6 +769,41 @@ function attachPdfPages() {
   if (!doc) return;
   view.querySelectorAll('.pdf-page').forEach(el => el.querySelector('.pdf-slot').append(doc.pages[Number(el.dataset.page)].canvas));
 }
+
+// The edited PDF: the server writes the changed lines into a copy of your file, at the
+// places this page found for them.
+$('#view-resume').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-pdf-download]');
+  if (!btn) return;
+  const r = resume.preview;
+  const v = resume.versions.find(x => x.id === btn.dataset.pdfDownload);
+  const doc = v?.pdf && pdfReady.get(`${v.id}:${v.pdf.at}`);
+  if (!doc || r.versionId !== v.id) return;
+  const places = pdfEditPlaces(r, doc, placeLines(doc, pdfShownLines(r)))
+    .map(({ at, boxes, right }) => ({ at, right, boxes: boxes.map(({ page, l, t, w, h }) => ({ page, l, t, w, h })) }));
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try {
+    const res = await fetch(`/api/resume/${v.id}/pdf/edited`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ places }) });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      noteError(`POST /api/resume/${v.id}/pdf/edited → ${res.status} ${data.error || res.statusText}`);
+      throw new ApiError(data.error || "nuj couldn't make the edited PDF. Try again");
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: `${v.name.replace(/[^\w .,()-]+/g, '').trim() || 'Resume'} (edited).pdf` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    toast('Downloaded your edited PDF. Upload it here to make it this version\'s PDF');
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+});
 
 // Upload the PDF for a version that came from Word or was pasted.
 let pdfFor = null;
@@ -922,7 +1022,7 @@ document.addEventListener('click', async e => {
     use.textContent = 'Used';
     // A rewrite can hold [X%] or [N] where only you know the real number.
     const fillIn = /\[[^\]]{1,6}\]/.test(use.dataset.to) ? '. Edit its text to fill in the [ ] with your real number' : '';
-    toast(`Changed the line in ${version.name}${fillIn || (version.pdf?.stale ? '. Upload its new PDF when you have one' : '')}`, async () => {
+    toast(`Changed the line in ${version.name}${fillIn || (version.pdf?.edited ? '. It\'s drawn over your PDF' : '')}`, async () => {
       await api('PATCH', `/api/resume/${version.id}`, { text: before });
       if (item) await api('PATCH', `/api/insights/review/items/${item}`, { state: 'open' }).catch(() => {});
       resumeJson = '';
