@@ -22,7 +22,7 @@ import { extractText, cleanText, listVersions, addVersion, updateVersion, editTe
 import { textPdf } from './src/textpdf.js';
 import { textFields } from './src/input.js';
 import { computeInsights, outcomeOf, layoutLines } from './src/insights.js';
-import { aiStatus, reserveRun, hashOf, findLine, suggestionsInput, writeSuggestions, checkApplicationFit, demoSuggestions, demoFit, serverUsage, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
+import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -545,17 +545,17 @@ app.delete('/api/applications/:id', (req, res) => {
 });
 
 // --- resume insights --------------------------------------------------------
-// Your resume versions (their text, and a PDF to show the pages) and the AI's suggestions
-// for them. nuj itself doesn't grade the resume; the numbers worked out here are what the
-// AI is told. Changes tell your open tabs, like any other.
+// Your resume versions (their text, and a PDF to show the pages) and the AI's review of
+// them. nuj itself doesn't grade the resume or read its skills: the AI does all of that,
+// told only the resume, how applications went and the job descriptions you pasted.
+// Changes tell your open tabs, like any other.
 const UPLOAD_LIMIT = '5mb';
 
-// The versions, the numbers behind them, and what the AI would be told for suggestions
-// (with a fingerprint of it, so asking again when nothing changed doesn't use a run).
-// Working it out reads every application against ~230 skill patterns, and an open Resume
-// page asks again on every live update (every 1.5 seconds during a sync), so the answer is
-// kept until the tracker or the versions change, or the hour turns (applications go quiet
-// with time).
+// The versions, the numbers behind them, and what the AI would be told for a review (with
+// a fingerprint of it, so asking again when nothing changed doesn't use a run). An open
+// Resume page asks again on every live update (every 1.5 seconds during a sync), so the
+// answer is kept until the tracker or the versions change, or the hour turns
+// (applications go quiet with time).
 const pictures = new WeakMap(); // store -> { key, versions, picture }
 async function resumePicture(user) {
   const versions = await listVersions(user.id);
@@ -566,10 +566,11 @@ async function resumePicture(user) {
   const apps = user.store.applications.map(a => ({ ...a, path: stagePath(a, { ghostDays: GHOST_DAYS }) }));
   const insights = computeInsights(apps, versions, { ghostDays: GHOST_DAYS, timeZone });
   const current = versions.find(v => v.id === insights.currentId);
-  const input = current && suggestionsInput({
+  const input = current && reviewInput({
     resumeText: current.text, versionName: current.name, insights,
     apps: [...apps].sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)).map(a => ({
       role: a.role || 'Not known', outcome: outcomeOf(a, { ghostDays: GHOST_DAYS }), version: versionFor(a, versions, timeZone).name,
+      posting: a.posting || '',
     })),
   });
   const picture = { versions, insights, current, input, inputHash: input ? hashOf(input) : null };
@@ -577,9 +578,9 @@ async function resumePicture(user) {
   return picture;
 }
 
-// One version laid out for the preview. The only highlights are the lines AI suggestions
-// are about, which the page adds itself.
-const reviewOf = version => ({ versionId: version.id, name: version.name, lines: layoutLines(version.text) });
+// One version laid out for the preview. The only highlights are the bullets the AI's
+// review is about, which the page adds itself.
+const previewOf = version => ({ versionId: version.id, name: version.name, lines: layoutLines(version.text) });
 
 // What the page needs from the numbers: how many applications there are, which version is
 // current, and which applications went out with each version (for "Show applications").
@@ -590,19 +591,16 @@ const pageInsights = insights => ({
   byVersion: insights.byVersion.map(({ key, total, ids }) => ({ key, total, ids })),
 });
 
-// Saved suggestions, with the lines each one is about found in the version it was written
-// for (they move if you edit the text, and drop out if the line is gone).
-function placedSuggestions(saved, versions, inputHash) {
+// The saved review, with each graded bullet found in the version it was written for (they
+// move if you edit the text; one whose line is gone, say after "Use this", has no line).
+function placedReview(saved, versions, inputHash) {
   if (!saved) return null;
   const text = versions.find(v => v.id === saved.versionId)?.text ?? '';
+  const { inputHash: _, ...review } = saved;
   return {
-    at: saved.at, version: saved.version, versionId: saved.versionId ?? null,
+    ...review,
     upToDate: saved.inputHash === inputHash,
-    items: saved.items.map(s => {
-      const rewrites = (s.rewrites || []).map(r => ({ ...r, line: findLine(text, r.from) })).filter(r => r.line >= 0);
-      const lines = [...new Set([...(s.lines || []).map(l => findLine(text, l)), ...rewrites.map(r => r.line)])].filter(i => i >= 0).sort((a, b) => a - b);
-      return { ...s, lines, rewrites };
-    }),
+    bullets: saved.bullets.map(b => ({ ...b, at: findLine(text, b.line) })),
   };
 }
 
@@ -613,19 +611,19 @@ app.get('/api/resume', async (req, res) => {
     insights: pageInsights(insights),
     limits: { versions: MAX_VERSIONS, text: MAX_TEXT },
     ai: aiStatus(req.account, { demo: DEMO }),
-    // upToDate: nothing the suggestions were based on has changed since.
-    suggestions: placedSuggestions(req.account.store.db.insights?.suggestions, versions, inputHash),
-    review: current ? reviewOf(current) : null,
+    // upToDate: nothing the review was based on has changed since.
+    review: placedReview(req.account.store.db.insights?.review, versions, inputHash),
+    preview: current ? previewOf(current) : null,
     // The last job you checked from this page (Check a job), if any.
     jobFit: req.account.store.db.insights?.jobFit ?? null,
   });
 });
 
-// One version with its text; ?review=1 lays it out for the preview instead.
+// One version with its text; ?preview=1 lays it out for the preview instead.
 app.get('/api/resume/:id', async (req, res) => {
   const version = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
   if (!version) return res.status(404).json({ error: 'That version was deleted' });
-  res.json(req.query.review ? reviewOf(version) : version);
+  res.json(req.query.preview ? previewOf(version) : version);
 });
 
 // Read the text out of a PDF or Word file, for you to check before saving. The file
@@ -721,7 +719,7 @@ app.delete('/api/resume/:id/pdf', async (req, res) => {
 app.post('/api/insights/consent', (req, res) => {
   const db = req.account.store.db;
   db.insights ??= {};
-  db.insights.consent = req.body?.allow === false ? null : { at: new Date().toISOString() };
+  db.insights.consent = req.body?.allow === false ? null : { at: new Date().toISOString(), version: CONSENT_VERSION };
   changed(req.account);
   res.json({ ai: aiStatus(req.account, { demo: DEMO }) });
 });
@@ -729,45 +727,47 @@ app.post('/api/insights/consent', (req, res) => {
 // Checks shared by both AI actions. Returns an error to send, or null.
 function aiBlocked(user) {
   const ai = aiStatus(user, { demo: DEMO });
-  if (!ai.available) return { status: 400, body: { error: "AI suggestions aren't set up on this server" } };
+  if (!ai.available) return { status: 400, body: { error: "AI reviews aren't set up on this server" } };
   if (!ai.consent) return { status: 403, body: { error: 'Allow nuj to send your resume to OpenAI first', needsConsent: true } };
   return null;
 }
 
-app.post('/api/insights/suggestions', async (req, res) => {
+// Grade the current resume. Asking again when nothing it rests on has changed gives back
+// the review you have, without using a run.
+app.post('/api/insights/review', async (req, res) => {
   const user = req.account;
   const blocked = aiBlocked(user);
   if (blocked) return res.status(blocked.status).json(blocked.body);
   const { input, inputHash, current } = await resumePicture(user);
   if (!input) return res.status(400).json({ error: 'Add your resume first' });
   const db = user.store.db;
-  const saved = db.insights.suggestions;
-  if (saved?.inputHash === inputHash && saved.items.some(s => s.state === 'open')) {
-    return res.json({ cached: true, ai: aiStatus(user, { demo: DEMO }) });
-  }
+  if (db.insights.review?.inputHash === inputHash) return res.json({ cached: true, ai: aiStatus(user, { demo: DEMO }) });
   const run = await reserveRun(user);
   if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
-  let items;
+  let review;
   try {
-    items = DEMO ? demoSuggestions(input) : await writeSuggestions(input);
+    review = DEMO ? demoReview(input) : await writeReview(input);
+    if (!review) throw new Error("The AI's review didn't come back complete. Try again later");
   } catch (err) {
     await run.release();
     return res.status(502).json({ error: err.message });
   }
-  // New suggestions replace the open ones; the ones you acted on or set aside stay listed.
-  const kept = (saved?.items || []).filter(s => s.state !== 'open').slice(0, 20);
-  db.insights.suggestions = { inputHash, at: new Date().toISOString(), version: input.currentVersion, versionId: current.id, items: [...items, ...kept] };
+  // The score you had before, so the page can show how far a rewrite moved it.
+  const previous = db.insights.review ? { score: db.insights.review.score, at: db.insights.review.at, version: db.insights.review.version } : null;
+  db.insights.review = { ...review, inputHash, at: new Date().toISOString(), version: current.name, versionId: current.id, previous };
+  delete db.insights.suggestions; // what came before reviews
   changed(user);
   res.json({ ai: aiStatus(user, { demo: DEMO }) });
 });
 
-// Done, Not for me, or back to open (Undo).
-app.patch('/api/insights/suggestions/:id', (req, res) => {
-  const s = req.account.store.db.insights?.suggestions?.items.find(x => x.id === req.params.id);
-  if (!s) return res.status(404).json({ error: 'That suggestion is gone. Get new ones' });
+// A graded bullet or a point from your applications: Done, Skip, or back to open (Undo).
+app.patch('/api/insights/review/items/:id', (req, res) => {
+  const review = req.account.store.db.insights?.review;
+  const item = [...(review?.bullets || []), ...(review?.fromApplications || [])].find(x => x.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'That part of the review is gone. Grade your resume again' });
   if (!['open', 'done', 'dismissed'].includes(req.body?.state)) return res.status(400).json({ error: 'Unknown choice' });
-  s.state = req.body.state;
-  s.decidedAt = s.state === 'open' ? null : new Date().toISOString();
+  item.state = req.body.state;
+  item.decidedAt = item.state === 'open' ? null : new Date().toISOString();
   changed(req.account);
   res.json({ ok: true });
 });
@@ -786,7 +786,7 @@ app.post('/api/insights/fit', async (req, res) => {
   if (!version) return res.status(400).json({ error: 'Add your resume first' });
   const db = user.store.db;
   db.insights ??= {};
-  const key = hashOf([posting, version.id, version.updatedAt]);
+  const key = hashOf(['tailor', posting, version.id, version.updatedAt]);
   if (db.insights.jobFit?.key === key) return res.json({ jobFit: db.insights.jobFit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
   const run = await reserveRun(user);
   if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
@@ -821,13 +821,14 @@ app.post('/api/applications/:id/fit', async (req, res) => {
   if (!a.posting) return res.status(400).json({ error: 'Paste the job description first' });
   const version = versionFor(a, await listVersions(user.id), user.store.db.timeZone);
   if (!version) return res.status(400).json({ error: 'Add your resume first' });
-  const key = hashOf([a.posting, version.id, version.updatedAt]);
+  // 'tailor': answers from before tailoring (no score) are asked again.
+  const key = hashOf(['tailor', a.posting, version.id, version.updatedAt]);
   if (a.fit?.key === key) return res.json({ fit: a.fit, cached: true, ai: aiStatus(user, { demo: DEMO }) });
   const run = await reserveRun(user);
   if (run.error) return res.status(run.status).json({ error: run.error, ai: aiStatus(user, { demo: DEMO }) });
   let result;
   try {
-    const args = { resumeText: version.text, posting: a.posting, role: a.role };
+    const args = { resumeText: version.text, posting: a.posting, role: a.role, company: a.company };
     result = DEMO ? demoFit(args) : await checkApplicationFit(args);
   } catch (err) {
     await run.release();

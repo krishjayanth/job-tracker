@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findSkills, roleFunction, roleLevel } from '../src/skills.js';
-import { outcomeOf, reachedInterview, computeInsights, quickChecks, layoutLines, withoutContact, MIN_GROUP } from '../src/insights.js';
+import { roleFunction, roleLevel } from '../src/roles.js';
+import { outcomeOf, reachedInterview, computeInsights, layoutLines, withoutContact, MIN_GROUP } from '../src/insights.js';
 import { versionFor, currentVersion, dayIn } from '../src/resume.js';
 import { refresh, newId } from '../src/store.js';
 
@@ -19,36 +19,6 @@ function app(stages, { first = 60, role = 'Software Engineer Intern', ...extra }
 }
 
 const version = (id, usedFrom, text = 'Experience\nEducation\nSkills') => ({ id, name: id, usedFrom, text });
-
-test('skills are found by any of their spellings, never inside another word', () => {
-  assert.deepEqual([...findSkills('Experience with node.js, Postgres and k8s')].sort(), ['Kubernetes', 'Node.js', 'PostgreSQL']);
-  assert.deepEqual([...findSkills('JavaScript only')], ['JavaScript']); // not Java
-  assert.deepEqual([...findSkills('C++ and C#, plus .NET')].sort(), ['.NET', 'C#', 'C++']);
-});
-
-test('links and email addresses are not skills', () => {
-  assert.equal(findSkills('sam@example.com · github.com/sam · https://gitlab.com/sam · www.react.dev').size, 0);
-  assert.deepEqual([...findSkills('Git, GitHub Actions and Node.js')].sort(), ['Git', 'GitHub Actions', 'Node.js']);
-});
-
-test('skill names that are everyday words only count where a skill would be', () => {
-  for (const text of ['a swift response', 'Swift response times', 'unity across teams', 'Security clearance required',
-    'monitoring of social media', 'guard rails', 'spark joy', 'transformers in power plants', 'at the helm of the club', 'said in jest']) {
-    assert.equal(findSkills(text).size, 0, text);
-  }
-  assert.deepEqual([...findSkills('Languages: Swift, Rust. Built games in Unity')].sort(), ['Rust', 'Swift', 'Unity']);
-  assert.deepEqual([...findSkills('Swift developer; Spark and Kafka; Security Engineer')].sort(), ['Apache Spark', 'Kafka', 'Security', 'Swift']);
-});
-
-test('a skill inside a longer one only counts as the longer one', () => {
-  assert.deepEqual([...findSkills('React Native and Ruby on Rails')].sort(), ['React Native', 'Ruby on Rails']);
-  assert.deepEqual([...findSkills('React Native apps, and React for the web')].sort(), ['React', 'React Native']);
-});
-
-test('everyday words that are also skills only count in their unambiguous forms', () => {
-  assert.equal(findSkills('You will excel at the rest of the work and go far').size, 0);
-  assert.deepEqual([...findSkills('Golang and Microsoft Excel, REST APIs')].sort(), ['Excel', 'Go', 'REST APIs']);
-});
 
 test('job titles sort into kinds of role and levels', () => {
   assert.equal(roleFunction('Data Engineering Intern'), 'Data');
@@ -138,60 +108,6 @@ test('an application counts toward a version by the day it was sent where you ar
   assert.equal(versionFor(lateEvening, versions, 'America/Los_Angeles').id, 'may');
   assert.equal(versionFor(lateEvening, versions).id, 'june'); // no time zone known: UTC
   assert.equal(dayIn(lateEvening.appliedAt, 'Not/AZone'), '2026-06-01');
-});
-
-test('keywords: skills from postings, split by whether the current resume names them', () => {
-  const apps = [
-    app(['applied', 'interview'], { posting: 'React, TypeScript and Docker' }),
-    app(['applied', 'rejected'], { posting: 'Docker and Kubernetes' }),
-    app(['applied'], { first: 2, role: 'Python Developer' }),
-  ];
-  const ins = computeInsights(apps, [version('v1', '2025-01-01', 'Skills: React, Python')], { ghostDays });
-  const { matched, missing, withPosting } = ins.keywords;
-  assert.deepEqual(matched.map(k => k.name), ['React', 'Python']); // React's posting moved forward
-  assert.deepEqual(missing.map(k => [k.name, k.postings, k.forward]), [['Docker', 2, 1], ['TypeScript', 1, 1], ['Kubernetes', 1, 0]]);
-  assert.equal(withPosting, 2);
-  assert.equal(missing[0].ids.length, 2);
-});
-
-test('each skill says which kinds of role asked for it', () => {
-  const apps = [
-    app(['applied'], { role: 'Data Analyst Intern', posting: 'SQL and Tableau' }),
-    app(['applied'], { role: 'Data Engineer Intern', posting: 'SQL and Airflow' }),
-    app(['applied'], { role: 'iOS Engineer Intern', posting: 'Swift, SwiftUI and SQL' }),
-  ];
-  const ins = computeInsights(apps, [version('v1', '2025-01-01', 'Skills: Python')], { ghostDays });
-  const kinds = name => ins.keywords.missing.find(k => k.name === name).kinds;
-  assert.deepEqual(kinds('SQL'), ['Data', 'Mobile']);
-  assert.deepEqual(kinds('Swift'), ['Mobile']);
-  assert.deepEqual(ins.mainKinds, ['Data', 'Mobile']);
-});
-
-test('quick checks flag weak bullets, few numbers and missing headings', () => {
-  const weak = quickChecks(`Experience\n${'• Responsible for the website and other things\n'.repeat(5)}${'word '.repeat(300)}`);
-  assert.equal(weak.find(c => c.id === 'numbers').ok, false);
-  assert.equal(weak.find(c => c.id === 'verbs').ok, false);
-  assert.match(weak.find(c => c.id === 'sections').title, /Education or Skills/);
-
-  const strong = quickChecks(`sam@example.com · linkedin.com/in/sam\nExperience\n${['Cut', 'Built', 'Led', 'Raised', 'Shipped'].map(v => `• ${v} load time by 40% across 3 pages\n`).join('')}Education\nSkills\n${'word '.repeat(300)}`);
-  assert.ok(strong.every(c => c.ok), JSON.stringify(strong.filter(c => !c.ok)));
-});
-
-test('quick checks also catch repeats, long bullets, "I", stock phrases, mixed dates and missing contact details', () => {
-  const failed = text => quickChecks(text).filter(c => !c.ok).map(c => c.id);
-  const bullets = list => `Experience\nEducation\nSkills\n${list.map(b => `• ${b}`).join('\n')}\n${'word '.repeat(300)}`;
-  assert.ok(failed(bullets(Array(5).fill('Developed 3 features'))).includes('repeats'));
-  assert.ok(failed(bullets(['Built 3 things', 'Led 2 teams', 'Shipped 4 apps', `Ran ${'a very long list of things '.repeat(8)}`])).includes('long'));
-  assert.ok(failed(bullets(['I built 3 things', 'Led 2 teams', 'Shipped 4 apps', 'Ran 5 events'])).includes('first-person'));
-  assert.ok(failed(`A team player. ${'word '.repeat(300)}`).includes('cliches'));
-  assert.ok(failed(`Jan 2023 - Mar 2024\n06/2022 - 12/2022\n${'word '.repeat(300)}`).includes('dates'));
-  assert.ok(failed(`${'word '.repeat(300)}`).includes('contact'));
-  assert.ok(failed(bullets(['Utilized Python in 2023', 'Was responsible for the site', 'Led 2 teams', 'Shipped 4 apps'])).includes('verbs'));
-});
-
-test('years in a bullet are not counted as results', () => {
-  const text = `Experience\n${['Built the site in 2023', 'Ran events 2021 - 2022', 'Led the club (2020)', 'Wrote docs'].map(b => `• ${b}`).join('\n')}`;
-  assert.equal(quickChecks(text).find(c => c.id === 'numbers').ok, false);
 });
 
 test('the resume sent to the AI has no name or contact details', () => {
