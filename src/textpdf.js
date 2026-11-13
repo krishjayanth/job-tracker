@@ -28,6 +28,7 @@ const STYLE = {
   heading: { size: 10, bold: true, upper: true, before: 10, after: 6, rule: true },
   text: { size: 10.5, bold: true, before: 4, after: 1 },
   bullet: { size: 10, indent: 14, after: 1 },
+  cont: { size: 10, indent: 14, after: 1 }, // a wrapped bullet's next line
   plain: { size: 10, before: 2, after: 1 },
   blank: null,
 };

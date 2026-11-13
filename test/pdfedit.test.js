@@ -93,3 +93,16 @@ test('a rewrite that keeps the old words and adds to them is not taken for the o
   const out = await writePdfEdits(pdf, [{ from, to: `${from}, by caching routes`, ...await placeOf(pdf, from) }]);
   assert.ok((await extractText(out)).text.includes('across 3 pages, by caching routes'));
 });
+
+test('a bullet printed on two lines is replaced on both, and the new wording may use both', async () => {
+  const pdf = textPdf('Sam Example\n\nExperience\n• Ran end-to-end tests on every pull request by setting up automated\nregression testing across FastAPI and React\n• Cut API calls 40% with Redis');
+  const first = 'Ran end-to-end tests on every pull request by setting up automated';
+  const second = 'regression testing across FastAPI and React';
+  const a = await placeOf(pdf, first), b = await placeOf(pdf, second);
+  const to = 'Caught [N] bugs before release by running end-to-end tests on every pull request, setting up automated regression testing across FastAPI and React';
+  const out = await writePdfEdits(pdf, [{ from: `${first} ${second}`, to, boxes: [...a.boxes, ...b.boxes], right: a.right }]);
+  const { text } = await extractText(out);
+  assert.ok(!/Ran end-to-end/.test(text), text);
+  assert.equal(text.match(/regression testing across FastAPI/g)?.length, 1, 'the old second line is gone, not repeated');
+  assert.ok(text.indexOf('Caught [N] bugs') < text.indexOf('Cut API calls'));
+});

@@ -2,7 +2,7 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { initStorage, getKv, setKv, getFile } from '../src/store.js';
-import { extractText, cleanText, addVersion, updateVersion, editText, deleteVersion, listVersions, releaseResumes, versionMeta, pdfLineChanges, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
+import { extractText, cleanText, addVersion, updateVersion, editText, deleteVersion, listVersions, releaseResumes, versionMeta, pdfLineChanges, repairWrappedEdits, forgetResumes, savePdf, loadPdf, removePdf, MAX_VERSIONS, MAX_TEXT } from '../src/resume.js';
 import { textPdf } from '../src/textpdf.js';
 
 before(() => initStorage({ inMemory: true }));
@@ -186,4 +186,30 @@ test('accepted rewrites are kept against the PDF, and Undo or a change by hand i
   await swap('Fixed bugs in the app', 'Fixed [N] bugs'); // not noted: the PDF is already out of date
   assert.equal(versionMeta(await now()).pdf.stale, true);
   assert.ok(!('edits' in versionMeta(await now()).pdf) && !('textHash' in versionMeta(await now()).pdf), 'the page sees counts, not the record');
+});
+
+test('a fix accepted on a wrapped bullet before nuj understood them is put right when versions are read', async () => {
+  const user = 'u-wrapped';
+  const start = [
+    'Experience',
+    '• Shipped a campus mobile app for real-time event data to 1,000+',
+    'downloads by leading 5+ engineers and partnering with product',
+    '• Cut upstream API calls 40%+ with Redis',
+  ].join('\n');
+  const { version } = await addVersion(user, { text: start });
+  await savePdf(user, version.id, fixture('resume.pdf'));
+  // What the old "Use this" did: only the first line swapped, and only it told to the PDF.
+  const from = 'Shipped a campus mobile app for real-time event data to 1,000+';
+  const to = 'Shipped a campus mobile app reaching [N] downloads by leading 5+ engineers and partnering with product';
+  await editText(user, version.id, text => ({ text: text.replace(from, to), pdfEdit: { from, to } }));
+  assert.match((await listVersions(user))[0].text, /\ndownloads by leading/); // the old second line, left behind
+
+  releaseResumes(user); // read again, as after a restart
+  const repaired = (await listVersions(user))[0];
+  assert.equal(repaired.text, ['Experience', `• ${to}`, '• Cut upstream API calls 40%+ with Redis'].join('\n'));
+  assert.equal(versionMeta(repaired).pdf.edited, 1);
+  assert.deepEqual(pdfLineChanges(repaired), [{ at: 1, from: `${from} downloads by leading 5+ engineers and partnering with product` }]);
+  assert.equal(repairWrappedEdits(repaired), false, 'doing it again changes nothing');
+  releaseResumes(user);
+  assert.equal((await listVersions(user))[0].text, repaired.text, 'and it was saved');
 });

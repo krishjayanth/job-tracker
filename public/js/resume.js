@@ -844,7 +844,9 @@ function suggestionsByLine(r) {
   const byLine = new Map();
   if (rv?.versionId !== r.versionId) return byLine;
   for (const b of rv.bullets) {
-    if (b.state === 'open' && b.at >= 0) byLine.set(b.at, [...(byLine.get(b.at) || []), b]);
+    if (b.state !== 'open' || b.at < 0) continue;
+    // The whole bullet, including lines it wrapped onto.
+    for (let i = b.at; i === b.at || r.lines[i]?.kind === 'cont'; i++) byLine.set(i, [...(byLine.get(i) || []), b]);
   }
   return byLine;
 }
@@ -862,10 +864,17 @@ function lineNoteHtml(l, i, sgs) {
   return `<div class="ln-note" id="ln-note-${i}"><ul>${notes.join('')}</ul></div>`;
 }
 
+// The text view. A bullet that wrapped in the PDF reads as one bullet here: the lines it
+// carries on to are joined onto it (the browser wraps it to the page's own width).
 function paperHtml(r) {
   const bySg = suggestionsByLine(r);
+  const withRest = (l, i) => {
+    let text = lineText(l);
+    for (let k = i + 1; r.lines[k]?.kind === 'cont'; k++) text += ` ${esc(r.lines[k].text.trim())}`;
+    return text;
+  };
   return r.lines.map((l, i) => {
-    if (l.kind === 'blank') return '';
+    if (l.kind === 'blank' || l.kind === 'cont') return '';
     const sgs = bySg.get(i) || [];
     const flagged = sgs.length > 0;
     const open = flagged && reviewOpen === i;
@@ -875,7 +884,7 @@ function paperHtml(r) {
       ? ` role="button" tabindex="0" data-ln="${i}" aria-expanded="${open}" ${open ? `aria-controls="ln-note-${i}"` : ''} data-sg-ids="${sgs.map(s => esc(s.id)).join(' ')}"`
       : '';
     const why = sgs[0]?.note || 'needs a fix';
-    return `<div class="${cls}"${attrs}>${l.kind === 'bullet' ? '<span class="ln-dot" aria-hidden="true"></span>' : ''}<span class="ln-text">${lineText(l)}</span>${
+    return `<div class="${cls}"${attrs}>${l.kind === 'bullet' ? '<span class="ln-dot" aria-hidden="true"></span>' : ''}<span class="ln-text">${l.kind === 'bullet' ? withRest(l, i) : lineText(l)}</span>${
       flagged ? `<span class="ln-flag">${icon('sparkles')}<span class="sr-only">: ${why}</span></span>` : ''}</div>${open ? lineNoteHtml(l, i, sgs) : ''}`;
   }).join('');
 }

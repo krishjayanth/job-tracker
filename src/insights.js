@@ -5,6 +5,7 @@
 import { stagePath } from './stages.js';
 import { roleFunction, roleLevel } from './roles.js';
 import { versionFor, currentVersion } from './resume.js';
+import { BULLET, carriesOn } from './lines.js';
 
 // Below this many finished applications, a group's rate says more about luck than the resume.
 export const MIN_GROUP = 5;
@@ -46,7 +47,6 @@ function groupBy(apps, keyOf, outcomes, interviews) {
 }
 
 // ---- the resume preview ---------------------------------------------------------------
-const BULLET = /^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/;
 const HEADING = /^\s*(summary|profile|objective|about( me)?|(work |professional |relevant )?experience|employment( history)?|work history|education|(technical )?skills|technologies|tools|projects?|personal projects|activities|leadership|volunteer(ing)?|awards?|honou?rs|certifications?|publications|interests|languages|coursework|achievements|extracurriculars?)\s*:?\s*$/i;
 const CONTACT = /@|https?:|www\.|linkedin|github|\+?\d[\d ()-]{7,}|·|\|/i;
 
@@ -61,15 +61,21 @@ function lineKind(line, i, firstText) {
 }
 
 // Every line of a resume with what kind of line it is, for laying the preview out like a
-// resume (and the demo's PDFs). `at` is where a bullet's own text starts. The page marks
-// only the bullets the AI's review is about; it doesn't judge lines itself.
+// resume (and the demo's PDFs). `at` is where a bullet's own text starts. A line that only
+// carries a wrapped bullet on is 'cont', laid out as part of that bullet rather than as a
+// line of its own (see lines.js). The page marks only the bullets the AI's review is about;
+// it doesn't judge lines itself.
 export function layoutLines(text) {
   const lines = text.split('\n');
   const firstText = lines.findIndex(l => l.trim());
-  return lines.map((line, i) => {
-    const kind = lineKind(line, i, firstText);
-    return { kind, text: line, at: kind === 'bullet' ? line.match(BULLET)[0].length : 0 };
+  const out = [];
+  lines.forEach((line, i) => {
+    let kind = lineKind(line, i, firstText);
+    const prev = out[i - 1];
+    if ((kind === 'text' || kind === 'heading') && (prev?.kind === 'bullet' || prev?.kind === 'cont') && carriesOn(prev.text, line)) kind = 'cont';
+    out.push({ kind, text: line, at: kind === 'bullet' ? line.match(BULLET)[0].length : 0 });
   });
+  return out;
 }
 
 // The resume without the name and contact lines at the top, for sending to OpenAI: the

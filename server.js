@@ -23,6 +23,7 @@ import { extractText, cleanText, listVersions, addVersion, updateVersion, editTe
 import { textPdf } from './src/textpdf.js';
 import { textFields } from './src/input.js';
 import { computeInsights, outcomeOf, layoutLines } from './src/insights.js';
+import { BULLET, bodyOf, carryOnCount } from './src/lines.js';
 import { writePdfEdits, PdfEditError } from './src/pdfedit.js';
 import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
@@ -708,9 +709,12 @@ app.post('/api/resume/:id/rewrite', async (req, res) => {
     const lines = text.split('\n');
     const i = findLine(text, from);
     if (i < 0) return { error: "That line isn't in this version any more" };
-    const bullet = lines[i].match(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/)?.[0] ?? '';
-    const was = lines[i].slice(bullet.length).trim();
-    lines[i] = bullet + to.trim();
+    // A bullet that wrapped in the PDF comes out as several lines; the rewrite is for all of
+    // it, so they all go, and the PDF is told the whole old bullet (see lines.js).
+    const bullet = lines[i].match(BULLET)?.[0] ?? '';
+    const span = 1 + carryOnCount(lines, i);
+    const was = lines.slice(i, i + span).map(bodyOf).join(' ');
+    lines.splice(i, span, bullet + to.trim());
     return { text: lines.join('\n'), pdfEdit: { from: was, to: to.trim() } };
   });
   if (result.error) return res.status(result.status || 400).json({ error: result.error });

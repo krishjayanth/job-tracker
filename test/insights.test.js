@@ -123,3 +123,19 @@ test("the preview lays out each line, with where a bullet's own text starts", ()
   assert.ok(lines.every(l => !('marks' in l))); // nuj doesn't judge lines itself any more
 });
 
+
+test("a bullet's wrapped next line is laid out as part of it, and the next role isn't", () => {
+  const lines = layoutLines([
+    'Experience',
+    'MaroonLife College Station, TX',
+    '• Shipped a campus mobile app for events to 1,000+',
+    'downloads by leading 5+ engineers',
+    '• Ran tests on every pull request by setting up automated',
+    'regression testing across FastAPI',
+    '• Built it with React and',
+    'TypeScript for 300 people',
+    'Project Manager September 2026 – Present',
+    '• Cut API calls 40% with Redis',
+  ].join('\n'));
+  assert.deepEqual(lines.map(l => l.kind), ['name', 'text', 'bullet', 'cont', 'bullet', 'cont', 'bullet', 'cont', 'text', 'bullet']);
+});

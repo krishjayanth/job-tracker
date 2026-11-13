@@ -1613,6 +1613,8 @@ table.apps { width: 100%; border-collapse: collapse; }
 }
 .ln.text { color: var(--text); font-weight: 500; }
 .ln.bullet { padding-left: 22px; }
+/* A wrapped bullet's next line: part of the bullet, under its text. */
+.ln.cont { padding-left: 22px; margin-top: -2px; }
 .ln-dot { position: absolute; left: 10px; top: calc(.775em + 1px); width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
 .ln-text { min-width: 0; }
 
