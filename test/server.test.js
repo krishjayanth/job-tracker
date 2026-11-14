@@ -184,3 +184,16 @@ test('the edited PDF needs a changed line and where it sits, and says no plainly
   assert.equal(bad.status, 400);
   await call('PATCH', `/api/resume/${id}`, { text: done.body.before });
 });
+
+test('a rewrite of a bullet that wrapped onto a second line replaces both lines', async () => {
+  const text = 'Experience\n• Ran 15 end-to-end tests on every pull request by setting up automated\nregression testing across FastAPI and React\n• Cut API calls 40% with Redis';
+  const { body: v } = await call('POST', '/api/resume', { name: 'Wrapped', text });
+  const done = await call('POST', `/api/resume/${v.id}/rewrite`, {
+    from: 'Ran 15 end-to-end tests on every pull request by setting up automated regression testing across FastAPI and React',
+    to: 'Caught [N] bugs before release by running 15 end-to-end tests on every pull request',
+  });
+  assert.equal(done.status, 200);
+  assert.equal((await call('GET', `/api/resume/${v.id}`)).body.text,
+    'Experience\n• Caught [N] bugs before release by running 15 end-to-end tests on every pull request\n• Cut API calls 40% with Redis');
+  await call('DELETE', `/api/resume/${v.id}`);
+});

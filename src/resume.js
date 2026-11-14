@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { getKv, setKv, deleteKv, deleteKvPrefix, listKvKeys, getFile, setFile, deleteFile, deleteFilePrefix, listFileKeys } from './store.js';
+import { BULLET, bodyOf, carryOnCount } from './lines.js';
 
 export const MAX_VERSIONS = 5;
 export const MAX_TEXT = 40_000;
@@ -86,6 +87,10 @@ export async function listVersions(userId) {
   if (!cache.has(userId)) {
     const versions = (await getKv(key(userId))) ?? [];
     if (!cache.has(userId)) {
+      // Rewrites accepted before wrapped bullets were understood are put right as they're
+      // read (see repairWrappedEdits); doing it again changes nothing, so two first reads at
+      // once can't disagree.
+      if (versions.map(repairWrappedEdits).some(Boolean)) await setKv(key(userId), versions);
       cache.set(userId, versions);
       dropOrphanPdfs(userId, versions).catch(() => {});
     }
@@ -211,8 +216,37 @@ export function editText(userId, id, change) {
 // still hold is read off the text: none when it's as the PDF was saved, the edits up to the
 // one that left this exact text, or null when the text was changed some other way.
 const MAX_PDF_EDITS = 50;
-const BULLET = /^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/;
-const bodyOf = line => line.replace(BULLET, '').trim();
+// Rewrites accepted before nuj knew a bullet can wrap onto several lines replaced only its
+// first line, leaving the rest under the new wording ("…frontend features" then "downloads
+// by leading 5+ engineers…"), and the PDF was only told about the first line. Undone back to
+// the PDF's own text (checked against the fingerprint saved with it) and replayed a whole
+// bullet at a time, the text and the record of edits come out as they should have been.
+// Anything that doesn't undo exactly is left alone. Returns whether it changed the version.
+export function repairWrappedEdits(version) {
+  const applied = pdfEditsFor(version);
+  if (!applied?.length) return false;
+  const lines = version.text.split('\n');
+  for (const e of [...applied].reverse()) {
+    const i = lines.findIndex(l => bodyOf(l) === e.to);
+    if (i < 0) return false;
+    lines[i] = (lines[i].match(BULLET)?.[0] ?? '') + e.from;
+  }
+  if (textHash(lines.join('\n')) !== version.pdf.textHash) return false;
+  const edits = [];
+  for (const e of applied) {
+    const i = lines.findIndex(l => bodyOf(l) === e.from);
+    if (i < 0) return false;
+    const span = 1 + carryOnCount(lines, i);
+    const from = lines.slice(i, i + span).map(bodyOf).join(' ');
+    lines.splice(i, span, (lines[i].match(BULLET)?.[0] ?? '') + e.to);
+    edits.push({ from, to: e.to, after: textHash(lines.join('\n')) });
+  }
+  const text = lines.join('\n');
+  if (text === version.text) return false;
+  Object.assign(version, { text, words: countWords(text), updatedAt: new Date().toISOString() });
+  version.pdf.edits = edits;
+  return true;
+}
 
 export function pdfEditsFor(version) {
   const pdf = version.pdf;
