@@ -635,10 +635,11 @@ const pdfShownLines = r => (r.pdfEdits?.length
 // The right edge of the text on a page, as a share of its width: how far a longer line can run.
 const textRight = page => Math.max(0, ...page.items.map(i => i.l + i.w));
 
-function fitEdit(text, width, rows, base) {
+// `least`: how small it may get, as a share of the old size.
+function fitEdit(text, width, rows, base, least = EDIT_MIN_SHRINK) {
   // Widths in shares of the page width: the measurer draws at 100px.
   const widthOf = (s, size) => (measure(s) / 100) * size;
-  for (let size = base; size >= base * EDIT_MIN_SHRINK - 1e-9; size *= 0.97) {
+  for (let size = base; size >= base * least - 1e-9; size *= 0.97) {
     const lines = [];
     let row = '';
     for (const word of text.split(/\s+/).filter(Boolean)) {
@@ -662,16 +663,21 @@ function pdfEditPlaces(r, doc, placed) {
     const width = Math.max(right, ...rows.map(b => b.l + b.w)) - rows[0].l;
     const base = rows[0].h * page.ratio * 0.8; // the old font size, in shares of the page width
     const to = r.lines[e.at].text.slice(r.lines[e.at].at);
-    return { at: e.at, from: e.from, to, boxes, right, rows, fit: fitEdit(to, width, rows.length, base) };
+    const fit = fitEdit(to, width, rows.length, base);
+    // Too long for the old line: still drawn on the page, shrunk as far as it takes, so you
+    // see your words rather than a bare bullet. Only the download is refused.
+    const squeezed = fit ? null : fitEdit(to, width, rows.length, base, 0.2);
+    return { at: e.at, from: e.from, to, boxes, right, rows, fit, squeezed };
   });
 }
 
 function pdfEditHtml(place, page) {
   const cover = place.rows.map(b => `<span class="pdf-edit-cover" style="${boxStyle({ ...b, l: b.l - 0.002, w: b.w + 0.004 })}"></span>`).join('');
-  if (!place.fit) return cover;
-  const { size, lines } = place.fit;
-  return cover + lines.map((line, i) => `<span class="pdf-edit-text" style="${boxStyle({ ...place.rows[i], w: 1 - place.rows[i].l })};--fs:${size.toFixed(5)}"
-    title="Changed from: ${esc(place.from)}">${esc(line)}</span>`).join('');
+  const shown = place.fit ?? place.squeezed;
+  if (!shown) return cover;
+  const title = place.fit ? `Changed from: ${place.from}` : "Too long to fit where the old line was, so it's shown smaller here. Shorten it to download the edited PDF.";
+  return cover + shown.lines.map((line, i) => `<span class="pdf-edit-text${place.fit ? '' : ' too-long'}" style="${boxStyle({ ...place.rows[i], w: 1 - place.rows[i].l })};--fs:${shown.size.toFixed(5)}"
+    title="${esc(title)}">${esc(line)}</span>`).join('');
 }
 
 function pdfPagesHtml(r, doc) {
