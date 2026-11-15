@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { writePdfEdits, textRuns, PdfEditError } from '../src/pdfedit.js';
+import { writePdfEdits, textRuns, PdfEditError, standardFont } from '../src/pdfedit.js';
 import { extractText } from '../src/resume.js';
 import { textPdf } from '../src/textpdf.js';
 
@@ -105,4 +105,26 @@ test('a bullet printed on two lines is replaced on both, and the new wording may
   assert.ok(!/Ran end-to-end/.test(text), text);
   assert.equal(text.match(/regression testing across FastAPI/g)?.length, 1, 'the old second line is gone, not repeated');
   assert.ok(text.indexOf('Caught [N] bugs') < text.indexOf('Cut API calls'));
+});
+
+test('a rewrite is written in the standard font closest to the old line, serif for serif', async () => {
+  assert.equal(standardFont({ family: 'serif' }), 'Times-Roman');
+  assert.equal(standardFont({ family: 'serif', bold: true, italic: true }), 'Times-BoldItalic');
+  assert.equal(standardFont({ family: 'monospace', italic: true }), 'Courier-Oblique');
+  assert.equal(standardFont({}), 'Helvetica');
+
+  const { PDFDocument, StandardFonts } = await import('pdf-lib');
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([612, 792]);
+  const times = await doc.embedFont(StandardFonts.TimesRoman);
+  page.drawText('Experience', { x: 56, y: 720, size: 12, font: times });
+  page.drawText('Built the student union sign-up page for the whole campus', { x: 66, y: 700, size: 10, font: times });
+  page.drawText('Cut load time by 40% across 3 pages', { x: 66, y: 686, size: 10, font: times });
+  const pdf = Buffer.from(await doc.save());
+  const from = 'Built the student union sign-up page for the whole campus';
+  const out = await writePdfEdits(pdf, [{ from, to: 'Rebuilt the student union sign-up page used across campus', style: { family: 'serif' }, ...await placeOf(pdf, from) }]);
+  const back = await PDFDocument.load(out);
+  const fontNames = back.getPages()[0].node.Resources().lookup((await import('pdf-lib')).PDFName.of('Font')).keys().map(k => k.asString());
+  assert.ok(fontNames.includes('/NujTimesRoman'), fontNames.join(' '));
+  assert.ok((await extractText(out)).text.includes('Rebuilt the student union sign-up page'));
 });
