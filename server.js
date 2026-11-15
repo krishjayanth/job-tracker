@@ -19,13 +19,15 @@ import { getUser, knownUser, allUsers, userIds, releaseIdleUsers, deleteUser, jo
 import { recordError, listErrors, openErrorCount, setErrorStatus, deleteError, flushErrors } from './src/errors.js';
 import { accountSummary, attentionFor, noteSeen } from './src/accounts.js';
 import { buildDemoAccounts, buildDemoErrors, buildDemoFeedback, buildDemoResumes } from './src/demo.js';
-import { extractText, cleanText, listVersions, addVersion, updateVersion, editText, deleteVersion, versionMeta, pdfLineChanges, versionFor, currentVersion, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
+import { extractText, cleanText, listVersions, addVersion, updateVersion, editText, deleteVersion, versionMeta, pdfLineChanges, saveLatex, versionFor, currentVersion, savePdf, loadPdf, removePdf, dropPdfLater, MAX_VERSIONS, MAX_TEXT } from './src/resume.js';
 import { textPdf } from './src/textpdf.js';
 import { textFields } from './src/input.js';
 import { computeInsights, outcomeOf, layoutLines } from './src/insights.js';
 import { BULLET, bodyOf, carryOnCount } from './src/lines.js';
+import { resumeToLatex, latexToText, replaceItem, resumeFromLines, STARTER } from './src/latex.js';
+import { compileLatex, CompileError, COMPILE_SERVICE } from './src/compile.js';
 import { writePdfEdits, PdfEditError } from './src/pdfedit.js';
-import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
+import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, structureResume, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
 import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
 
@@ -644,6 +646,8 @@ app.get('/api/resume', async (req, res) => {
     preview: current ? previewOf(current) : null,
     // The last job you checked from this page (Check a job), if any.
     jobFit: req.account.store.db.insights?.jobFit ?? null,
+    // Building resumes in LaTeX: which service compiles them, and whether you've allowed it.
+    latex: { service: COMPILE_SERVICE, consent: Boolean(req.account.store.db.latexConsent) },
   });
 });
 
@@ -672,7 +676,27 @@ app.post('/api/resume', async (req, res) => {
 });
 
 app.patch('/api/resume/:id', async (req, res) => {
-  const { version, error, status } = await updateVersion(req.account.id, req.params.id, req.body || {});
+  const body = req.body || {};
+  const existing = (await listVersions(req.account.id)).find(v => v.id === req.params.id);
+  if (!existing) return res.status(404).json({ error: 'That version was deleted' });
+  // A LaTeX version's text comes from its LaTeX, so it's the LaTeX that gets edited.
+  if (typeof body.latex === 'string') {
+    const blocked = latexBlocked(req.account);
+    if (blocked) return res.status(blocked.status).json(blocked.body);
+    const { name, usedFrom } = body;
+    const pdf = await compileOrError(body.latex);
+    if (pdf.error) return res.status(422).json(pdf);
+    if (name !== undefined || usedFrom !== undefined) {
+      const r = await updateVersion(req.account.id, req.params.id, { name, usedFrom });
+      if (r.error) return res.status(r.status || 400).json({ error: r.error });
+    }
+    const saved = await saveLatex(req.account.id, req.params.id, { latex: body.latex, text: latexToText(body.latex), pdf: pdf.pdf });
+    if (saved.error) return res.status(saved.status || 400).json({ error: saved.error });
+    broadcast(req.account.id);
+    return res.json(versionMeta(saved.version));
+  }
+  if (existing.latex && body.text !== undefined) return res.status(400).json({ error: 'This version is in LaTeX. Edit its LaTeX instead' });
+  const { version, error, status } = await updateVersion(req.account.id, req.params.id, body);
   if (error) return res.status(status || 400).json({ error });
   broadcast(req.account.id);
   res.json(versionMeta(version));
@@ -705,6 +729,20 @@ app.post('/api/resume/:id/rewrite', async (req, res) => {
   if (typeof from !== 'string' || typeof to !== 'string' || !to.trim() || to.length > 600 || /[\r\n]/.test(to)) {
     return res.status(400).json({ error: "That rewrite can't be used as it is. Copy it instead" });
   }
+  const latexVersion = (await listVersions(req.account.id)).find(v => v.id === req.params.id && v.latex);
+  if (latexVersion) {
+    const blocked = latexBlocked(req.account);
+    if (blocked) return res.status(blocked.status).json(blocked.body);
+    const latex = replaceItem(latexVersion.latex, from, to.trim());
+    if (!latex) return res.status(400).json({ error: "That line isn't in this version any more" });
+    const pdf = await compileOrError(latex);
+    if (pdf.error) return res.status(422).json(pdf);
+    const saved = await saveLatex(req.account.id, latexVersion.id, { latex, text: latexToText(latex), pdf: pdf.pdf });
+    if (saved.error) return res.status(saved.status || 400).json({ error: saved.error });
+    broadcast(req.account.id);
+    // Undo puts the LaTeX back (and compiles it again).
+    return res.json({ version: versionMeta(saved.version), before: saved.before, kind: 'latex' });
+  }
   const result = await editText(req.account.id, req.params.id, text => {
     const lines = text.split('\n');
     const i = findLine(text, from);
@@ -720,6 +758,88 @@ app.post('/api/resume/:id/rewrite', async (req, res) => {
   if (result.error) return res.status(result.status || 400).json({ error: result.error });
   broadcast(req.account.id);
   res.json({ version: versionMeta(result.version), before: result.before });
+});
+
+// --- resumes in LaTeX (Jake's Resume format; see latex.js and compile.js) ------------------
+// The LaTeX is sent to an online compiler to make the PDF, so it's asked first, separately
+// from OpenAI: someone can build in LaTeX without the AI.
+app.post('/api/resume/latex-consent', (req, res) => {
+  const db = req.account.store.db;
+  db.latexConsent = req.body?.allow === false ? null : { at: new Date().toISOString(), service: COMPILE_SERVICE };
+  changed(req.account);
+  res.json({ latex: { service: COMPILE_SERVICE, consent: Boolean(db.latexConsent) } });
+});
+
+function latexBlocked(user) {
+  if (!user.store.db.latexConsent) return { status: 403, body: { error: `Allow nuj to send your resume's LaTeX to ${COMPILE_SERVICE} first`, needsLatexConsent: true } };
+  if (tooMany(`latex:${user.id}`, { max: 60 })) return { status: 429, body: { error: "That's a lot of rebuilding. Try again in an hour" } };
+  return null;
+}
+
+// The PDF, or { error, line } in plain words (LaTeX's own message for a mistake in the LaTeX).
+async function compileOrError(latex) {
+  try {
+    return { pdf: await compileLatex(latex) };
+  } catch (err) {
+    if (err instanceof CompileError) return { error: err.message, line: err.line };
+    throw err;
+  }
+}
+
+// Rebuild a version in Jake's format, as a new version (the original stays as it was). The AI
+// sorts the resume into sections when you've allowed it (and it doesn't send your name or
+// contact details; nuj fills those in itself); otherwise nuj's own rules do.
+app.post('/api/resume/:id/latex', async (req, res) => {
+  const user = req.account;
+  const blocked = latexBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  const versions = await listVersions(user.id);
+  const source = versions.find(v => v.id === req.params.id);
+  if (!source) return res.status(404).json({ error: 'That version was deleted' });
+  if (versions.length >= MAX_VERSIONS) return res.status(400).json({ error: `You can keep up to ${MAX_VERSIONS} versions. Delete one to make room for the LaTeX one` });
+  const read = resumeFromLines(layoutLines(source.text));
+  let resume = read;
+  let by = 'rules';
+  const ai = aiStatus(user, { demo: DEMO });
+  if (ai.available && ai.consent && !DEMO) {
+    const run = await reserveRun(user);
+    if (!run.error) {
+      try {
+        const sections = await structureResume(source.text);
+        if (sections) { resume = { ...read, sections: sections.sections }; by = 'ai'; } else await run.release();
+      } catch {
+        await run.release();
+      }
+    }
+  }
+  const latex = resumeToLatex(resume);
+  const pdf = await compileOrError(latex);
+  if (pdf.error) return res.status(502).json({ error: pdf.error });
+  const name = `${source.name} (Jake's format)`.slice(0, 60);
+  // Starts today: it's the resume you'll send from now on. The original keeps the
+  // applications it went out with.
+  const { version, error } = await addVersion(user.id, { name, text: latexToText(latex) });
+  if (error) return res.status(400).json({ error });
+  const saved = await saveLatex(user.id, version.id, { latex, text: latexToText(latex), pdf: pdf.pdf });
+  if (saved.error) return res.status(saved.status || 400).json({ error: saved.error });
+  broadcast(user.id);
+  res.json({ version: versionMeta(saved.version), by });
+});
+
+// A new version from Jake's own example, to fill in, for someone with no resume yet.
+app.post('/api/resume/latex-starter', async (req, res) => {
+  const user = req.account;
+  const blocked = latexBlocked(user);
+  if (blocked) return res.status(blocked.status).json(blocked.body);
+  if ((await listVersions(user.id)).length >= MAX_VERSIONS) return res.status(400).json({ error: `You can keep up to ${MAX_VERSIONS} versions. Delete one to add another` });
+  const pdf = await compileOrError(STARTER);
+  if (pdf.error) return res.status(502).json({ error: pdf.error });
+  const { version, error } = await addVersion(user.id, { name: "Jake's Resume", text: latexToText(STARTER) });
+  if (error) return res.status(400).json({ error });
+  const saved = await saveLatex(user.id, version.id, { latex: STARTER, text: latexToText(STARTER), pdf: pdf.pdf });
+  if (saved.error) return res.status(saved.status || 400).json({ error: saved.error });
+  broadcast(user.id);
+  res.json({ version: versionMeta(saved.version) });
 });
 
 // A version's PDF: shown on the page as its real pages. Only a PDF is kept.

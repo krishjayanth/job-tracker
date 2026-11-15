@@ -2,16 +2,16 @@
 // (see whatsNewFor in server.js). Give each release a new id; people who've seen
 // that id don't see it again. Write it for the people using nuj, not for developers.
 export const LATEST_RELEASE = {
-  id: '2026-11-pdf-edits',
+  id: '2026-11-latex',
   title: "What's new in nuj",
   items: [
     {
-      title: 'Your PDF stays on screen as you fix it',
-      text: "When you select \"Use this\" on a rewrite, your resume's PDF stays up with the new line drawn over the old one, instead of switching to plain text.",
+      title: "Rebuild your resume in Jake's LaTeX format",
+      text: "Select \"Rebuild in Jake's format\" above your resume and nuj remakes it as LaTeX in the popular Jake's Resume template, then builds the PDF. Your words stay exactly as they were.",
     },
     {
-      title: 'Download your edited PDF',
-      text: 'Select "Download edited PDF" under your resume for a copy of your own file with the new lines written in, ready to send. The old wording is taken out, not just covered.',
+      title: 'Fixes go straight into the LaTeX',
+      text: 'On a LaTeX version, "Use this" changes the line in its LaTeX and builds the PDF again, so what you download is real LaTeX, not a patched copy. Edit LaTeX lets you change anything yourself.',
     },
   ],
 };

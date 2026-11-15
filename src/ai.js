@@ -321,6 +321,80 @@ export async function writeReview(input, { client: given } = {}) {
   return review;
 }
 
+// ---- reading a resume into Jake's Resume sections ---------------------------------------
+// For rebuilding a resume in LaTeX (see latex.js). The AI only sorts the resume's own words
+// into sections and entries; anything it writes that isn't in the resume is dropped, and if
+// it leaves out too much, nuj reads the resume with its own rules instead.
+
+const ENTRY = {
+  type: 'object', additionalProperties: false, required: ['title', 'date', 'subtitle', 'location', 'tech', 'bullets'],
+  properties: {
+    title: { type: 'string', description: 'Job title, school, or project name.' },
+    date: { type: 'string', description: 'The right-hand text on the first line: dates for a job or project, the place for a school. Empty if none.' },
+    subtitle: { type: 'string', description: 'Second line, left: the employer, or the degree. Empty if none.' },
+    location: { type: 'string', description: 'Second line, right: the place for a job, the dates for a school. Empty if none.' },
+    tech: { type: 'string', description: 'For a project, the tools listed with its name. Empty otherwise.' },
+    bullets: { type: 'array', items: { type: 'string' }, description: 'Each bullet in full, joining any bullet that wrapped onto a second line.' },
+  },
+};
+const STRUCTURE_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['sections'],
+  properties: {
+    sections: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['title', 'kind', 'entries', 'skills', 'items'],
+        properties: {
+          title: { type: 'string' },
+          kind: { type: 'string', enum: ['entries', 'projects', 'skills', 'list'] },
+          entries: { type: 'array', items: ENTRY },
+          skills: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: false, required: ['label', 'value'], properties: { label: { type: 'string' }, value: { type: 'string' } } },
+          },
+          items: { type: 'array', items: { type: 'string' }, description: 'For kind "list": its bullets.' },
+        },
+      },
+    },
+  },
+};
+const STRUCTURE_SYSTEM = `You lay a resume's text out in the sections of Jake's Resume LaTeX template. The name and contact details are left out; ignore their placeholders.
+
+Copy every word exactly as it is in the resume: do not reword, correct, shorten, add or drop anything, and keep the order. Sections are the resume's own headings. Use kind "entries" for jobs, schools and similar (title, then the dates or place on the right; second line employer or degree, then place or dates), "projects" for projects (name, the tools listed with it, dates), "skills" for skills lines written "Label: things", and "list" for a section that is only bullets. A bullet that wrapped onto a second line is one bullet: join it.`;
+
+const looseAll = s => loose(s).replace(/\s+/g, ' ');
+
+// Only what's really in the resume: a field or bullet the resume doesn't contain is dropped.
+// Null when too little of the resume's bullets survived to trust it.
+export function checkStructure(out, text) {
+  const source = looseAll(text);
+  const has = s => !s || source.includes(looseAll(s));
+  const keep = s => (has(s) ? clip(s, 600) : '');
+  const sections = (Array.isArray(out?.sections) ? out.sections : []).map(s => ({
+    title: keep(s?.title),
+    kind: ['entries', 'projects', 'skills', 'list'].includes(s?.kind) ? s.kind : 'entries',
+    entries: (Array.isArray(s?.entries) ? s.entries : []).map(e => ({
+      title: keep(e?.title), date: keep(e?.date), subtitle: keep(e?.subtitle), location: keep(e?.location), tech: keep(e?.tech),
+      bullets: (Array.isArray(e?.bullets) ? e.bullets : []).filter(b => b && has(b)).map(b => clip(b, 600)),
+    })).filter(e => e.title || e.bullets.length),
+    skills: (Array.isArray(s?.skills) ? s.skills : []).filter(k => has(k?.label) && has(k?.value)).map(k => ({ label: clip(k.label, 80), value: clip(k.value, 600) })),
+    items: (Array.isArray(s?.items) ? s.items : []).filter(b => b && has(b)).map(b => clip(b, 600)),
+  })).filter(s => s.title && (s.entries.length || s.skills.length || s.items.length));
+  // Every bullet of the resume should have found a place; most is good enough to keep.
+  const bulletsIn = text.split('\n').filter(l => /^\s*[•●▪◦‣■□*–-]\s/.test(l)).length;
+  const bulletsOut = sections.reduce((n, s) => n + s.items.length + s.entries.reduce((m, e) => m + e.bullets.length, 0), 0);
+  if (!sections.length || (bulletsIn && bulletsOut < bulletsIn * 0.8)) return null;
+  return { sections };
+}
+
+export async function structureResume(text, { client: given } = {}) {
+  const out = await ask({
+    name: 'resume_sections', schema: STRUCTURE_SCHEMA, system: STRUCTURE_SYSTEM, client: given, maxTokens: 12_000,
+    user: withoutContact(text),
+  });
+  return checkStructure(out, text);
+}
+
 // ---- tailoring: the resume against one job description ---------------------------------
 
 const FIT_SCHEMA = {

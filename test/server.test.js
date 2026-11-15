@@ -1,6 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
+import { textPdf } from '../src/textpdf.js';
 
 // The routes, against the real server in demo mode (sample data in memory, no sign-in).
 // Each run uses its own port, so it can't collide with a server you have open.
@@ -8,9 +10,28 @@ const PORT = 5600 + Math.floor(Math.random() * 300);
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
 
+// A stand-in for the online LaTeX compiler: a PDF for good LaTeX, LaTeX's complaint for
+// LaTeX with \oops in it. It keeps what it's sent, to check nothing goes without consent.
+const compiled = [];
+const compiler = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    const tex = JSON.parse(body).resources[0].content;
+    compiled.push(tex);
+    if (tex.includes('\\oops')) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'COMPILATION_ERROR', log_files: { 'main.log': '! Undefined control sequence.\nl.9 \\oops' } }));
+    }
+    res.writeHead(201, { 'content-type': 'application/pdf' });
+    res.end(textPdf('Compiled resume'));
+  });
+});
+
 before(async () => {
+  await new Promise(r => compiler.listen(0, '127.0.0.1', r));
   server = spawn(process.execPath, ['server.js', '--demo'], {
-    env: { ...process.env, PORT: String(PORT), ALLOWED_EMAIL: '', RENDER: '', DATABASE_URL: '' },
+    env: { ...process.env, PORT: String(PORT), ALLOWED_EMAIL: '', RENDER: '', DATABASE_URL: '', LATEX_COMPILE_URL: `http://127.0.0.1:${compiler.address().port}/builds/sync` },
     stdio: 'ignore',
   });
   for (let i = 0; i < 200; i++) { // up to 20 seconds: slower while every suite runs at once
@@ -21,7 +42,7 @@ before(async () => {
   }
   throw new Error('the demo server did not start');
 });
-after(() => server?.kill());
+after(() => { server?.kill(); compiler.close(); });
 
 async function call(method, path, body) {
   const res = await fetch(BASE + path, {
@@ -196,4 +217,56 @@ test('a rewrite of a bullet that wrapped onto a second line replaces both lines'
   assert.equal((await call('GET', `/api/resume/${v.id}`)).body.text,
     'Experience\n• Caught [N] bugs before release by running 15 end-to-end tests on every pull request\n• Cut API calls 40% with Redis');
   await call('DELETE', `/api/resume/${v.id}`);
+});
+
+test("a resume is rebuilt in Jake's LaTeX format as a new version, edited as LaTeX, and its fixes recompile it", async () => {
+  const { body: page } = await call('GET', '/api/resume');
+  const sourceId = page.preview.versionId;
+  for (const v of page.versions.filter(x => x.id !== sourceId)) await call('DELETE', `/api/resume/${v.id}`); // room for it
+  const sent = compiled.length;
+  const refused = await call('POST', `/api/resume/${sourceId}/latex`);
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.needsLatexConsent, true);
+  assert.equal(compiled.length, sent, 'nothing is sent before consent');
+
+  await call('POST', '/api/resume/latex-consent', { allow: true });
+  const built = await call('POST', `/api/resume/${sourceId}/latex`);
+  assert.equal(built.status, 200, JSON.stringify(built.body));
+  assert.equal(built.body.by, 'rules'); // the demo has no AI key
+  assert.equal(built.body.version.latex, true);
+  assert.ok(built.body.version.pdf.compiled);
+  const id = built.body.version.id;
+  const full = (await call('GET', `/api/resume/${id}`)).body;
+  assert.match(full.latex, /\\resumeItem\{/);
+  assert.match(compiled.at(-1), /\\documentclass/);
+
+  // A bad edit changes nothing and says where; plain text can't be saved over LaTeX.
+  const bad = await call('PATCH', `/api/resume/${id}`, { latex: full.latex.replace('\\end{document}', '\\oops\n\\end{document}') });
+  assert.equal(bad.status, 422);
+  assert.match(bad.body.error, /line 9/);
+  assert.equal((await call('GET', `/api/resume/${id}`)).body.latex, full.latex);
+  assert.equal((await call('PATCH', `/api/resume/${id}`, { text: 'plain text' })).status, 400);
+
+  // "Use this" changes the \resumeItem, recompiles, and hands back the LaTeX for Undo.
+  const item = full.latex.slice(full.latex.indexOf('\\begin{document}')).match(/\\resumeItem\{([^}]*)\}/)[1];
+  const from = item.replace(/\\([%&$#_])/g, '$1');
+  const done = await call('POST', `/api/resume/${id}/rewrite`, { from, to: 'A rewrite with 40% & more' });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.kind, 'latex');
+  assert.equal(done.body.before, full.latex);
+  const changed = (await call('GET', `/api/resume/${id}`)).body;
+  assert.ok(changed.latex.includes('\\resumeItem{A rewrite with 40\\% \\& more}'));
+  assert.ok(changed.text.includes('• A rewrite with 40% & more'));
+  await call('PATCH', `/api/resume/${id}`, { latex: done.body.before });
+  assert.equal((await call('GET', `/api/resume/${id}`)).body.latex, full.latex);
+  await call('DELETE', `/api/resume/${id}`);
+});
+
+test("someone with no resume can start from Jake's own template", async () => {
+  await call('POST', '/api/resume/latex-consent', { allow: true });
+  const { status, body } = await call('POST', '/api/resume/latex-starter');
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.version.name, "Jake's Resume");
+  assert.match((await call('GET', `/api/resume/${body.version.id}`)).body.text, /^Jake Ryan/);
+  await call('DELETE', `/api/resume/${body.version.id}`);
 });

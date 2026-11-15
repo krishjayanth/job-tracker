@@ -1517,6 +1517,9 @@ table.apps { width: 100%; border-collapse: collapse; }
 /* The version sheet, and the application panel's resume fields. */
 .sheet.resume-sheet { width: min(680px, calc(100vw - 32px)); }
 .resume-sheet textarea { font-family: var(--mono); font-size: 12.5px; min-height: 260px; }
+/* Editing a LaTeX version: more room for the source, and no wrapping mid-command. */
+.resume-sheet.latex textarea { min-height: 420px; font-size: 12px; white-space: pre; overflow-wrap: normal; tab-size: 2; }
+.latex-tag { align-self: center; }
 .label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 #rv-count.over { color: var(--danger); }
 .posting-field summary {

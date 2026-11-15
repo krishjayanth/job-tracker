@@ -48,6 +48,9 @@ insights without a Google account or an OpenAI key. Nothing is saved.
   letter grade, five rubric scores, every bullet that misses the XYZ formula ("Accomplished X as measured by Y, by
   doing Z") with a rewrite, skills you list but never show, and the biggest weakness. For one job description it
   gives a match score, the top missing keywords, three red flags and rewrites aimed at that job.
+- **Rebuilds it in LaTeX.** One click remakes an uploaded resume in Jake's Resume LaTeX format (or start from the
+  template): the AI sorts your own words into its sections, an online LaTeX compiler builds the PDF, and from then
+  on "Use this" and Edit LaTeX change the source and rebuild it, so the PDF is always real LaTeX.
 - **Edits your PDF as you go.** "Use this" puts a rewrite into your resume and draws it over your real PDF, and
   "Download edited PDF" writes your accepted rewrites into a copy of your own file. Compare any two versions line
   by line.
@@ -186,7 +189,7 @@ No frontend framework or build step: the browser loads plain scripts, and D3 and
 npm test
 ```
 
-There are 242 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
+There are 256 tests, written with the built-in `node:test` runner and no test dependencies. They cover:
 
 - the rules classifier: stages, companies, roles, job IDs, and deadline parsing across dates, times and year rollover
 - status and Sankey-path logic
@@ -209,6 +212,8 @@ There are 242 tests, written with the built-in `node:test` runner and no test de
 - the AI review and tailoring, with a stand-in OpenAI client: what's sent (never your name), and what's kept of
   the answer (real bullets, real keywords, no made-up numbers), plus asking for consent again
 - editing a PDF: the old wording gone from the page and the file, reading order kept, too-long rewrites refused
+- LaTeX resumes: writing and reading back Jake's format, escaping, changing one bullet, LaTeX's own errors, and the
+  routes against a stand-in compiler (nothing is sent before consent)
 - the dashboard fingerprint that tells an open tab a newer version is live
 
 CI runs them on every push, then boots the app in demo mode and checks the API.
@@ -252,6 +257,9 @@ also shows how often people fix sorting across all accounts.
 | [`src/roles.js`](src/roles.js) | Sorting job titles into kinds of role and levels |
 | [`src/ai.js`](src/ai.js) | The resume review and tailoring on OpenAI: limits, consent, and checking the answers |
 | [`src/pdfedit.js`](src/pdfedit.js) | Writing accepted rewrites into a copy of a resume PDF |
+| [`src/latex.js`](src/latex.js) | Jake's Resume template: writing a resume as LaTeX, reading its text back, changing a bullet |
+| [`src/compile.js`](src/compile.js) | Compiling LaTeX into a PDF on an online LaTeX compiler |
+| [`src/lines.js`](src/lines.js) | Telling when a bullet wrapped onto another line |
 | [`src/textpdf.js`](src/textpdf.js) | Plain PDFs of the demo's resumes |
 | [`src/releases.js`](src/releases.js) | The "What's new" note, and the one-time re-scan after a sorting change |
 | [`src/rescan-all.js`](src/rescan-all.js) | That one-time re-scan of everyone's emails |

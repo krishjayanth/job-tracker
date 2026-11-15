@@ -58,6 +58,10 @@ defines (functions called later can use anything). D3 is served from `node_modul
   (quoted lines really in the resume, keywords really in the posting, no rewrite adding numbers). Only the outcome
   grouping in `src/insights.js` is worked out on the server. Sending OpenAI anything new means raising
   `CONSENT_VERSION` (everyone is asked again) and updating the consent dialog and privacy policy.
+- **LaTeX resumes (`src/latex.js`, `src/compile.js`).** A version can keep `latex` (Jake's Resume format). Its text is
+  always `latexToText(latex)` and its PDF is the LaTeX compiled (`saveLatex` saves all three together, after a compile
+  worked), so edits and "Use this" change the LaTeX (`replaceItem`) and recompile. Compiling sends the LaTeX to
+  `LATEX_COMPILE_URL` (LaTeX-on-HTTP), only after `db.latexConsent`; tests point it at a stand-in server.
 - **Accepted rewrites and the PDF (`src/pdfedit.js`).** "Use this" records each swapped line in `version.pdf.edits`;
   which still hold is read off the text (`pdfEditsFor`), so Undo needs nothing extra and a change by hand marks the PDF
   stale. The preview draws them over the PDF, and "Download edited PDF" removes the old lines' text from the page's
