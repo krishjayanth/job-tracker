@@ -71,6 +71,7 @@ function resumeEmptyHtml() {
       <div class="drop-actions">
         <button class="btn btn-primary" type="button" data-resume-file>${icon('upload')}Choose a file</button>
         <button class="btn" type="button" data-resume-paste>Paste text instead</button>
+        <button class="btn" type="button" data-latex-starter>${icon('file')}Start with Jake's Resume</button>
       </div>
       <span class="fine">${icon('shield')}nuj keeps the text, and a PDF so it can show you its pages. Only you can see them.</span>
     </section>`;
@@ -171,7 +172,7 @@ const resumeMsg = (text, tone = '') => { const el = $('#resume-msg'); el.classNa
 const defaultVersionName = () => `Resume, ${new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}`;
 
 function countResumeText() {
-  const n = $('#rv-text').value.length, max = resume?.limits.text ?? 40_000;
+  const n = $('#rv-text').value.length, max = editingLatex ? 60_000 : resume?.limits.text ?? 40_000;
   const el = $('#rv-count');
   el.textContent = n ? `${n.toLocaleString()} of ${max.toLocaleString()} characters` : '';
   el.classList.toggle('over', n > max);
@@ -179,6 +180,7 @@ function countResumeText() {
 $('#rv-text').addEventListener('input', countResumeText);
 
 let sheetFile = null; // { file, kind } read into the sheet, kept with the version on save
+let editingLatex = false; // the sheet holds a LaTeX version's source
 async function openVersionDialog({ id = null, text = '', note = '', file = null } = {}) {
   sheetFile = file;
   if (!id && resume && resume.versions.length >= resume.limits.versions) {
@@ -189,8 +191,15 @@ async function openVersionDialog({ id = null, text = '', note = '', file = null 
     try { v = await api('GET', `/api/resume/${id}`); } catch (err) { return toast(err.message); }
   }
   editingVersion = id;
+  // A LaTeX version is edited as LaTeX: its text and PDF are made from it when it's saved.
+  editingLatex = Boolean(v?.latex);
+  resumeDialog.classList.toggle('latex', editingLatex);
+  $('label[for="rv-text"]').textContent = editingLatex ? 'LaTeX (Jake\'s Resume format)' : 'Resume text';
+  $('#rv-file-btn').hidden = editingLatex;
   $('#resume-dialog-title').textContent = v ? `Edit ${v.name}` : 'Add a resume version';
-  $('#resume-dialog-sub').textContent = v
+  $('#resume-dialog-sub').textContent = editingLatex
+    ? `Change its name, its start date, or its LaTeX. Saving builds the PDF again with ${resume?.latex?.service ?? 'the LaTeX service'}; if LaTeX finds a mistake, nothing is changed and you'll see where.`
+    : v
     ? 'Change its name, the date you started sending it, or its text. Read a new file to replace the text.'
     : text ? 'Check the text nuj read from your file and fix anything that came out wrong.'
       + (file?.kind === 'pdf' ? ' The PDF is kept too, so you can see its pages here.' : '')
@@ -198,8 +207,8 @@ async function openVersionDialog({ id = null, text = '', note = '', file = null 
   $('#rv-name').value = v?.name ?? (resume?.versions.length ? '' : defaultVersionName());
   $('#rv-name').placeholder = defaultVersionName();
   $('#rv-from').value = v?.usedFrom ?? isoDate(new Date().toISOString());
-  $('#rv-text').value = v?.text ?? text;
-  $('#resume-save').textContent = v ? 'Save changes' : 'Save version';
+  $('#rv-text').value = editingLatex ? v.latex : v?.text ?? text;
+  $('#resume-save').textContent = editingLatex ? 'Save and build PDF' : v ? 'Save changes' : 'Save version';
   $('#resume-save').disabled = false;
   resumeMsg(note);
   countResumeText();
@@ -252,11 +261,16 @@ $('#rv-file').addEventListener('change', e => {
 $('#resume-form').addEventListener('submit', async e => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target));
-  if (!body.text.trim()) return resumeMsg('Add the text of your resume', 'err');
+  if (!body.text.trim()) return resumeMsg(editingLatex ? 'Add the LaTeX for this version' : 'Add the text of your resume', 'err');
+  if (editingLatex) {
+    body.latex = body.text;
+    delete body.text;
+  }
   const btn = $('#resume-save');
   btn.disabled = true;
-  resumeMsg('Saving…');
+  resumeMsg(editingLatex ? 'Building your PDF…' : 'Saving…');
   try {
+    if (editingLatex) await new Promise((ok, no) => withLatexConsent(ok, no));
     const saved = editingVersion
       ? await api('PATCH', `/api/resume/${editingVersion}`, body)
       : await api('POST', '/api/resume', body);
@@ -506,6 +520,69 @@ $('#view-resume').addEventListener('click', async e => {
     }
     return loadResume();
   }
+});
+
+// ---- resumes in LaTeX: Jake's Resume format, built into a PDF by an online service ----
+// Its LaTeX goes to that service each time it's built, so it's asked once first.
+const latexDialog = $('#latex-consent');
+let afterLatexConsent = null;
+function withLatexConsent(run, cancelled = () => {}) {
+  if (resume?.latex?.consent) return run();
+  afterLatexConsent = { run, cancelled };
+  $('#latex-consent-service').textContent = resume?.latex?.service ?? 'an online LaTeX service';
+  latexDialog.showModal();
+}
+$('#latex-consent-allow').addEventListener('click', async () => {
+  const btn = $('#latex-consent-allow');
+  btn.disabled = true;
+  try {
+    const { latex } = await api('POST', '/api/resume/latex-consent', { allow: true });
+    if (resume) resume.latex = latex;
+    const next = afterLatexConsent;
+    afterLatexConsent = null;
+    latexDialog.close();
+    next?.run();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+latexDialog.addEventListener('click', e => {
+  if (e.target === e.currentTarget || e.target.closest('[data-close-dialog]')) latexDialog.close();
+});
+latexDialog.addEventListener('close', () => {
+  const left = afterLatexConsent;
+  afterLatexConsent = null;
+  left?.cancelled(new ApiError('Nothing was sent'));
+});
+
+async function latexAction(btn, path, busy) {
+  btn.disabled = true;
+  const label = btn.querySelector('span') ?? btn;
+  const was = label.textContent;
+  label.textContent = busy;
+  try {
+    const { version, by } = await api('POST', path);
+    reviewId = version.id;
+    reviewMode = 'pdf';
+    resumeJson = '';
+    await loadResume();
+    toast(by === 'rules'
+      ? `Made ${version.name}. Check it over: without the AI, nuj sorted it with simple rules`
+      : `Made ${version.name}. Edit its LaTeX any time`);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+    label.textContent = was;
+  }
+}
+$('#view-resume').addEventListener('click', e => {
+  const build = e.target.closest('[data-latex-build]');
+  if (build) return withLatexConsent(() => latexAction(build, `/api/resume/${build.dataset.latexBuild}/latex`, 'Rebuilding…'));
+  const starter = e.target.closest('[data-latex-starter]');
+  if (starter) return withLatexConsent(() => latexAction(starter, '/api/resume/latex-starter', 'Building…'));
 });
 
 // ---- the PDF itself: real pages, with the same highlights drawn on top ----
@@ -918,6 +995,7 @@ function paperHtml(r) {
 function resumeReviewHtml() {
   const r = resume.preview;
   if (!r) return '';
+  const shownVersion = resume.versions.find(v => v.id === r.versionId);
   const hint = compareId
     ? 'What changed between the two versions: lines the later one added are marked +, lines it took out −.'
     : resume.ai?.available
@@ -940,7 +1018,11 @@ function resumeReviewHtml() {
             ${[['pdf', 'PDF'], ['text', 'Text']].map(([m, label]) => `<button type="button" data-review-mode="${m}" aria-pressed="${reviewMode === m}">${label}</button>`).join('')}
           </div>` : ''}
           <button class="btn btn-sm btn-quiet review-wide" type="button" data-review-wide aria-pressed="${reviewWide}" title="${reviewWide ? 'Put the review back beside the page' : 'Show the page wider, with the review under it'}">${icon('expand')}<span>${reviewWide ? 'Narrower' : 'Wider'}</span></button>
-          <button class="btn btn-sm" type="button" data-version-edit="${esc(r.versionId)}" aria-label="Edit the text of ${esc(r.name)}">Edit text</button>
+          ${shownVersion?.latex
+            ? `<span class="v-tag latex-tag" title="Made in Jake's Resume format. Changes edit its LaTeX and build the PDF again.">LaTeX</span>
+               <button class="btn btn-sm" type="button" data-version-edit="${esc(r.versionId)}" aria-label="Edit the LaTeX of ${esc(r.name)}">Edit LaTeX</button>`
+            : `<button class="btn btn-sm btn-quiet" type="button" data-latex-build="${esc(r.versionId)}" title="Make a new version of this resume in Jake's Resume format, as LaTeX, and build its PDF">${icon('file')}<span>Rebuild in Jake's format</span></button>
+               <button class="btn btn-sm" type="button" data-version-edit="${esc(r.versionId)}" aria-label="Edit the text of ${esc(r.name)}">Edit text</button>`}
         </div>
       </div>
       <div class="review-grid${reviewWide ? ' wide' : ''}">
@@ -1049,7 +1131,10 @@ document.addEventListener('click', async e => {
   use.disabled = true;
   const item = use.dataset.fixes;
   try {
-    const { version, before } = await api('POST', `/api/resume/${use.dataset.useRewrite}/rewrite`, { from: use.dataset.from, to: use.dataset.to });
+    const v = resume?.versions.find(x => x.id === use.dataset.useRewrite);
+    if (v?.latex) await new Promise((ok, no) => withLatexConsent(ok, no));
+    if (v?.latex) use.textContent = 'Building PDF…';
+    const { version, before, kind } = await api('POST', `/api/resume/${use.dataset.useRewrite}/rewrite`, { from: use.dataset.from, to: use.dataset.to });
     if (item) await api('PATCH', `/api/insights/review/items/${item}`, { state: 'done' }).catch(() => {});
     reviewOpen = null;
     resumeJson = '';
@@ -1057,14 +1142,16 @@ document.addEventListener('click', async e => {
     use.textContent = 'Used';
     // A rewrite can hold [X%] or [N] where only you know the real number.
     const fillIn = /\[[^\]]{1,6}\]/.test(use.dataset.to) ? '. Edit its text to fill in the [ ] with your real number' : '';
-    toast(`Changed the line in ${version.name}${fillIn || (version.pdf?.edited ? '. It\'s drawn over your PDF' : '')}`, async () => {
-      await api('PATCH', `/api/resume/${version.id}`, { text: before });
+    const how = kind === 'latex' ? ' and built its PDF again' : '';
+    toast(`Changed the line in ${version.name}${how}${fillIn || (version.pdf?.edited ? '. It\'s drawn over your PDF' : '')}`, async () => {
+      await api('PATCH', `/api/resume/${version.id}`, kind === 'latex' ? { latex: before } : { text: before });
       if (item) await api('PATCH', `/api/insights/review/items/${item}`, { state: 'open' }).catch(() => {});
       resumeJson = '';
       if (view === 'resume') await loadResume();
     }, { ms: 10_000 });
   } catch (err) {
     use.disabled = false;
+    use.textContent = 'Use this';
     toast(err.message);
   }
 });

@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { getKv, setKv, deleteKv, deleteKvPrefix, listKvKeys, getFile, setFile, deleteFile, deleteFilePrefix, listFileKeys } from './store.js';
 import { BULLET, bodyOf, carryOnCount } from './lines.js';
+import { MAX_LATEX } from './latex.js';
 
 export const MAX_VERSIONS = 5;
 export const MAX_TEXT = 40_000;
@@ -284,6 +285,28 @@ export function deleteVersion(userId, id) {
   });
 }
 
+// ---- a version's LaTeX -------------------------------------------------------------------
+// A version made in Jake's Resume format keeps its LaTeX. Its text is always worked out from
+// the LaTeX, and its PDF is the LaTeX compiled, so all three say the same thing: saving one
+// saves all three, after the compile worked (see compile.js). Returns the version and the
+// LaTeX it had before (for Undo).
+export async function saveLatex(userId, versionId, { latex, text, pdf }) {
+  if (typeof latex !== 'string' || !latex.trim()) return { error: 'Add the LaTeX for this version' };
+  if (latex.length > MAX_LATEX) return { error: `That's longer than a resume's LaTeX usually is. Keep it under ${MAX_LATEX.toLocaleString('en-US')} characters` };
+  if (!(await listVersions(userId)).some(v => v.id === versionId)) return { error: 'That version was deleted', status: 404 };
+  await setFile(pdfKey(userId, versionId), pdf);
+  return update(userId, versions => {
+    const version = versions.find(v => v.id === versionId);
+    if (!version) return { error: 'That version was deleted', status: 404 };
+    const { fields, error } = checkFields({ text }, { partial: true });
+    if (error) return { error };
+    const before = version.latex ?? null;
+    Object.assign(version, fields, { latex, updatedAt: new Date().toISOString() });
+    version.pdf = { size: pdf.length, at: new Date().toISOString(), textHash: textHash(version.text), compiled: true };
+    return { version, before };
+  });
+}
+
 // ---- a version's PDF -----------------------------------------------------------------
 export async function savePdf(userId, versionId, buffer) {
   if (fileKind(buffer) !== 'pdf') return { error: 'Only a PDF can be shown here. Save your resume as a PDF and try again' };
@@ -356,7 +379,9 @@ export async function forgetResumes(userId) {
 // What the page lists: everything but the text. `stale`: the text was changed by hand after
 // the PDF was saved, so the PDF shows the old wording and the page shows the text instead.
 // `edited`: how many accepted rewrites are drawn over the PDF.
-export function versionMeta({ text, ...meta }) {
+export function versionMeta({ text, latex, ...meta }) {
+  // A LaTeX version says so; its source is fetched with the version when it's edited.
+  if (latex) meta.latex = true;
   if (!meta.pdf) return meta;
   const { textHash: _, edits: __, ...pdf } = meta.pdf;
   const applied = pdfEditsFor({ text, pdf: meta.pdf });

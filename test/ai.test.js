@@ -210,3 +210,18 @@ test('agreeing to an older list of what is sent asks again', () => {
   friend.store.db.insights.consent.version = ai.CONSENT_VERSION;
   assert.equal(ai.aiStatus(friend).consent, true);
 });
+
+test("reading a resume into Jake's sections keeps only the resume's own words, and never sends the name", async () => {
+  const text = 'Sam Example\nsam@example.com\nEXPERIENCE\nLead February 2026 – Present\nMaroonLife College Station, TX\n• Shipped an app to 1,000+\ndownloads by leading 5 engineers\n• Cut API calls 40% with Redis';
+  const out = { sections: [{ title: 'Experience', kind: 'entries', skills: [], items: [], entries: [{
+    title: 'Lead', date: 'February 2026 – Present', subtitle: 'MaroonLife', location: 'College Station, TX', tech: '',
+    bullets: ['Shipped an app to 1,000+ downloads by leading 5 engineers', 'Cut API calls 40% with Redis', 'Won a Turing Award'],
+  }] }, { title: 'Awards', kind: 'list', entries: [], skills: [], items: ['Nobel Prize'] }] };
+  const r = ai.checkStructure(out, text);
+  assert.deepEqual(r.sections.map(s => s.title), ['Experience']); // the made-up section is gone
+  assert.deepEqual(r.sections[0].entries[0].bullets, ['Shipped an app to 1,000+ downloads by leading 5 engineers', 'Cut API calls 40% with Redis']);
+  // Too few of the resume's bullets kept: not trusted.
+  assert.equal(ai.checkStructure({ sections: [{ ...out.sections[0], entries: [{ ...out.sections[0].entries[0], bullets: ['Cut API calls 40% with Redis'] }] }] }, text), null);
+  await ai.structureResume(text, { client: fakeClient(out) });
+  assert.ok(!fakeClient.last.messages[1].content.includes('Sam') && !fakeClient.last.messages[1].content.includes('@'));
+});

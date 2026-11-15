@@ -632,6 +632,33 @@
     </div>
   </dialog>
 
+  <dialog id="latex-consent" class="sheet" aria-labelledby="latex-consent-title">
+    <div class="sheet-head">
+      <span class="sheet-icon"><svg class="icon"><use href="#i-file"/></svg></span>
+      <div class="sheet-title">
+        <h2 id="latex-consent-title">Build your resume with an online LaTeX service?</h2>
+        <p>To turn your resume's LaTeX into a PDF, nuj sends it to <strong id="latex-consent-service">latex.ytotech.com</strong>, a free online LaTeX compiler:</p>
+      </div>
+      <button class="icon-btn" type="button" data-close-dialog aria-label="Close">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <ul class="consent-list">
+        <li><svg class="icon"><use href="#i-check"/></svg>The LaTeX of that version, including your name and contact details, each time it's built</li>
+        <li><svg class="icon"><use href="#i-check"/></svg>Nothing else: no applications, emails or other versions</li>
+      </ul>
+      <p class="consent-note">It sends back the PDF, which nuj keeps with the version. The service is run by someone else and is in open beta, so it can be slow or down at times. You can stop this at any time from the Resume insights page.</p>
+    </div>
+    <div class="sheet-foot">
+      <span class="fine"><svg class="icon"><use href="#i-shield"/></svg>Nothing is sent until you choose Allow.</span>
+      <div class="foot-actions">
+        <button class="btn btn-quiet" type="button" data-close-dialog>Not now</button>
+        <button class="btn btn-primary" type="button" id="latex-consent-allow">Allow</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="ai-consent" class="sheet" aria-labelledby="ai-consent-title">
     <div class="sheet-head">
       <span class="sheet-icon"><svg class="icon"><use href="#i-sparkles"/></svg></span>
