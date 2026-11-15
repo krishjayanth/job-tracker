@@ -749,6 +749,12 @@ app.post('/api/resume/:id/pdf/edited', async (req, res) => {
   const changes = pdfLineChanges(version);
   if (!changes.length) return res.status(400).json({ error: "You haven't changed any lines since this PDF was saved" });
   const share = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1.5;
+  // The look of the old line's font, as the page read it: the copy is written in the closest
+  // standard font. Anything unexpected is plain sans-serif.
+  const styleOf = st => ({
+    family: ['serif', 'sans-serif', 'monospace'].includes(st?.family) ? st.family : 'sans-serif',
+    bold: st?.bold === true, italic: st?.italic === true,
+  });
   const places = Array.isArray(req.body?.places) ? req.body.places : [];
   const edits = [];
   for (const c of changes) {
@@ -757,7 +763,7 @@ app.post('/api/resume/:id/pdf/edited', async (req, res) => {
     if (!boxes.length || !boxes.every(b => Number.isInteger(b?.page) && b.page >= 0 && ['l', 't', 'w', 'h'].every(k => share(b[k])))) {
       return res.status(400).json({ error: "nuj couldn't find every changed line in this PDF, so it didn't write a copy. Upload the new PDF instead" });
     }
-    edits.push({ right: share(place.right) ? place.right : 0, from: c.from, to: version.text.split('\n')[c.at].replace(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/, '').trim(), boxes });
+    edits.push({ right: share(place.right) ? place.right : 0, style: styleOf(place.style), from: c.from, to: version.text.split('\n')[c.at].replace(/^\s*(?:[•●▪◦‣■□*–-]|\d+[.)])\s+/, '').trim(), boxes });
   }
   const pdf = await loadPdf(req.account.id, version.id);
   if (!pdf) return res.status(404).json({ error: 'This version has no PDF' });

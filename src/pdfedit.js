@@ -5,7 +5,8 @@
 // and applicant tracking software reads that text, so the resume would say both. So each
 // page's drawing instructions are read, every piece of text is followed to where it lands
 // on the page, and the pieces on a changed line are taken out. The new wording is then
-// written in Helvetica (a PDF usually carries only the letters it uses of its own fonts, so
+// written in the standard font closest to the old line's: Times, Helvetica or Courier, bold
+// or italic to match (a PDF usually carries only the letters it uses of its own fonts, so
 // they can't spell new words), in the very place the old line's instructions were, so the
 // file reads in the same order as before (some tracking software reads text in that order,
 // and a rewritten bullet must not end up after Skills). Finally the copy is read back like
@@ -160,6 +161,17 @@ function wrapWith(text, size, width, widthOf) {
   return rows;
 }
 
+const STANDARD = {
+  serif: [StandardFonts.TimesRoman, StandardFonts.TimesRomanBold, StandardFonts.TimesRomanItalic, StandardFonts.TimesRomanBoldItalic],
+  'sans-serif': [StandardFonts.Helvetica, StandardFonts.HelveticaBold, StandardFonts.HelveticaOblique, StandardFonts.HelveticaBoldOblique],
+  monospace: [StandardFonts.Courier, StandardFonts.CourierBold, StandardFonts.CourierOblique, StandardFonts.CourierBoldOblique],
+};
+// `style`: { family: 'serif' | 'sans-serif' | 'monospace', bold, italic }, as the page read it.
+export function standardFont(style = {}) {
+  const set = STANDARD[style.family] ?? STANDARD['sans-serif'];
+  return set[(style.bold ? 1 : 0) + (style.italic ? 2 : 0)];
+}
+
 // The instructions for one changed line, written where its old text was: inside the page's
 // own text block, so they place the words with an absolute text matrix (undoing whatever
 // scaling the page set up around it), then put the page's font, spacing and position back
@@ -214,8 +226,14 @@ export async function writePdfEdits(pdf, edits) {
   } catch {
     throw new PdfEditError("nuj couldn't open this PDF to change it. Upload the new PDF instead");
   }
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const fontName = 'NujHelvetica';
+  // The standard font closest to each changed line's own (serif, sans-serif or monospace;
+  // bold; italic), under a name of nuj's own in the page's fonts.
+  const fontsUsed = new Map(); // standard font -> { font, name }
+  for (const e of edits) {
+    const key = standardFont(e.style);
+    if (!fontsUsed.has(key)) fontsUsed.set(key, { font: await doc.embedFont(key), name: `Nuj${key.replace(/[^A-Za-z]/g, '')}` });
+    e.font = fontsUsed.get(key);
+  }
   const byPage = new Map();
   for (const e of edits) {
     const page = e.boxes[0].page;
@@ -255,7 +273,7 @@ export async function writePdfEdits(pdf, edits) {
       const anchor = onLine.reduce((a, b) => (b.start < a.start ? b : a));
       const bullet = onLine.find(r => r.x < first.x0 - 2 && r.y >= first.bottom - 1 && r.y <= first.top + 1);
       const right = crop.x + (e.right ?? 0) * crop.width;
-      writes.set(anchor.start, newWording(e, rows, right, anchor, bullet, font, fontName));
+      writes.set(anchor.start, newWording(e, rows, right, anchor, bullet, e.font.font, e.font.name));
     }
     if (cut.size) {
       let out = '';
@@ -275,7 +293,7 @@ export async function writePdfEdits(pdf, edits) {
       // Helvetica, under a name of nuj's own in the page's fonts.
       const resources = page.node.Resources() ?? doc.context.obj({});
       const fonts = resources.lookup(PDFName.of('Font'), PDFDict) ?? doc.context.obj({});
-      fonts.set(PDFName.of(fontName), font.ref);
+      for (const e of pageEdits) fonts.set(PDFName.of(e.font.name), e.font.font.ref);
       resources.set(PDFName.of('Font'), fonts);
       page.node.set(PDFName.of('Resources'), resources);
     }
@@ -289,10 +307,10 @@ export async function writePdfEdits(pdf, edits) {
   // The old wording must be gone, not counting the new lines themselves: a rewrite often
   // keeps the old words and adds to them ("Deployed on AWS" -> "Deployed on AWS, raising…").
   let rest = said;
-  for (const e of edits) rest = rest.replace(loose(writable(e.to, font)), ' ');
+  for (const e of edits) rest = rest.replace(loose(writable(e.to, e.font.font)), ' ');
   const oldLeft = edits.find(e => loose(e.from).length >= 12 && rest.includes(loose(e.from)));
   if (oldLeft) throw new PdfEditError("nuj couldn't take the old wording out of this PDF, so it didn't make a copy that would say both. Upload the new PDF instead");
-  const missing = edits.find(e => !said.includes(loose(writable(e.to, font))));
+  const missing = edits.find(e => !said.includes(loose(writable(e.to, e.font.font))));
   if (missing) throw new PdfEditError("nuj couldn't write the new wording into this PDF. Upload the new PDF instead");
   return bytes;
 }

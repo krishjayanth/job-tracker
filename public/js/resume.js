@@ -540,11 +540,19 @@ function pdfDoc(versionId, at) {
         const canvas = Object.assign(document.createElement('canvas'), { width: Math.ceil(vp.width), height: Math.ceil(vp.height), className: 'pdf-canvas' });
         canvas.setAttribute('aria-hidden', 'true');
         await page.render({ canvas, viewport: vp }).promise;
-        // Each run of text, as a share of the page, so the highlights scale with it.
-        const items = (await page.getTextContent()).items.filter(i => i.str?.trim()).map(i => {
+        // Each run of text, as a share of the page, so the highlights scale with it, with the
+        // look of its font (serif, sans-serif or monospace; bold; italic), so a rewrite drawn
+        // over it can match. The fonts are loaded once the page is drawn.
+        const content = await page.getTextContent();
+        const styleOf = name => {
+          let f = null;
+          try { f = page.commonObjs.get(name); } catch { /* not loaded */ }
+          return { family: content.styles[name]?.fontFamily || 'sans-serif', bold: Boolean(f?.bold || f?.black), italic: Boolean(f?.italic) };
+        };
+        const items = content.items.filter(i => i.str?.trim()).map(i => {
           const tx = lib.Util.transform(vp.transform, i.transform);
           const size = Math.hypot(tx[2], tx[3]);
-          return { text: i.str, l: tx[4] / vp.width, t: (tx[5] - size * 0.95) / vp.height, w: (i.width * vp.scale) / vp.width, h: (size * 1.25) / vp.height };
+          return { text: i.str, l: tx[4] / vp.width, t: (tx[5] - size * 0.95) / vp.height, w: (i.width * vp.scale) / vp.width, h: (size * 1.25) / vp.height, style: styleOf(i.fontName) };
         });
         pages.push({ canvas, ratio: vp.height / vp.width, items });
       }
@@ -584,7 +592,7 @@ function placeLines(doc, lines) {
   const boxes = (from, to) => {
     const found = parts.filter(p => p.start < to && from < p.end).map(p => {
       const a = share(p, from - p.start), b = share(p, to - p.start);
-      return { page: p.page, l: p.item.l + p.item.w * a, t: p.item.t, w: p.item.w * (b - a), h: p.item.h };
+      return { page: p.page, l: p.item.l + p.item.w * a, t: p.item.t, w: p.item.w * (b - a), h: p.item.h, style: p.item.style };
     });
     // Runs on the same printed line become one box.
     const merged = [];
@@ -635,9 +643,16 @@ const pdfShownLines = r => (r.pdfEdits?.length
 // The right edge of the text on a page, as a share of its width: how far a longer line can run.
 const textRight = page => Math.max(0, ...page.items.map(i => i.l + i.w));
 
+// The font a rewrite is drawn in: the standard one closest to the old line's (the edited PDF
+// uses the same three, as Times, Helvetica and Courier).
+// Single quotes inside: these go into a style="…" attribute.
+const EDIT_FAMILY = { serif: "'Times New Roman', Times, serif", monospace: "'Courier New', Courier, monospace", 'sans-serif': 'Helvetica, Arial, sans-serif' };
+const editFont = (style = {}) => `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}100px ${EDIT_FAMILY[style.family] ?? EDIT_FAMILY['sans-serif']}`;
+
 // `least`: how small it may get, as a share of the old size.
-function fitEdit(text, width, rows, base, least = EDIT_MIN_SHRINK) {
+function fitEdit(text, width, rows, base, least = EDIT_MIN_SHRINK, style) {
   // Widths in shares of the page width: the measurer draws at 100px.
+  measurer.font = editFont(style);
   const widthOf = (s, size) => (measure(s) / 100) * size;
   for (let size = base; size >= base * least - 1e-9; size *= 0.97) {
     const lines = [];
@@ -663,11 +678,13 @@ function pdfEditPlaces(r, doc, placed) {
     const width = Math.max(right, ...rows.map(b => b.l + b.w)) - rows[0].l;
     const base = rows[0].h * page.ratio * 0.8; // the old font size, in shares of the page width
     const to = r.lines[e.at].text.slice(r.lines[e.at].at);
-    const fit = fitEdit(to, width, rows.length, base);
+    const style = rows[0].style;
+    const fit = fitEdit(to, width, rows.length, base, EDIT_MIN_SHRINK, style);
     // Too long for the old line: still drawn on the page, shrunk as far as it takes, so you
     // see your words rather than a bare bullet. Only the download is refused.
-    const squeezed = fit ? null : fitEdit(to, width, rows.length, base, 0.2);
-    return { at: e.at, from: e.from, to, boxes, right, rows, fit, squeezed };
+    const squeezed = fit ? null : fitEdit(to, width, rows.length, base, 0.2, style);
+    measurer.font = '100px Helvetica, Arial, sans-serif'; // back to what placing lines measures with
+    return { at: e.at, from: e.from, to, boxes, right, rows, style, fit, squeezed };
   });
 }
 
@@ -676,7 +693,10 @@ function pdfEditHtml(place, page) {
   const shown = place.fit ?? place.squeezed;
   if (!shown) return cover;
   const title = place.fit ? `Changed from: ${place.from}` : "Too long to fit where the old line was, so it's shown smaller here. Shorten it to download the edited PDF.";
-  return cover + shown.lines.map((line, i) => `<span class="pdf-edit-text${place.fit ? '' : ' too-long'}" style="${boxStyle({ ...place.rows[i], w: 1 - place.rows[i].l })};--fs:${shown.size.toFixed(5)}"
+  // As wide as the page's text runs, so an outline stops at the column, not the paper's edge.
+  const width = row => Math.max(place.right, row.l + row.w) - row.l;
+  const font = `font-family:${EDIT_FAMILY[place.style?.family] ?? EDIT_FAMILY['sans-serif']};font-weight:${place.style?.bold ? 700 : 400};font-style:${place.style?.italic ? 'italic' : 'normal'}`;
+  return cover + shown.lines.map((line, i) => `<span class="pdf-edit-text${place.fit ? '' : ' too-long'}" style="${boxStyle({ ...place.rows[i], w: width(place.rows[i]) })};--fs:${shown.size.toFixed(5)};${font}"
     title="${esc(title)}">${esc(line)}</span>`).join('');
 }
 
@@ -786,7 +806,7 @@ $('#view-resume').addEventListener('click', async e => {
   const doc = v?.pdf && pdfReady.get(`${v.id}:${v.pdf.at}`);
   if (!doc || r.versionId !== v.id) return;
   const places = pdfEditPlaces(r, doc, placeLines(doc, pdfShownLines(r)))
-    .map(({ at, boxes, right }) => ({ at, right, boxes: boxes.map(({ page, l, t, w, h }) => ({ page, l, t, w, h })) }));
+    .map(({ at, boxes, right, style }) => ({ at, right, style, boxes: boxes.map(({ page, l, t, w, h }) => ({ page, l, t, w, h })) }));
   btn.disabled = true;
   btn.classList.add('busy');
   try {
