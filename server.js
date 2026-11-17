@@ -29,7 +29,7 @@ import { compileLatex, CompileError, COMPILE_SERVICE } from './src/compile.js';
 import { writePdfEdits, PdfEditError } from './src/pdfedit.js';
 import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, structureResume, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
-import { authEnabled, checkAuthConfig, isAllowed, requireLogin, signedIn, startSession, endSession } from './src/auth.js';
+import { authEnabled, checkAuthConfig, isAllowed, requireLogin, signedIn, startSession, endSession, oauthState, checkOAuthState } from './src/auth.js';
 
 const PORT = gmail.PORT;
 // On Render (or any host) listen on all interfaces; locally, only on this machine.
@@ -89,14 +89,23 @@ app.get('/auth/google', (req, res) => {
   if (!gmail.gmailConfigured()) {
     return res.status(500).send('Google sign-in is not configured: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see docs/DEPLOY.md).');
   }
-  res.redirect(gmail.authUrl({ withGmail: req.query.gmail === '1' || !authEnabled }));
+  const withGmail = req.query.gmail === '1' || !authEnabled;
+  res.redirect(gmail.authUrl({ withGmail, state: oauthState(res, withGmail ? 'gmail' : 'login') }));
 });
 
 app.get('/oauth2callback', async (req, res) => {
+  // Only a sign-in this browser started (see oauthState). A reload of this page comes here
+  // too, its cookie already used: if that first try signed them in, carry on as before.
+  const mode = checkOAuthState(req, res, req.query.state);
+  if (!mode) {
+    if (signedIn(req)) return res.redirect('/');
+    recordError('sign-in', "A sign-in came back that this browser didn't start (an old or shared link), so it was refused", { level: 'warning' });
+    return res.redirect(authEnabled ? '/login?error=failed' : '/');
+  }
   try {
     if (req.query.error) {
       // Said no to Gmail access after signing in: carry on without Gmail.
-      if (req.query.state === 'gmail') return res.redirect('/');
+      if (mode === 'gmail') return res.redirect('/');
       throw new Error(String(req.query.error));
     }
     const { sub, email, tokens, grantedGmail } = await gmail.handleCallback(String(req.query.code));
@@ -109,7 +118,7 @@ app.get('/oauth2callback', async (req, res) => {
     const firstConnect = !user.mailbox.connected();
     if (grantedGmail) await user.mailbox.saveTokens(tokens);
     if (authEnabled) startSession(res, { sub, email });
-    if (user.isNew && !user.mailbox.connected() && req.query.state !== 'gmail') {
+    if (user.isNew && !user.mailbox.connected() && mode !== 'gmail') {
       user.isNew = false;
       return res.redirect('/auth/google?gmail=1');
     }

@@ -20,8 +20,22 @@ test('the owner inherits the single-user tracker and Gmail sign-in; a backup is 
   const owner = await users.getUser('sub-owner', 'owner@example.com');
   assert.equal(owner.store.applications[0].company, 'Contoso');
   assert.equal(owner.mailbox.connected(), true);
+  // The old plain sign-in is sealed as soon as it's read.
+  const saved = await store.getKv('gmail_token_sub-owner');
+  assert.ok(saved.sealed && !JSON.stringify(saved).includes('owner-refresh'));
   assert.equal(await store.getKv('db'), null);
   assert.equal((await store.getKv('db_before_accounts')).applications.length, 1);
+});
+
+test('a Gmail sign-in is saved encrypted and read back after a restart', async () => {
+  const friend = await users.getUser('sub-friend', 'friend@example.com');
+  await friend.mailbox.saveTokens({ refresh_token: 'friend-refresh', access_token: 'friend-access' });
+  const saved = await store.getKv('gmail_token_sub-friend');
+  assert.ok(saved.sealed && !JSON.stringify(saved).includes('friend-'));
+  const { Mailbox } = await import('../src/gmail.js');
+  const reloaded = await new Mailbox(friend).load();
+  assert.equal(reloaded.token.refresh_token, 'friend-refresh');
+  await friend.mailbox.disconnect({ revoke: false });
 });
 
 test("everyone else starts empty and can't see the owner's data", async () => {

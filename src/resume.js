@@ -309,6 +309,7 @@ export async function saveLatex(userId, versionId, { latex, text, pdf }) {
 
 // ---- a version's PDF -----------------------------------------------------------------
 export async function savePdf(userId, versionId, buffer) {
+  if (!validVersionId(versionId)) return { error: 'That version was deleted', status: 404 };
   if (fileKind(buffer) !== 'pdf') return { error: 'Only a PDF can be shown here. Save your resume as a PDF and try again' };
   const found = (await listVersions(userId)).some(v => v.id === versionId);
   if (!found) return { error: 'That version was deleted', status: 404 };
@@ -323,7 +324,12 @@ export async function savePdf(userId, versionId, buffer) {
   });
 }
 
+// Version IDs are UUIDs (or the page's own, checked in addVersion): letters, digits, - and _.
+// The ID in a PDF's address comes from the request, so anything else is no version at all.
+const validVersionId = id => typeof id === 'string' && /^[\w-]{1,64}$/.test(id);
+
 export async function loadPdf(userId, versionId) {
+  if (!validVersionId(versionId)) return null;
   const key = pdfKey(userId, versionId);
   const file = await getFile(key);
   if (file) return Buffer.from(file);
@@ -340,6 +346,7 @@ const forgetPdf = key => Promise.all([deleteFile(key), deleteKv(key)]);
 
 // The PDF no longer matches the version (its text came from another file): stop showing it.
 export async function removePdf(userId, versionId) {
+  if (!validVersionId(versionId)) return { version: undefined };
   await forgetPdf(pdfKey(userId, versionId));
   return update(userId, versions => {
     const version = versions.find(v => v.id === versionId);

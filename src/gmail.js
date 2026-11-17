@@ -7,6 +7,7 @@ import { HIRING_SENDERS } from './jobcheck.js';
 import { pickApplicationWithGroq } from './groq.js';
 import { recordError } from './errors.js';
 import { EXPIRED } from './accounts.js';
+import { encrypt, decrypt } from './secrets.js';
 
 const CREDENTIALS_FILE = path.resolve(process.env.GOOGLE_CREDENTIALS || 'credentials.json');
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -61,13 +62,13 @@ const newClient = () => {
 };
 
 // Sign in with Google. With withGmail, the same consent screen also asks for
-// read-only Gmail access; `state` comes back to the callback so it knows which it was.
-export function authUrl({ withGmail, loginHint }) {
+// read-only Gmail access. `state` (see oauthState in auth.js) comes back to the callback.
+export function authUrl({ withGmail, state, loginHint }) {
   return newClient().generateAuthUrl({
     access_type: withGmail ? 'offline' : 'online',
     prompt: withGmail ? 'consent' : 'select_account',
     scope: withGmail ? [...LOGIN_SCOPES, GMAIL_SCOPE] : LOGIN_SCOPES,
-    state: withGmail ? 'gmail' : 'login',
+    state,
     ...(loginHint && { login_hint: loginHint }),
   });
 }
@@ -173,10 +174,29 @@ export class Mailbox {
     this.onProgress = () => {};
   }
 
+  // The Gmail sign-in is kept encrypted (like a Groq key): its refresh token can read the
+  // whole inbox, so a copy of the database alone mustn't hand it out. One saved before that
+  // is plain JSON; it's read as it is and sealed straight away.
   async load() {
-    this.token = await getKv(this.tokenKey);
+    const saved = await getKv(this.tokenKey);
+    if (saved?.sealed) {
+      const opened = decrypt(saved.sealed);
+      this.token = opened ? JSON.parse(opened) : null;
+      // Unreadable means SESSION_SECRET changed: Gmail shows as off until they connect again.
+      if (!opened) recordError('gmail', "A Gmail sign-in couldn't be read (SESSION_SECRET changed?); they need to connect Gmail again", { userId: this.user.id, level: 'warning' });
+    } else {
+      this.token = saved;
+      // Sealing it is tidying up: if it fails, it's still read as it is and tried again next load.
+      if (saved) await this.storeToken().catch(err => console.error(`[gmail] sealing a saved sign-in failed: ${err.message}`));
+    }
     await this.recoverRescan();
     return this;
+  }
+
+  // Async, so a failure to encrypt is a rejected promise for the caller, never a throw
+  // inside the client's 'tokens' event.
+  async storeToken() {
+    await setKv(this.tokenKey, { sealed: encrypt(JSON.stringify(this.token)) });
   }
 
   // A re-scan cut off part-way (the server restarted, say) leaves the tracker half
@@ -201,7 +221,7 @@ export class Mailbox {
     // Google only sends a refresh_token the first time, so merge rather than overwrite.
     this.token = { ...this.token, ...tokens };
     this.client = null;
-    await setKv(this.tokenKey, this.token);
+    await this.storeToken();
   }
 
   getClient() {
@@ -210,7 +230,7 @@ export class Mailbox {
     this.client.setCredentials(this.token);
     this.client.on('tokens', tokens => {
       this.token = { ...this.token, ...tokens };
-      setKv(this.tokenKey, this.token).catch(err => console.error(`[gmail] saving token failed: ${err.message}`));
+      this.storeToken().catch(err => console.error(`[gmail] saving token failed: ${err.message}`));
     });
     return this.client;
   }
