@@ -50,9 +50,14 @@ function oauthConfig() {
 
 export const gmailConfigured = () => Boolean(oauthConfig());
 
+// forceRefreshOnFailure: the client only gets a new access token on its own once the old
+// one's expiry date has passed. Google can cut an access token off sooner (a password
+// change, a security check), and without this every sync until that hour ran out failed
+// with "Request had invalid authentication credentials". With it, a 401 gets one fresh
+// token and one retry; a refresh token that's really gone still ends in invalid_grant.
 const newClient = () => {
   const { clientId, clientSecret } = oauthConfig();
-  return new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
+  return new google.auth.OAuth2({ clientId, clientSecret, redirectUri: REDIRECT_URI, forceRefreshOnFailure: true });
 };
 
 // Sign in with Google. With withGmail, the same consent screen also asks for
@@ -135,7 +140,7 @@ function isRateLimit(err) {
     (status === 403 && (reasons.some(r => /rateLimitExceeded|quotaExceeded/.test(r)) || /quota exceeded/i.test(err.message)));
 }
 
-const isInvalidGrant = err => err.message === 'invalid_grant' || err.response?.data?.error === 'invalid_grant';
+export const isInvalidGrant = err => err.message === 'invalid_grant' || err.response?.data?.error === 'invalid_grant';
 
 async function withRetry(fn, attempts = 6) {
   for (let i = 0; ; i++) {

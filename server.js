@@ -29,7 +29,7 @@ import { compileLatex, CompileError, COMPILE_SERVICE } from './src/compile.js';
 import { writePdfEdits, PdfEditError } from './src/pdfedit.js';
 import { aiStatus, reserveRun, hashOf, findLine, reviewInput, writeReview, checkApplicationFit, demoReview, demoFit, serverUsage, structureResume, CONSENT_VERSION, AI_KEY, DAILY_LIMIT, SERVER_DAILY_LIMIT } from './src/ai.js';
 import { ask, pendingFor, answer, skip, stopAsking, listAsks, summarize, markRead, unreadCount } from './src/feedback.js';
-import { authEnabled, checkAuthConfig, isAllowed, requireLogin, startSession, endSession } from './src/auth.js';
+import { authEnabled, checkAuthConfig, isAllowed, requireLogin, signedIn, startSession, endSession } from './src/auth.js';
 
 const PORT = gmail.PORT;
 // On Render (or any host) listen on all interfaces; locally, only on this machine.
@@ -116,6 +116,14 @@ app.get('/oauth2callback', async (req, res) => {
     res.redirect('/');
     if (firstConnect && user.mailbox.connected()) runSync(user);
   } catch (err) {
+    // Google's sign-in code works once. Reloading this page, or coming Back to it, sends
+    // it again and Google answers invalid_grant. If that first try signed them in, there's
+    // nothing wrong: carry on to the dashboard. If not, they just need to sign in again.
+    if (gmail.isInvalidGrant(err)) {
+      if (signedIn(req)) return res.redirect('/');
+      recordError('sign-in', 'A sign-in link was used a second time (a reload or Back), so Google refused it', { level: 'warning' });
+      return res.redirect(authEnabled ? '/login?error=failed' : '/');
+    }
     console.error(`[auth] sign-in failed: ${err.message}`);
     recordError('sign-in', err);
     res.redirect(authEnabled ? '/login?error=failed' : '/');
