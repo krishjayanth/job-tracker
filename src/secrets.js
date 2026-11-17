@@ -1,7 +1,8 @@
-// Encryption for secrets kept with someone's data (their Groq API key), so a copy of
+// Encryption for secrets kept with someone's data (their Groq API key, their Gmail sign-in), so a copy of
 // the database alone doesn't hand them out. AES-256-GCM, keyed from SESSION_SECRET;
 // without one (running locally), from a random key stored next to the data.
-// Changing SESSION_SECRET makes stored keys unreadable: people are asked to add them again.
+// Changing SESSION_SECRET makes stored secrets unreadable: people are asked to add their key
+// and connect Gmail again.
 import crypto from 'node:crypto';
 import { getKv, setKv } from './store.js';
 

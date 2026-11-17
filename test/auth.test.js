@@ -60,3 +60,22 @@ test('isAllowed ignores case', () => {
   assert.equal(auth.isAllowed('Me@Example.com'), true);
   assert.equal(auth.isAllowed('other@example.com'), false);
 });
+
+// Sign-in links: Google sends back the state it was given; only the browser that started
+// signing in (holding the matching cookie) may finish it, and only once.
+function oauthStart(mode) {
+  let cookie;
+  const state = auth.oauthState({ cookie: (name, value) => { cookie = `${name}=${value}`; } }, mode);
+  return { state, cookie };
+}
+const finish = (state, cookie) => auth.checkOAuthState({ headers: cookie ? { cookie } : {} }, { clearCookie() {} }, state);
+
+test("a sign-in finishes only in the browser that started it", () => {
+  const { state, cookie } = oauthStart('gmail');
+  assert.equal(finish(state, cookie), 'gmail');
+  const other = oauthStart('login');
+  assert.equal(finish(state, other.cookie), null, "someone else's link is refused");
+  assert.equal(finish(state), null, 'no cookie, no sign-in');
+  assert.equal(finish('gmail', cookie), null, 'the old fixed state is refused');
+  assert.equal(finish(undefined, cookie), null);
+});

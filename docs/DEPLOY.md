@@ -25,8 +25,9 @@ Neon works too: use its connection string (it ends in `?sslmode=require`) and le
 ## 2. Email classifier: Groq
 Each person adds their own free Groq API key in the app (Settings › AI email sorting, or when they first connect Gmail), so everyone gets their own
 free-tier allowance. Without one, their emails are sorted by the built-in rules. The key is checked with Groq
-when it's saved, stored encrypted with `SESSION_SECRET`, and never sent back to the browser. (If you change
-`SESSION_SECRET`, saved keys can't be read and people are asked to add them again.)
+when it's saved, stored encrypted with `SESSION_SECRET`, and never sent back to the browser. Gmail sign-ins are encrypted the same
+way. (If you change `SESSION_SECRET`, saved keys and Gmail sign-ins can't be read: people are asked to add their key
+and connect Gmail again.)
 
 Optionally, sign up at https://console.groq.com and create a key for the server's `GROQ_API_KEY`. It's used only
 for the owner (the first `ALLOWED_EMAIL`), and only until they add a key of their own.
@@ -165,7 +166,7 @@ sign-in, so only run it that way on your own machine. (The server only listens o
 |---|---|---|
 | `PUBLIC_URL` | Render's address, or `http://localhost:5178` | Site address for Google redirects. Only needed for a custom domain |
 | `ALLOWED_EMAIL` | — | Google accounts allowed to sign in, comma-separated; the first is the owner. **Required when hosted** |
-| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`). Also encrypts saved Groq keys |
+| `SESSION_SECRET` | — | Random string, 32+ characters (required with `ALLOWED_EMAIL`). Also encrypts saved Groq keys and Gmail sign-ins |
 | `DATABASE_URL` | — | Postgres connection string. Unset means local files |
 | `DATABASE_CA` | — | The database's certificate (the PEM text, or a path to the file) when a public authority doesn't sign it, as on Supabase |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google OAuth web client |

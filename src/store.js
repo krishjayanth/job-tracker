@@ -77,7 +77,15 @@ export async function initStorage({ demo = false, inMemory = demo } = {}) {
 
 // ---- key-value storage ----------------------------------------------------------
 
-const kvFile = key => path.join(DATA_DIR, `${key}.json`);
+// A key becomes a file name, and parts of some keys come from a request (a resume version's
+// ID in the address). One with a path in it ("x/../db_other") would reach files outside the
+// key's own, so it's refused here, whatever the caller checked.
+export const safeKey = key => typeof key === 'string' && key.length > 0 && key.length <= 200 && !/[\\/\0]|\.\./.test(key);
+function onDisk(key, ext) {
+  if (!safeKey(key)) throw new Error(`Refused a storage key that isn't a plain name: ${JSON.stringify(String(key).slice(0, 80))}`);
+  return path.join(DATA_DIR, `${key}${ext}`);
+}
+const kvFile = key => onDisk(key, '.json');
 
 export async function getKv(key) {
   if (memory) return memory.get(key) ?? null;
@@ -139,7 +147,7 @@ export async function deleteKvPrefix(prefix) {
 // ---- files ------------------------------------------------------------------------
 // Binary files (resume PDFs) by key, beside the JSON: the app_files table, raw files in
 // data/ (ending .bin, so they're never read as JSON), or memory.
-const fileOnDisk = key => path.join(DATA_DIR, `${key}.bin`);
+const fileOnDisk = key => onDisk(key, '.bin');
 
 export async function getFile(key) {
   if (memoryFiles) return memoryFiles.get(key) ?? null;
