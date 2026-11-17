@@ -381,7 +381,7 @@ function gradingHtml() {
     <div class="grade-card skeleton" aria-hidden="true"><i class="sk-ring"></i><div><i></i><i></i><i></i></div></div>`;
 }
 
-function reviewHtml(r) {
+function resumeGradeHtml(r) {
   const { ai, review: rv } = resume;
   if (!ai?.available) return '';
   const hasApps = resume.insights.total > 0;
@@ -1027,7 +1027,7 @@ function resumeReviewHtml() {
       </div>
       <div class="review-grid${reviewWide ? ' wide' : ''}">
         <div class="review-page">${previewHtml(r)}</div>
-        <aside class="review-side" aria-label="Review">${reviewHtml(r)}</aside>
+        <aside class="review-side" aria-label="Review">${resumeGradeHtml(r)}</aside>
       </div>
     </section>`;
 }

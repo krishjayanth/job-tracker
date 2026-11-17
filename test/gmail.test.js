@@ -125,3 +125,30 @@ test("sync errors are told in plain words, keeping the Gmail API's turn-on link"
   assert.match(plainSyncError(Object.assign(new Error('Backend Error'), { code: 503 })), /on its side/);
   assert.doesNotMatch(plainSyncError(new Error('Cannot read properties of undefined')), /undefined/);
 });
+
+// Google can cut off an access token before its expiry date. The client then has to get a
+// new one and try again, instead of failing every sync until the old one's hour runs out.
+test('a rejected access token is refreshed and the request tried again', async () => {
+  process.env.GOOGLE_CLIENT_ID ||= 'stand-in-id';
+  process.env.GOOGLE_CLIENT_SECRET ||= 'stand-in-secret';
+  const { mailbox } = await mailboxFor('refresh', tracker());
+  mailbox.token = { access_token: 'cut-off', refresh_token: 'stand-in', expiry_date: Date.now() + 30 * 60_000 };
+  const client = mailbox.getClient();
+  const seen = [];
+  client.transporter.request = async opts => {
+    const url = String(opts.url);
+    if (url.includes('oauth2.googleapis.com/token')) return { data: { access_token: 'fresh', expires_in: 3600 }, config: opts };
+    const auth = opts.headers.get?.('authorization') ?? opts.headers.Authorization;
+    seen.push(auth);
+    if (auth === 'Bearer cut-off') {
+      const err = new Error('Request had invalid authentication credentials.');
+      err.response = { status: 401, config: opts };
+      throw err;
+    }
+    return { data: { ok: true }, config: opts };
+  };
+  const res = await client.request({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/profile' });
+  assert.deepEqual(res.data, { ok: true });
+  assert.deepEqual(seen, ['Bearer cut-off', 'Bearer fresh']);
+  assert.equal(mailbox.token.access_token, 'fresh', 'the new token is kept for next time');
+});

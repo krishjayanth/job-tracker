@@ -41,6 +41,9 @@ function readSession(req) {
   return { id: sub, email };
 }
 
+// Whether this request already carries a good session (always true without sign-in).
+export const signedIn = req => !authEnabled || Boolean(readSession(req));
+
 // `sub` is Google's stable id for the account; it's what a user's data is kept under.
 export function startSession(res, { sub, email }) {
   const payload = Buffer.from(JSON.stringify({ sub, email, exp: Date.now() + MAX_AGE_DAYS * 86_400_000 })).toString('base64url');
